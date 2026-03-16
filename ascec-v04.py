@@ -12587,6 +12587,17 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
         return 1
     
     context.max_tries = max_stage_redos  # For compatibility with existing code
+
+    # Pin optimization output to a deterministic similarity base folder for this cycle.
+    # This prevents redo/resume runs from drifting to similarity_3, similarity_4, etc.
+    optimization_cycle = getattr(context, 'optimization_stage_number', 1)
+    if optimization_cycle <= 1:
+        fixed_opt_sim_base = "similarity"
+    else:
+        fixed_opt_sim_base = f"similarity_{optimization_cycle}"
+
+    context.similarity_dir = fixed_opt_sim_base
+    context.pending_similarity_folder = fixed_opt_sim_base
     
     # Process redo structures at the START of the stage (if need_recalculation exists)
     # This ensures that when the workflow restarts this stage after a similarity failure,
@@ -13162,21 +13173,20 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                 if total_completed > 0 and context.is_workflow:
                     saved_cwd = os.getcwd()
                     try:
-                        # Check if files are already organized (similarity folder exists at parent level)
+                        # Pin this stage to a deterministic similarity base folder so redo attempts
+                        # and resumes do not create extra folders (similarity_3, similarity_4, ...).
                         parent_dir = os.path.dirname(os.getcwd())
-                        already_organized = os.path.exists(os.path.join(parent_dir, "similarity"))
+
+                        target_sim_base = fixed_opt_sim_base
+
+                        already_organized = os.path.exists(os.path.join(parent_dir, target_sim_base))
                         
                         if already_organized:
                             if not workflow_concise:
                                 print("\n✓ Files already organized (resuming from cache)")
-                            # Find the existing similarity folder
-                            sim_folders = [f for f in os.listdir(parent_dir) 
-                                         if f.startswith("similarity") and os.path.isdir(os.path.join(parent_dir, f))]
-                            if sim_folders:
-                                sim_folder = sim_folders[0]
-                                context.optimization_sim_folder = sim_folder
-                                # Set pending for next similarity stage
-                                context.pending_similarity_folder = sim_folder
+                            # Reuse this optimization cycle's fixed similarity folder.
+                            context.optimization_sim_folder = target_sim_base
+                            context.pending_similarity_folder = target_sim_base
                         else:
                             # Merge good structures back if they exist (from retry)
                             if os.path.exists("good_structures"):
@@ -13201,9 +13211,13 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                                 create_combined_mol()
                                 create_summary_with_tracking(".")
                                 
-                                # Determine if we should reuse existing similarity folder (redo mode)
+                                # Reuse stage folder for redo/resume and write into fixed target folder.
                                 is_redo = hasattr(context, 'recalculated_files') and bool(context.recalculated_files)
-                                similarity_folder = collect_out_files_with_tracking(reuse_existing=is_redo)
+                                reuse_folder = is_redo or os.path.exists(os.path.join(parent_dir, target_sim_base))
+                                similarity_folder = collect_out_files_with_tracking(
+                                    reuse_existing=reuse_folder,
+                                    target_sim_folder=target_sim_base
+                                )
                             
                             # Extract key info from output
                             output = f.getvalue()
@@ -13758,28 +13772,32 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     
     # Step 3: Determine where optimization OUTPUTS will go
     # This is typically the next similarity folder (similarity_2, similarity_3, etc.)
-    # CRITICAL: Only reuse context.similarity_dir if it's from THIS stage's redo loop
-    # Don't use the optimization stage's similarity_dir!
-    if hasattr(context, 'refinement_sim_folder') and context.refinement_sim_folder:
-        # Already calculated for this optimization stage - use it
-        used_sim_folder = context.refinement_sim_folder
+    # Always prefer the expected folder from motifs_source_folder and only reuse cached
+    # refinement_sim_folder if it matches; this prevents stale folder drift.
+    if motifs_source_folder == "similarity":
+        expected_sim_folder: str = "similarity_2"
     else:
-        # Calculate next folder for outputs based on where motifs came from
-        if motifs_source_folder == "similarity":
-            used_sim_folder = "similarity_2"
+        # Extract number and increment
+        match = re.search(r'similarity_(\d+)', motifs_source_folder)
+        if match:
+            next_num = int(match.group(1)) + 1
+            expected_sim_folder = f"similarity_{next_num}"
         else:
-            # Extract number and increment
-            match = re.search(r'similarity_(\d+)', motifs_source_folder)
-            if match:
-                next_num = int(match.group(1)) + 1
-                used_sim_folder = f"similarity_{next_num}"
-            else:
-                used_sim_folder = "similarity_2"
+            expected_sim_folder = "similarity_2"
+
+    existing_ref_sim_raw = getattr(context, 'refinement_sim_folder', None)
+    existing_ref_sim: Optional[str] = existing_ref_sim_raw if isinstance(existing_ref_sim_raw, str) else None
+    existing_ref_base: Optional[str] = existing_ref_sim.split('/')[0] if existing_ref_sim and '/' in existing_ref_sim else existing_ref_sim
+    if isinstance(existing_ref_base, str) and existing_ref_base == expected_sim_folder:
+        used_sim_folder: str = str(existing_ref_base)
+    else:
+        used_sim_folder = str(expected_sim_folder)
     
     # Store in refinement_sim_folder (optimization's dedicated variable)
     context.refinement_sim_folder = used_sim_folder
     # Also update similarity_dir so the similarity stage knows where to look
     context.similarity_dir = used_sim_folder
+    context.pending_similarity_folder = used_sim_folder
     
     # Store motifs source in context
     context.refinement_motifs_source = motif_dir
@@ -13794,7 +13812,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     stage_was_started = stage_key in cache.get('stages', {})
     
     if stage_was_started:
-        output_sim_folder = used_sim_folder
+        output_sim_folder: str = str(used_sim_folder)
         if os.path.exists(output_sim_folder):
             # Verify this is NOT the motifs source folder (don't delete our input!)
             if output_sim_folder != motifs_source_folder:
