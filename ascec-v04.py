@@ -8210,6 +8210,20 @@ def collect_out_files_with_tracking(reuse_existing=False, target_sim_folder=None
         similarity_dir = get_next_similarity_dir()
         os.makedirs(similarity_dir, exist_ok=True)
         
+        # Reuse existing destination folder when possible, otherwise create one.
+        # This prevents redo/resume flows from producing orca_out_N_1/_2/_3.
+        existing_exact_dest = os.path.join(similarity_dir, base_destination_folder_name)
+
+        def _clear_destination_outputs(dest_dir: str) -> None:
+            """Remove previous copied outputs so destination reflects current state."""
+            try:
+                for item in os.listdir(dest_dir):
+                    item_path = os.path.join(dest_dir, item)
+                    if os.path.isfile(item_path) and item.endswith(('.out', '.log')):
+                        os.remove(item_path)
+            except Exception:
+                pass
+
         # Create the calc_out/orca_out/gaussian_out subfolder inside similarity folder
         if reuse_existing:
             # In redo mode: always reuse the same output folder (cleanup if exists)
@@ -8219,44 +8233,56 @@ def collect_out_files_with_tracking(reuse_existing=False, target_sim_folder=None
             existing_calc_dirs = glob.glob(os.path.join(similarity_dir, f"calc_out_{num_files}*"))
             existing_orca_dirs.extend(existing_gaussian_dirs)
             existing_orca_dirs.extend(existing_calc_dirs)
-            
-            if existing_orca_dirs:
-                # Use the first existing folder (should be *_out_N, not *_out_N_1)
+
+            # Prefer exact folder name (e.g., orca_out_180) over suffixed variants.
+            if os.path.isdir(existing_exact_dest):
+                destination_path = existing_exact_dest
+                destination_folder_name = os.path.basename(destination_path)
+                _clear_destination_outputs(destination_path)
+            elif existing_orca_dirs:
+                existing_orca_dirs = sorted(existing_orca_dirs, key=lambda p: (0 if os.path.basename(p) == base_destination_folder_name else 1, p))
                 destination_path = existing_orca_dirs[0]
                 destination_folder_name = os.path.basename(destination_path)
-                
-                # Cleanup old artifacts before reusing the folder
-                print(f"Cleaning up previous similarity results in {os.path.basename(similarity_dir)}...")
-                items_to_remove = [
-                    'dendrogram_images', 'extracted_clusters', 'extracted_data', 
-                    'skipped_structures', 'clustering_summary.txt', 'boltzmann_distribution.txt'
-                ]
-                
-                # Also remove motifs folders
-                for item in os.listdir(similarity_dir):
-                    if item.startswith('motifs_'):
-                        items_to_remove.append(item)
-                
-                for item in items_to_remove:
-                    item_path = os.path.join(similarity_dir, item)
-                    if os.path.exists(item_path):
-                        try:
-                            if os.path.isdir(item_path):
-                                shutil.rmtree(item_path)
-                            else:
-                                os.remove(item_path)
-                        except Exception as e:
-                            print(f"Warning: Could not remove {item}: {e}")
+                _clear_destination_outputs(destination_path)
             else:
                 # First time - create the folder
                 destination_folder_name = base_destination_folder_name
                 destination_path = os.path.join(similarity_dir, destination_folder_name)
                 os.makedirs(destination_path, exist_ok=True)
+
+            # Cleanup old artifacts before reusing similarity folder
+            print(f"Cleaning up previous similarity results in {os.path.basename(similarity_dir)}...")
+            items_to_remove = [
+                'dendrogram_images', 'extracted_clusters', 'extracted_data',
+                'skipped_structures', 'clustering_summary.txt', 'boltzmann_distribution.txt'
+            ]
+
+            # Also remove motifs folders
+            for item in os.listdir(similarity_dir):
+                if item.startswith('motifs_') or item.startswith('umotifs_'):
+                    items_to_remove.append(item)
+
+            for item in items_to_remove:
+                item_path = os.path.join(similarity_dir, item)
+                if os.path.exists(item_path):
+                    try:
+                        if os.path.isdir(item_path):
+                            shutil.rmtree(item_path)
+                        else:
+                            os.remove(item_path)
+                    except Exception as e:
+                        print(f"Warning: Could not remove {item}: {e}")
         else:
-            # Not redo mode - create new versioned folder if needed
-            destination_folder_name = get_unique_folder_name(base_destination_folder_name, similarity_dir)
-            destination_path = os.path.join(similarity_dir, destination_folder_name)
-            os.makedirs(destination_path, exist_ok=True)
+            # Default mode: if the exact destination exists, update it in-place.
+            # This keeps workflow outputs stable instead of creating *_1 variants.
+            if os.path.isdir(existing_exact_dest):
+                destination_folder_name = base_destination_folder_name
+                destination_path = existing_exact_dest
+                _clear_destination_outputs(destination_path)
+            else:
+                destination_folder_name = get_unique_folder_name(base_destination_folder_name, similarity_dir)
+                destination_path = os.path.join(similarity_dir, destination_folder_name)
+                os.makedirs(destination_path, exist_ok=True)
         
         # Copy files to the output subfolder
         for file_path in all_out_files:
