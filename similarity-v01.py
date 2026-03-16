@@ -2046,6 +2046,117 @@ def filter_imaginary_freq_structures(clusters_list, output_base_dir, input_sourc
     
     return filtered_clusters, skipped_info
 
+
+def _is_non_converged_structure(mol_data):
+    """Return True when a structure should be treated as non-converged/critical."""
+    if mol_data.get('gibbs_free_energy') is None:
+        return True
+    # Reduced feature vectors are treated as non-converged for workflow safety.
+    if not mol_data.get('_is_full_feature', True):
+        return True
+    return False
+
+
+def filter_non_converged_structures(clusters_list):
+    """
+    Remove non-converged structures from cluster candidates.
+
+    Any non-converged member is classified as critical for recalculation and
+    cannot become a representative.
+    """
+    filtered_clusters = []
+    critical_non_converged = []
+
+    for cluster in clusters_list:
+        if not cluster:
+            continue
+
+        non_converged = [m for m in cluster if _is_non_converged_structure(m)]
+        converged = [m for m in cluster if not _is_non_converged_structure(m)]
+
+        if non_converged:
+            critical_non_converged.extend(non_converged)
+
+        if converged:
+            filtered_clusters.append(converged)
+
+    return filtered_clusters, critical_non_converged
+
+
+def save_non_converged_critical_structures(non_converged_structures, output_base_dir, input_source=None, total_processed=None):
+    """Write critical non-converged structures to skipped_structures/critical_non_converged/."""
+    if not non_converged_structures:
+        return
+
+    skipped_dir = os.path.join(output_base_dir, "skipped_structures")
+    critical_dir = os.path.join(skipped_dir, "critical_non_converged")
+    os.makedirs(critical_dir, exist_ok=True)
+
+    # Build filename->source path map from input source.
+    available_files = {}
+    try:
+        if isinstance(input_source, list):
+            available_files = {os.path.basename(f): f for f in input_source}
+        elif input_source:
+            source_root = str(input_source)
+            root_candidates = glob.glob(os.path.join(source_root, "*.out")) + glob.glob(os.path.join(source_root, "*.log"))
+            for p in root_candidates:
+                available_files[os.path.basename(p)] = p
+
+            for item in os.listdir(source_root):
+                item_path = os.path.join(source_root, item)
+                if os.path.isdir(item_path):
+                    sub_candidates = glob.glob(os.path.join(item_path, "*.out")) + glob.glob(os.path.join(item_path, "*.log"))
+                    for p in sub_candidates:
+                        available_files[os.path.basename(p)] = p
+    except Exception:
+        pass
+
+    # Copy outputs and export XYZ geometries for redo mode.
+    for m in non_converged_structures:
+        filename = m.get('filename')
+        if not filename:
+            continue
+
+        source_file = available_files.get(filename)
+        if source_file and os.path.exists(source_file):
+            try:
+                shutil.copy2(source_file, os.path.join(critical_dir, filename))
+            except Exception:
+                pass
+
+            natoms, coords, symbols = extract_xyz_from_output(source_file)
+            if natoms is not None and coords is not None and symbols is not None:
+                basename = os.path.splitext(filename)[0]
+                xyz_file = os.path.join(critical_dir, f"{basename}.xyz")
+                try:
+                    with open(xyz_file, 'w') as f:
+                        f.write(f"{natoms}\n")
+                        f.write(f"{basename} - critical non-converged\n")
+                        for symbol, coord in zip(symbols, coords):
+                            f.write(f"{symbol:2s}  {coord[0]:15.8f}  {coord[1]:15.8f}  {coord[2]:15.8f}\n")
+                except Exception:
+                    pass
+
+    # Write a compact summary file for auditability.
+    summary_path = os.path.join(critical_dir, "non_converged_summary.txt")
+    try:
+        with open(summary_path, 'w') as f:
+            f.write("Critical Non-converged Structures\n")
+            f.write("=" * 60 + "\n\n")
+            f.write(f"Total structures: {len(non_converged_structures)}\n")
+            if total_processed is not None and total_processed > 0:
+                pct = (len(non_converged_structures) / total_processed) * 100.0
+                f.write(f"Impact on dataset: {len(non_converged_structures)}/{total_processed} ({pct:.1f}%)\n")
+            f.write("\nFiles:\n")
+            for m in non_converged_structures:
+                g = m.get('gibbs_free_energy')
+                f.write(f"  - {m.get('filename', 'UNKNOWN')} (Gibbs: {'N/A' if g is None else f'{g:.6f}'})\n")
+    except Exception:
+        pass
+
+    print_step(f"Critical non-converged structures: {len(non_converged_structures)} (saved to skipped_structures/critical_non_converged)")
+
 def perform_second_rmsd_clustering(cluster_members_to_refine, rmsd_threshold):
     """
     Performs second RMSD-based clustering on configurations (typically outliers from first pass).
@@ -2558,13 +2669,17 @@ def create_unique_motifs_folder(all_clusters_data, output_base_dir, openbabel_al
         if not cluster_members:
             continue
         
-        # CRITICAL: No motif can have imaginary frequencies
-        # Filter out members with imaginary frequencies first
-        valid_members = [m for m in cluster_members if not m.get('_has_imaginary_freqs', False)]
+        # CRITICAL: No motif can have imaginary frequencies or non-converged data.
+        valid_members = [
+            m for m in cluster_members
+            if not m.get('_has_imaginary_freqs', False)
+            and m.get('gibbs_free_energy') is not None
+            and m.get('_is_full_feature', True)
+        ]
         
         if not valid_members:
-            # All members have imaginary frequencies - skip this cluster for motif creation
-            print(f"  WARNING: Cluster {cluster_idx + 1} has only structures with imaginary frequencies - skipping motif creation")
+            # All members are invalid for representative selection.
+            print(f"  WARNING: Cluster {cluster_idx + 1} has no converged minima - skipping motif creation")
             continue
             
         # Find the lowest energy representative from valid (non-imaginary) members only
@@ -3602,8 +3717,10 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
     previous_hbond_group_processed = False
     total_imag_clustered_with_normal = 0
     total_imag_need_recalc = 0
+    total_non_converged_critical = 0
     all_skipped_clustered_with_normal = []
     all_skipped_need_recalc = []
+    all_non_converged_critical = []
 
     # --- Feature completeness summary (printed once, before clustering output) ---
     _scalar_features = [
@@ -4079,12 +4196,20 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
             input_source,
             total_processed=len(clean_data_for_clustering)
         )
+
+        # Remove non-converged structures from clusters after imaginary filtering.
+        # These are always critical and must never become representatives.
+        current_hbond_group_clusters_for_final_output, hbond_non_converged = filter_non_converged_structures(
+            current_hbond_group_clusters_for_final_output
+        )
         
         # Track and accumulate skipped structures
         total_imag_clustered_with_normal += len(hbond_skipped_info.get('clustered_with_normal', []))
         total_imag_need_recalc += len(hbond_skipped_info.get('need_recalculation', []))
         all_skipped_clustered_with_normal.extend(hbond_skipped_info.get('clustered_with_normal', []))
         all_skipped_need_recalc.extend(hbond_skipped_info.get('need_recalculation', []))
+        total_non_converged_critical += len(hbond_non_converged)
+        all_non_converged_critical.extend(hbond_non_converged)
 
         all_final_clusters.extend(current_hbond_group_clusters_for_final_output)
 
@@ -4185,15 +4310,25 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
             precomputed_skipped=combined_skipped_info
         )
 
-    total_skipped_all = len(skipped_files) + total_imag_clustered_with_normal + total_imag_need_recalc
+    # Persist non-converged critical structures for redo mode.
+    if all_non_converged_critical:
+        save_non_converged_critical_structures(
+            all_non_converged_critical,
+            output_base_dir,
+            input_source,
+            total_processed=len(clean_data_for_clustering)
+        )
+
+    total_skipped_all = len(skipped_files) + total_imag_clustered_with_normal + total_imag_need_recalc + total_non_converged_critical
     if total_files_attempted > 0:
         total_skipped_percentage = (total_skipped_all / total_files_attempted) * 100
-        critical_skipped_percentage = (total_imag_need_recalc / total_files_attempted) * 100
+        critical_total = total_imag_need_recalc + total_non_converged_critical
+        critical_skipped_percentage = (critical_total / total_files_attempted) * 100
         total_skipped_str = f"{total_skipped_all} ({total_skipped_percentage:.1f}%)"
-        critical_skipped_str = f"{total_imag_need_recalc} ({critical_skipped_percentage:.1f}%)"
+        critical_skipped_str = f"{critical_total} ({critical_skipped_percentage:.1f}%)"
     else:
         total_skipped_str = str(total_skipped_all)
-        critical_skipped_str = str(total_imag_need_recalc)
+        critical_skipped_str = str(total_imag_need_recalc + total_non_converged_critical)
 
     # Reduced-vector structures that never co-cluster with a full-feature structure
     # are likely critical outliers and should be reviewed.
