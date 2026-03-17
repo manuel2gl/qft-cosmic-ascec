@@ -463,6 +463,13 @@ class SystemState:
         self.qm_call_count: int = 0 # Counter for QM calculation calls (cumulative global count)
         self.initial_qm_retries: int = 100 # Number of retries for initial QM calculation, default to 100
         self.verbosity_level: int = 0 # 0: default, 1: --v (every 10 steps), 2: --va (all steps)
+        # QM attempt debug preservation mode:
+        #   'none'          -> do not copy per-attempt files
+        #   'first_success' -> keep per-attempt files until first successful QM, then stop (recommended)
+        #   'all'           -> keep per-attempt files for all attempts (slowest)
+        self.qm_attempt_debug_mode: str = "first_success"
+        self._first_success_qm_preserved: bool = False
+
         self.use_standard_metropolis: bool = False # Flag for Metropolis criterion
         
         # Additional attributes for proper type checking
@@ -2724,15 +2731,15 @@ def preserve_last_qm_files(state: SystemState, run_dir: str, call_id: Optional[i
     # Copy files if they exist
     try:
         if os.path.exists(source_input):
-            shutil.copy2(source_input, dest_input)
+            shutil.copyfile(source_input, dest_input)
             _print_verbose(f"  Preserved QM input file{msg_suffix}: {os.path.basename(dest_input)}", 2, state)
         
         if os.path.exists(source_output):
-            shutil.copy2(source_output, dest_output)
+            shutil.copyfile(source_output, dest_output)
             _print_verbose(f"  Preserved QM output file{msg_suffix}: {os.path.basename(dest_output)}", 2, state)
             
         if source_chk and dest_chk and os.path.exists(source_chk):
-            shutil.copy2(source_chk, dest_chk)
+            shutil.copyfile(source_chk, dest_chk)
             _print_verbose(f"  Preserved QM checkpoint file{msg_suffix}: {os.path.basename(dest_chk)}", 2, state)
     except Exception as e:
         _print_verbose(f"  Warning: Could not preserve QM files{msg_suffix}: {e}", 1, state)
@@ -2746,7 +2753,19 @@ def preserve_last_qm_files_debug(state: SystemState, run_dir: str, call_id: int,
     Note: This is a wrapper for preserve_last_qm_files() with for_debug=True for backward compatibility.
     The status parameter is kept for API compatibility but not used.
     """
+    mode = str(getattr(state, 'qm_attempt_debug_mode', 'first_success')).strip().lower()
+
+    if mode == 'none':
+        return
+
+    if mode == 'first_success' and getattr(state, '_first_success_qm_preserved', False):
+        return
+
     preserve_last_qm_files(state, run_dir, call_id=call_id, for_debug=True)
+
+    # Mark completion once we have preserved the first successful attempt.
+    if mode == 'first_success' and status == 1:
+        state._first_success_qm_preserved = True
 
 def preserve_failed_initial_qm_files(state: SystemState, run_dir: str, attempt_num: int):
     """
@@ -3141,7 +3160,7 @@ def write_single_xyz_configuration(file_handle, natom, rp, iznu, energy, config_
         for coords in box_corners:
             file_handle.write(f"{dummy_atom_symbol: <3} {coords[0]: 12.6f} {coords[1]: 12.6f} {coords[2]: 12.6f}\n")
 
-    file_handle.flush()
+    # The caller opens files in append mode per write; explicit flush here adds avoidable I/O overhead.
 
 # New wrapper function for writing accepted XYZ configurations
 def write_accepted_xyz(prefix: str, config_number: int, energy: float, temp: float, state: SystemState, is_initial: bool = False):
@@ -11493,19 +11512,14 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
             # Run as subprocess in the run directory using the current interpreter.
             cmd = [sys.executable, os.path.abspath(sys.argv[0]), input_basename]
 
-            # Write output to files instead of capturing to memory to avoid deadlock
-            # when subprocess produces large output (for QM calculations)
-            stdout_file = os.path.join(run_dir, f"{input_basename.replace('.in', '')}_stdout.log")
-            stderr_file = os.path.join(run_dir, f"{input_basename.replace('.in', '')}_stderr.log")
-
-            with open(stdout_file, 'w') as stdout_f, open(stderr_file, 'w') as stderr_f:
-                result = subprocess.run(
-                    cmd,
-                    cwd=run_dir,
-                    stdout=stdout_f,
-                    stderr=stderr_f,
-                    env={**os.environ, "ASCEC_DISABLE_EMBEDDED_PROTOCOL": "1"}
-                )
+            # Discard child stdio to avoid extra per-replica log files in annealing folders.
+            result = subprocess.run(
+                cmd,
+                cwd=run_dir,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env={**os.environ, "ASCEC_DISABLE_EMBEDDED_PROTOCOL": "1"}
+            )
 
             output_file = os.path.join(run_dir, os.path.splitext(input_basename)[0] + '.out')
             artifacts_exist = bool(glob.glob(os.path.join(run_dir, 'result_*.xyz'))) and bool(
@@ -11524,13 +11538,6 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
 
             if not success and result.returncode != 0:
                 last_error = f"Exit code {result.returncode}"
-                try:
-                    with open(stderr_file, 'r') as f:
-                        stderr_lines = [ln for ln in f.read().splitlines() if ln.strip()]
-                    if stderr_lines:
-                        last_error += f": {stderr_lines[-1]}"
-                except Exception:
-                    pass
             elif not success and not os.path.exists(output_file):
                 last_error = "Output file not created"
             elif not success:
@@ -11589,19 +11596,7 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
                         if last_error:
                             if verbose:
                                 print(f"    {last_error}")
-                # Show tail of subprocess stderr for faster diagnosis when available.
-                stderr_file = os.path.join(run_dir, f"{input_basename.replace('.in', '')}_stderr.log")
-                if os.path.exists(stderr_file) and verbose:
-                    try:
-                        with open(stderr_file, 'r') as f:
-                            err_lines = [ln for ln in f.read().splitlines() if ln.strip()]
-                        if err_lines:
-                            print("    STDERR tail:")
-                            for line in err_lines[-5:]:
-                                print(f"      {line}")
-                    except Exception:
-                        pass
-                elif last_error:
+                if last_error:
                     if verbose:
                         print(f"    {last_error}")
                 failed_runs.append(run_name)
@@ -16082,12 +16077,8 @@ MORE INFORMATION:
                 elif state.verbosity_level == 2: # For very verbose, print every step
                      _print_verbose(f"\nAnnealing Step {step_num + 1}/{total_annealing_steps} at Temperature: {state.current_temp:.2f} K", 2, state) # Modified print
                 
-                # Keep a copy of the current accepted state before proposing a new move
-                # These are the *reference* states for the Metropolis criterion
-                original_rp_for_revert = np.copy(state.rp) 
-                original_iznu_for_revert = list(state.iznu)
+                # Keep reference energy of the current accepted state for Metropolis criterion.
                 original_energy_for_revert = state.current_energy
-                original_rcm_for_revert = np.copy(state.rcm) # Also save rcm for revert
 
                 qm_calls_made_this_temp_step = 0 # Counter for QM calls within this temperature step
                 
@@ -16102,20 +16093,13 @@ MORE INFORMATION:
                     # PROPOSE NEW CONFIGURATION
                     # The propose_unified_move function returns proposed coordinates
                     # without modifying the state - we test them first, then accept/reject
-                    proposed_rp_full, proposed_mol_coords, moved_mol_idx, move_type = propose_unified_move(
+                    proposed_rp_full, _, _, _ = propose_unified_move(
                         state, state.rp, state.imolec
                     )
-                    
-                    # Save the CURRENT coordinates before we temporarily replace them for QM calculation
-                    # We need this because we'll revert if the move is rejected
-                    saved_rp = np.copy(state.rp)
-                    
-                    # Temporarily update state with proposed coordinates for QM calculation
-                    state.rp[:] = proposed_rp_full[:]
-                    
-                    # Calculate energy of the proposed configuration (which is now in state.rp)
+
+                    # Evaluate proposed geometry directly to avoid extra state copies on rejected moves.
                     # This will use parallel cores within the QM calculation itself
-                    proposed_energy, jo_status = calculate_energy(state.rp, state.iznu, state, run_dir)
+                    proposed_energy, jo_status = calculate_energy(proposed_rp_full, state.iznu, state, run_dir)
                     
                     # Verbose output for each cycle (using state.qm_call_count for global attempt number)
                     if state.verbosity_level == 2 or (state.verbosity_level == 1 and state.qm_call_count % 10 == 0):
@@ -16124,9 +16108,6 @@ MORE INFORMATION:
                     # Check if QM calculation failed
                     if jo_status == 0:
                         _print_verbose(f"  Warning: Proposed QM energy calculation failed for global attempt {state.qm_call_count}. Rejecting move.", 1, state)
-                        # Revert to the saved state if QM failed for this proposal
-                        state.rp[:] = saved_rp[:]
-                        # Note: iznu, rcm, and current_energy don't change during a proposed move
                         continue # Continue to next MC cycle attempt
 
                     accept_move = False
@@ -16165,17 +16146,14 @@ MORE INFORMATION:
 
                     if accept_move:
                         # If accepted, update the system's current state to the *proposed* one
+                        state.rp[:] = proposed_rp_full[:]
                         state.current_energy = proposed_energy 
-                        # state.rp and state.rcm are already the proposed (accepted) state
                         
                         # Preserve QM files from this accepted configuration for debugging
                         preserve_last_qm_files(state, run_dir)
-                        
-                        # Update original_state_for_revert to the newly accepted state
-                        original_rp_for_revert[:] = state.rp[:]
-                        original_iznu_for_revert[:] = state.iznu[:]
+
+                        # Update reference energy to the newly accepted state
                         original_energy_for_revert = state.current_energy
-                        original_rcm_for_revert[:] = state.rcm[:] # Update rcm for revert too
 
                         _print_verbose(f"  Attempt {state.qm_call_count} (global): Move accepted ({criterion_str}). New energy: {state.current_energy:.8f} a.u.", 1, state)
                     
@@ -16226,9 +16204,7 @@ MORE INFORMATION:
                         
                     else: # Move rejected
                         _print_verbose(f"  Attempt {state.qm_call_count} (global): Move rejected. Energy: {proposed_energy:.8f} a.u. (Current: {original_energy_for_revert:.8f})", 1, state)
-                        # Revert to the saved coordinates (before the proposed move)
-                        state.rp[:] = saved_rp[:]
-                        # Note: iznu, rcm, and current_energy don't change during a proposed move
+                        # No revert needed because state.rp was not mutated for rejected proposals.
                 
                 # After the inner loop (maxstep attempts or LwE break)
                 # If we did NOT move to the next temperature due to LwE, it means maxstep was reached
