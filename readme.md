@@ -24,7 +24,7 @@
 
 **ASCEC** (*Annealing Simulado Con Energía Cuántica*) is an intelligent computational orchestrator designed to explore complex potential energy surfaces (PES). By pairing robust stochastic sampling (Simulated Annealing) with the **Similarity** topological clustering module, it automates the discovery of low-energy molecular conformations.
 
-It eliminates the tedious manual processing of thousands of conformers by automatically filtering redundancies, correcting transition states, and refining unique minima using high-level quantum mechanical (QM) evaluations.
+It eliminates the tedious manual processing of thousands of configurations by automatically filtering redundancies, correcting imaginary frequencies, and refining unique minima using high-level quantum mechanical (QM) evaluations.
 
 ### Key Features
 
@@ -49,7 +49,7 @@ For a comprehensive guide covering the theoretical background, detailed paramete
 </div>
 
 > [!NOTE]  
-> We highly recommend reviewing the **Pre-Optimization Strategy** and **Similarity Clustering** sections in the manual to understand how to correctly select thresholds ($\tau$) and handle skipped/critical geometries.
+> We highly recommend reviewing the **Optimization Strategy** and **Similarity Clustering** sections in the manual to understand how to correctly select thresholds ($\tau$) and handle skipped/critical geometries.
 
 ---
 
@@ -121,13 +121,13 @@ ascec input
 ```
 
 ### 2. Standalone Annealing Simulation
-Once your input file (e.g., `system.in`) is generated, you can validate the simulation box and launch the annealing process:
+Once your input file (e.g., `system.asc`) is generated, you can validate the simulation box and launch the annealing process:
 ```bash
 # Analyze simulation box requirements
-ascec system.in box
+ascec system.asc box
 
 # Run in triplicate (r3) using a 10% effective packing box
-ascec system.in r3 --box10
+ascec system.asc r3 --box10
 
 # Execute the generated launcher
 ./launcher_ascec.sh
@@ -137,10 +137,10 @@ ascec system.in r3 --box10
 ASCEC truly shines when automating the tedious optimization and clustering cycles. Define a multi-stage workflow in your input file and launch it with a single command:
 
 ```bash
-ascec system.in protocol
+ascec system.asc
 ```
 *The workflow will autonomously manage:*<br>
-`Annealing` ➔ `Pre-optimization (e.g., GFN2-xTB)` ➔ `Topological Clustering` ➔ `High-level DFT Optimization` ➔ `Final Boltzmann Analysis`.
+`Annealing` ➔ `Pre-optimization (e.g., GFN2-xTB)` ➔ `Topological Clustering` ➔ `High-level DFT Refinement` ➔ `Final Boltzmann Analysis`.
 
 ---
 
@@ -150,7 +150,7 @@ ASCEC automatically organizes your data and generates publication-ready analytic
 *   📉 **`tvse_*.dat / .png`**: Energy evolution profiles across Monte Carlo steps.
 *   💧 **`result_*.xyz`**: Complete trajectory files ready for visualization in Avogadro, GaussView, or IQmol.
 *   🌳 **Dendrograms**: Beautiful hierarchical tree plots (`.png`) visually detailing the clustering distances of distinct structural families.
-*   🧮 **Boltzmann Distribution**: A concise `.txt` summary ranking unique conformers by their Gibbs Free Energy populations.
+*   🧮 **Boltzmann Distribution**: A concise `.txt` summary ranking unique configurations by their Gibbs Free Energy populations.
 
 ---
 
