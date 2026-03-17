@@ -5417,7 +5417,7 @@ def extract_qm_executable_from_launcher(launcher_content: str, qm_program_idx: i
 
 def calculate_input_files(template_file: str, launcher_template: Optional[str] = None, 
                           auto_select: str = 'interactive', stage_type: str = "optimization", 
-                          workflow_mode: bool = False) -> str:
+                          workflow_mode: bool = False, qm_alias: str = "orca") -> str:
     """
     Unified function to create QM input files and launcher scripts for both
     optimization and refinement stages.
@@ -5632,32 +5632,52 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
     if not all_input_files:
         return "No input files were created successfully."
         
-    # Create launcher script
+    # Deduplicate input files: keep only flat filenames (basenames)
+    # This prevents duplicate commands like motif_29/motif_29_opt.inp AND motif_29_opt.inp
+    seen_basenames = set()
+    launcher_input_files = []
+    for input_file in all_input_files:
+        basename = os.path.basename(input_file)
+        if basename not in seen_basenames:
+            seen_basenames.add(basename)
+            launcher_input_files.append(basename)
+
+    # Sort input files in natural numeric order where possible
+    def sort_key(f):
+        import re
+        nums = re.findall(r'\d+', f)
+        return [int(n) for n in nums] if nums else [f]
+
+    launcher_input_files.sort(key=sort_key)
+
+    # Decide launcher source: user template or auto-generated ORCA environment
+    launcher_base_content = None
+    launcher_generated_automatically = False
+
     if launcher_template and launcher_content:
+        launcher_base_content = launcher_content
+    elif qm_program == 'orca':
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            auto_launcher_tmp = create_auto_launcher(tmpdir, qm_program, qm_alias, quiet=workflow_mode)
+            if auto_launcher_tmp and os.path.exists(auto_launcher_tmp):
+                with open(auto_launcher_tmp, 'r') as f:
+                    launcher_base_content = f.read()
+                launcher_generated_automatically = True
+
+    if launcher_base_content:
         launcher_path = os.path.join(output_dir, f"launcher_{qm_program}.sh")
         try:
-            qm_executable = extract_qm_executable_from_launcher(launcher_content, qm_program_idx)
+            qm_executable = extract_qm_executable_from_launcher(launcher_base_content, qm_program_idx)
             if not workflow_mode:
-                print(f"Using QM executable: {qm_program}")
-            
-            # Deduplicate input files: keep only flat filenames (basenames)
-            # This prevents duplicate commands like motif_29/motif_29_opt.inp AND motif_29_opt.inp
-            seen_basenames = set()
-            deduplicated_files = []
-            for input_file in all_input_files:
-                basename = os.path.basename(input_file)
-                if basename not in seen_basenames:
-                    seen_basenames.add(basename)
-                    # Prefer flat filename (basename) over directory-qualified paths
-                    deduplicated_files.append(basename)
-            all_input_files = deduplicated_files
-            
+                print(f"Using QM executable: {qm_executable}")
+
             with open(launcher_path, 'w') as f:
                 # Header - copy everything up to ### separator, skip any existing run commands
-                launcher_lines = launcher_content.rstrip().split('\n')
+                launcher_lines = launcher_base_content.rstrip().split('\n')
                 separator_found = False
                 import re
-                
+
                 for line in launcher_lines:
                     if line.strip() == '###':
                         separator_found = True
@@ -5665,53 +5685,45 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
                         break
                     else:
                         # Skip lines that look like run commands (generic pattern)
-                        # Pattern: <command> <file>.<ext> [> <output>] [; or &&]
                         if re.search(r'\S+\s+\S+\.(inp|gjf|com)\s*(?:>|;|&&|\s*$)', line):
                             continue
-                        # Skip standalone && or ; or \ lines
+                        # Skip standalone continuations
                         if line.strip() in ('&&', '&& \\', ';', '; \\', '\\'):
                             continue
                         f.write(line + "\n")
-                
+
                 if not separator_found:
                     f.write("\n###\n\n# Run QM using the full path\n")
-                    
-                # Commands
-                # Sort input files
-                def sort_key(f):
-                    import re
-                    # Try to extract numbers
-                    nums = re.findall(r'\d+', f)
-                    return [int(n) for n in nums] if nums else [f]
-                all_input_files.sort(key=sort_key)
-                
-                for i, input_file in enumerate(all_input_files):
+
+                for i, input_file in enumerate(launcher_input_files):
                     output_file = input_file.replace(input_ext, output_ext)
-                    # Gaussian needs input redirection, ORCA does not
                     if qm_program == 'gaussian':
                         cmd = f"{qm_executable} < {input_file} > {output_file}"
                     else:  # orca
                         cmd = f"{qm_executable} {input_file} > {output_file}"
-                        
-                    if i < len(all_input_files) - 1:
+
+                    if i < len(launcher_input_files) - 1:
                         f.write(f"{cmd} ; \\\n")
                     else:
                         f.write(f"{cmd}\n")
-                        
+
             os.chmod(launcher_path, 0o755)
-            
+
             msg = f"\nCreated {stage_type} system in '{output_dir}' directory:\n"
             msg += f"  Input files: {len(all_input_files)}\n"
-            msg += f"  Launcher script: launcher_{qm_program}.sh"
+            if launcher_generated_automatically:
+                msg += f"  Launcher script: launcher_{qm_program}.sh (auto-generated)"
+            else:
+                msg += f"  Launcher script: launcher_{qm_program}.sh"
             if not workflow_mode:
                 msg += f"\n\nTo run all calculations, use:\n"
                 msg += f"  cd {output_dir}\n"
                 msg += f"  ./launcher_{qm_program}.sh"
             return msg
-            
+
         except IOError as e:
             return f"Error creating launcher script: {e}"
-            
+
     return f"Created {stage_type} system in '{output_dir}' with {len(all_input_files)} input files (no launcher)."
 
 
@@ -12883,21 +12895,15 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
         # Get QM alias from context (read from input.in line 9)
         qm_alias = getattr(context, 'qm_alias', 'orca')
         
-        auto_launcher_created = False
-        auto_launcher_content = ""
-        if not launcher_file:
-            # Try to auto-create launcher in a temp location first (don't interfere with directory naming)
-            import tempfile
-            with tempfile.TemporaryDirectory() as tmpdir:
-                auto_launcher_tmp = create_auto_launcher(tmpdir, "orca", qm_alias, quiet=workflow_concise)
-                if auto_launcher_tmp:
-                    # Read the launcher content to pass it later
-                    with open(auto_launcher_tmp, 'r') as f:
-                        auto_launcher_content = f.read()
-                    auto_launcher_created = True
-        
         # Run calculation system creation with auto_select (in workflow mode)
-        status = calculate_input_files(template_file, launcher_file, auto_select=auto_select, stage_type="optimization", workflow_mode=True)
+        status = calculate_input_files(
+            template_file,
+            launcher_file,
+            auto_select=auto_select,
+            stage_type="optimization",
+            workflow_mode=True,
+            qm_alias=qm_alias,
+        )
         # Check if calculate_input_files succeeded (returns string message)
         # Successfully created files return: "Created optimization system in '...' with X input files..."
         # Errors return: "Error: ..."
@@ -12917,15 +12923,6 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
         else:
             optimization_dir_path = None
         
-        # If we auto-created a launcher, copy it to the actual optimization directory
-        if auto_launcher_created and optimization_dir_path and os.path.exists(optimization_dir_path):
-            launcher_dest = os.path.join(optimization_dir_path, "launcher_orca.sh")
-            if not os.path.exists(launcher_dest):
-                with open(launcher_dest, 'w') as f:
-                    f.write(auto_launcher_content)
-                os.chmod(launcher_dest, 0o755)
-                if not workflow_concise:
-                    print(f"  Created auto-generated launcher: launcher_orca.sh")
     
     if optimization_dir_path and os.path.exists(optimization_dir_path):
         context.optimization_stage_dir = optimization_dir_path
