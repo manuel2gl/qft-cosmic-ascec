@@ -387,6 +387,7 @@ class SystemState:
         self.qm_memory: Optional[str] = None      # memory - No default, will be None if not in input
         self.qm_nproc: Optional[int] = None       # nprocs
         self.qm_additional_keywords: str = ""     # if necessary
+        self._orca_exe_checked: bool = False      # Cache ORCA executable check per run
         
         # Parallel processing settings for ASCEC
         self.ascec_parallel_cores: int = 1       # Number of cores for ASCEC operations (file I/O, coordinate transformations)
@@ -798,7 +799,7 @@ def convert_xyz_to_mol(xyz_filepath: str, openbabel_alias: str = "obabel", state
         conversion_command = [openbabel_full_path, "-i", "xyz", xyz_filepath, "-o", "mol", "-O", mol_filepath]
         _print_verbose(f"  Converting '{os.path.basename(xyz_filepath)}' to MOL...", 1, state)
         
-        process = subprocess.run(conversion_command, check=False, capture_output=True, text=True, timeout=60) # Added timeout
+        process = subprocess.run(conversion_command, check=False, capture_output=True, text=True)
         
         if process.returncode != 0:
             _print_verbose(f"  Open Babel conversion failed for '{os.path.basename(xyz_filepath)}'.", 1, state)
@@ -816,9 +817,6 @@ def convert_xyz_to_mol(xyz_filepath: str, openbabel_alias: str = "obabel", state
 
     except FileNotFoundError:
         _print_verbose(f"  Error: Open Babel executable '{openbabel_alias}' not found. Please ensure it's installed and in your PATH.", 0, state)
-        return False
-    except subprocess.TimeoutExpired:
-        _print_verbose(f"  Error: Open Babel conversion timed out for '{os.path.basename(xyz_filepath)}'.", 0, state)
         return False
     except Exception as e:
         _print_verbose(f"  An unexpected error occurred during Open Babel conversion for '{os.path.basename(xyz_filepath)}': {e}", 0, state)
@@ -2876,26 +2874,31 @@ def calculate_energy(coords: np.ndarray, atomic_numbers: List[int], state: Syste
         return 0.0, 0
 
     try:
-        # First, check if the QM executable is available with shorter timeout and better error handling
-        if state.qm_program == "orca":
-            # Test if ORCA is available using a simple version check with reduced timeout
+        # Check ORCA executable only once per run to avoid per-step overhead.
+        if state.qm_program == "orca" and not getattr(state, "_orca_exe_checked", False):
             try:
-                test_process = subprocess.run([qm_exe, "--version"], capture_output=True, text=True, timeout=3)
-                # ORCA might return non-zero even for version check, so just check if it ran
-                _print_verbose(f"ORCA test command executed: {qm_exe} --version", 2, state)
-            except subprocess.TimeoutExpired:
-                _print_verbose(f"Warning: ORCA executable '{qm_exe}' timeout during version check (proceeding anyway)", 1, state)
+                subprocess.run([qm_exe, "--version"], capture_output=True, text=True)
+                _print_verbose(f"ORCA executable check passed: {qm_exe}", 2, state)
             except FileNotFoundError:
                 _print_verbose(f"Error: ORCA executable '{qm_exe}' not found in PATH", 0, state)
                 return 0.0, 0
             except Exception as e:
                 _print_verbose(f"Warning: ORCA executable test failed: {e} (proceeding anyway)", 1, state)
+            finally:
+                state._orca_exe_checked = True
         
         if state.qm_program == "orca":
             # Special handling for ORCA to capture output properly
             _print_verbose(f"Executing ORCA command: {' '.join(qm_command)} in directory: {run_dir}", 2, state)
             with open(qm_output_path, 'w') as output_file:
-                process = subprocess.run(qm_command, cwd=run_dir, stdout=output_file, stderr=subprocess.PIPE, text=True, check=False)
+                process = subprocess.run(
+                    qm_command,
+                    cwd=run_dir,
+                    stdout=output_file,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=False
+                )
             _print_verbose(f"ORCA process completed with return code: {process.returncode}", 2, state)
         else:
             # For Gaussian and other programs
@@ -2912,8 +2915,6 @@ def calculate_energy(coords: np.ndarray, atomic_numbers: List[int], state: Syste
             if state.qm_program == "orca":
                 _print_verbose(f"  Command executed: {' '.join(qm_command)}", 2, state)
                 _print_verbose(f"  Working directory: {run_dir}", 2, state)
-                if process.stderr:
-                    _print_verbose(f"  STDERR:\n{_format_stream_output(process.stderr)}", 2, state)
                 # ORCA can return non-zero even on success, continue to check output file
                 should_check_output = True
             else:
@@ -6665,8 +6666,7 @@ def detect_orca_version_from_executable(orca_path: Optional[str] = None) -> Opti
         result = subprocess.run(
             [orca_path, "--version"],
             capture_output=True,
-            text=True,
-            timeout=10
+            text=True
         )
         # Parse version from output (works for both stdout and stderr)
         output = result.stdout + result.stderr
@@ -6676,7 +6676,7 @@ def detect_orca_version_from_executable(orca_path: Optional[str] = None) -> Opti
             major = int(match.group(1))
             minor = int(match.group(2))
             return (major, minor)
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+    except (FileNotFoundError, Exception):
         pass
     return None
 
@@ -6885,14 +6885,13 @@ def detect_orca_executable(alias: str = "orca") -> Optional[str]:
         result = subprocess.run(
             ["which", alias],
             capture_output=True,
-            text=True,
-            timeout=5
+            text=True
         )
         if result.returncode == 0 and result.stdout.strip():
             path = result.stdout.strip()
             if os.path.exists(path):
                 return path
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+    except (FileNotFoundError, Exception):
         pass
     
     return None
@@ -7052,25 +7051,55 @@ def parse_rescue_method(input_content: str, orca_path: Optional[str] = None,
         - rescue_method: Method string (e.g., "Native-GFN2-xTB", "HF-3c")
         - use_numfreq: True if NumFreq should be used, False for Freq
     """
-    # Look for #rescue(method) or #rescue(method,num) pattern
+    def _parse_rescue_spec(spec: str) -> Tuple[str, Optional[bool]]:
+        """Parse rescue specifiers like method,num or method/num into method + freq mode."""
+        raw = spec.strip()
+        if not raw:
+            return ('', None)
+
+        # Accept both comma and slash qualifiers, e.g.:
+        #   Native-GFN2-xTB/num, HF-3c/freq, b97-c,num
+        method = raw
+        freq_mode: Optional[bool] = None
+
+        if '/' in raw:
+            base, suffix = raw.split('/', 1)
+            method = base.strip()
+            suffix_token = suffix.strip().lower()
+            if suffix_token in ('num', 'numfreq'):
+                freq_mode = True
+            elif suffix_token in ('freq',):
+                freq_mode = False
+        elif ',' in raw:
+            parts = [p.strip() for p in raw.split(',') if p.strip()]
+            method = parts[0]
+            for token in parts[1:]:
+                token_l = token.lower()
+                if token_l in ('num', 'numfreq'):
+                    freq_mode = True
+                elif token_l in ('freq',):
+                    freq_mode = False
+
+        return (method, freq_mode)
+
+    # Look for #rescue(method) / #rescue(method,num) / #rescue(method/num) pattern
     match = re.search(r'#rescue\(([^)]+)\)', input_content, re.IGNORECASE)
     if match:
-        rescue_spec = match.group(1).strip()
-        # Check if ",num" suffix is present for NumFreq
-        if ',' in rescue_spec:
-            parts = [p.strip() for p in rescue_spec.split(',')]
-            method = parts[0]
-            use_numfreq = any(p.lower() in ('num', 'numfreq') for p in parts[1:])
-            # Convert xTB method for ORCA version
-            if is_xtb_method(method):
-                method = convert_xtb_for_orca_version(method, orca_path, launcher_content)
-            return (method, use_numfreq)
-        # No ,num suffix - check if it's an xTB method (auto-enable NumFreq)
-        method = rescue_spec
+        method, explicit_numfreq = _parse_rescue_spec(match.group(1))
+        if not method:
+            return ('HF-3c', False)
+
+        # Convert xTB method for ORCA version and default to NumFreq unless explicitly overridden.
         if is_xtb_method(method):
             method = convert_xtb_for_orca_version(method, orca_path, launcher_content)
-            return (method, True)  # xTB methods use NumFreq
-        return (method, False)  # Non-xTB methods use Freq
+            if explicit_numfreq is not None:
+                return (method, explicit_numfreq)
+            return (method, True)
+
+        # Non-xTB methods default to Freq unless explicitly overridden.
+        if explicit_numfreq is not None:
+            return (method, explicit_numfreq)
+        return (method, False)
     
     # No #rescue directive - check if template uses xTB method
     xtb_method = detect_xtb_in_template(input_content)
@@ -7334,14 +7363,8 @@ def run_rescue_hessian_calculation(xyz_file: str, rescue_method: str, launcher_p
             ['bash', temp_script],
             cwd=working_dir,
             capture_output=True,
-            text=True,
-            timeout=3600  # 1 hour timeout for Hessian calculation
+            text=True
         )
-    except subprocess.TimeoutExpired:
-        _rescue_log(f"  ✗ Rescue Hessian calculation timed out (1 hour)")
-        if os.path.exists(temp_script):
-            os.remove(temp_script)
-        return None
     except Exception as e:
         _rescue_log(f"  ✗ Rescue Hessian calculation error: {e}")
         if os.path.exists(temp_script):
@@ -8501,6 +8524,9 @@ def execute_similarity_analysis(*args):
     
     # Build command
     cmd = ["python", similarity_script] + list(args)
+    has_threshold_arg = any(str(arg).startswith("--th=") or str(arg).startswith("--threshold=") for arg in args)
+    if not has_threshold_arg:
+        cmd.extend(["--th", "2.0"])
     
     print("=" * 50)
     print("ASCEC Similarity Analysis")
@@ -8695,6 +8721,7 @@ class WorkflowContext:
     recalculated_files: Optional[List[str]] = None  # List of basenames for files being recalculated in redo
     pending_similarity_folder: Optional[str] = None  # Folder set by optimization/refinement for the next similarity stage
     use_skipped_threshold: bool = False  # True if --skipped flag is used, False if --critical (default)
+    current_stage: Optional[Dict[str, Any]] = None  # Active workflow stage (for stage-aware helpers)
     update_progress: Optional[Callable[[str], None]] = None  # Compact workflow progress callback
     completed_stage_count: int = 0  # Number of finished workflow stages for progress rendering
     
@@ -8782,7 +8809,16 @@ class WorkflowContext:
 
 def contains_workflow_separator(args: List[str]) -> bool:
     """Check if command line arguments contain ',' or 'then' separator (workflow mode)."""
-    return ',' in args or 'then' in args
+    for arg in args:
+        if not arg:
+            continue
+        token = arg.strip().lower()
+        if token == 'then' or token == ',':
+            return True
+        # Support comma-attached forms such as "r3," or "input.asc,"
+        if ',' in token:
+            return True
+    return False
 
 def parse_workflow_stages(args: List[str]) -> List[Dict[str, Any]]:
     """
@@ -8987,7 +9023,8 @@ def find_similarity_script() -> Optional[str]:
     # Check if in PATH
     try:
         result = subprocess.run(['which', 'similarity-v01.py'], 
-                              capture_output=True, text=True, timeout=5)
+                              capture_output=True, text=True
+        )
         if result.returncode == 0:
             return result.stdout.strip()
     except:
@@ -10355,6 +10392,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         stage_num = stage_idx + 1
         stage = stages[stage_idx]
         stage_type = stage['type']
+        # Expose active stage to helper functions that inspect threshold flags.
+        context.current_stage = stage  # type: ignore[attr-defined]
         
         # Check if stage already completed (from cache)
         if use_cache and 'stages' in cache:
@@ -11403,6 +11442,18 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
             except ValueError:
                 pass
     
+    # Clean up old annealing folder from previous runs to avoid duplicate replicas
+    # (Only in workflow mode - standalone mode keeps it for reference)
+    annealing_folder = os.path.join(os.path.dirname(context.input_file), "annealing")
+    if os.path.exists(annealing_folder):
+        try:
+            shutil.rmtree(annealing_folder)
+            if verbose:
+                print(f"Cleaned up previous annealing folder")
+        except Exception as e:
+            if verbose:
+                print(f"Warning: Could not clean old annealing folder: {e}")
+    
     # Create replicated runs (without launcher script in workflow mode)
     replicated_files = create_replicated_runs(
         context.input_file,
@@ -11422,9 +11473,6 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
     if verbose:
         print(f"Running {num_replicas} annealing simulation(s)")
     
-    # Hardcoded: retry each annealing run up to 3 times
-    max_retries = 3
-    
     failed_runs = []
     progress_cb = getattr(context, 'update_progress', None)
     if not verbose and callable(progress_cb):
@@ -11438,49 +11486,58 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
         if verbose:
             print(f"\n  {run_name}...", end=" ", flush=True)
         
-        # Retry loop for each annealing run
         success = False
         last_error = None
-        
-        for attempt in range(1, max_retries + 1):
-            try:
-                # Run as subprocess in the run directory
-                # Use python explicitly to ensure correct interpreter
-                cmd = ['python', os.path.abspath(sys.argv[0]), input_basename]
+        # Single execution per replica (no retries): each replica should generate one seed/run.
+        try:
+            # Run as subprocess in the run directory using the current interpreter.
+            cmd = [sys.executable, os.path.abspath(sys.argv[0]), input_basename]
+
+            # Write output to files instead of capturing to memory to avoid deadlock
+            # when subprocess produces large output (for QM calculations)
+            stdout_file = os.path.join(run_dir, f"{input_basename.replace('.in', '')}_stdout.log")
+            stderr_file = os.path.join(run_dir, f"{input_basename.replace('.in', '')}_stderr.log")
+
+            with open(stdout_file, 'w') as stdout_f, open(stderr_file, 'w') as stderr_f:
                 result = subprocess.run(
                     cmd,
                     cwd=run_dir,
-                    capture_output=True,
-                    text=True,
-                    env={**os.environ, "ASCEC_DISABLE_EMBEDDED_PROTOCOL": "1"},
-                    timeout=3600  # 1 hour timeout per run
+                    stdout=stdout_f,
+                    stderr=stderr_f,
+                    env={**os.environ, "ASCEC_DISABLE_EMBEDDED_PROTOCOL": "1"}
                 )
-                
-                # Check return code
-                if result.returncode != 0:
-                    last_error = f"Exit code {result.returncode}"
-                    if result.stderr:
-                        # Get last line of stderr for concise error
-                        stderr_lines = result.stderr.strip().split('\n')
-                        if stderr_lines:
-                            last_error += f": {stderr_lines[-1]}"
-                    continue
-                
-                # Check if successful
-                output_file = os.path.join(run_dir, os.path.splitext(input_basename)[0] + '.out')
-                if os.path.exists(output_file):
-                    with open(output_file, 'r') as f:
-                        content = f.read()
-                        if 'Normal annealing termination' in content or 'Annealing simulation finished' in content:
-                            success = True
-                            break
-                else:
-                    last_error = f"Output file not created"
-                    
-            except subprocess.TimeoutExpired:
-                last_error = "Timeout (>1 hour)"
-            except Exception as e:
-                last_error = str(e)
+
+            output_file = os.path.join(run_dir, os.path.splitext(input_basename)[0] + '.out')
+            artifacts_exist = bool(glob.glob(os.path.join(run_dir, 'result_*.xyz'))) and bool(
+                glob.glob(os.path.join(run_dir, 'tvse_*.dat'))
+            )
+
+            # Success criteria: normal termination marker OR expected annealing artifacts.
+            if os.path.exists(output_file):
+                with open(output_file, 'r') as f:
+                    content = f.read()
+                    if 'Normal annealing termination' in content or 'Annealing simulation finished' in content:
+                        success = True
+
+            if not success and artifacts_exist:
+                success = True
+
+            if not success and result.returncode != 0:
+                last_error = f"Exit code {result.returncode}"
+                try:
+                    with open(stderr_file, 'r') as f:
+                        stderr_lines = [ln for ln in f.read().splitlines() if ln.strip()]
+                    if stderr_lines:
+                        last_error += f": {stderr_lines[-1]}"
+                except Exception:
+                    pass
+            elif not success and not os.path.exists(output_file):
+                last_error = "Output file not created"
+            elif not success:
+                last_error = "Annealing finished without normal termination marker"
+
+        except Exception as e:
+            last_error = str(e)
         
         if success:
             completed_replicas += 1
@@ -11532,6 +11589,18 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
                         if last_error:
                             if verbose:
                                 print(f"    {last_error}")
+                # Show tail of subprocess stderr for faster diagnosis when available.
+                stderr_file = os.path.join(run_dir, f"{input_basename.replace('.in', '')}_stderr.log")
+                if os.path.exists(stderr_file) and verbose:
+                    try:
+                        with open(stderr_file, 'r') as f:
+                            err_lines = [ln for ln in f.read().splitlines() if ln.strip()]
+                        if err_lines:
+                            print("    STDERR tail:")
+                            for line in err_lines[-5:]:
+                                print(f"      {line}")
+                    except Exception:
+                        pass
                 elif last_error:
                     if verbose:
                         print(f"    {last_error}")
@@ -13081,12 +13150,15 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                         
                         # Measure execution time to detect launch failures
                         start_time = time.time()
-                        result = subprocess.run(
-                            ['bash', script_name],
-                            cwd=calc_working_dir,
-                            capture_output=True,
-                            text=True
-                        )
+                        # Write output to file instead of capturing to memory to avoid deadlock
+                        output_redirect_file = os.path.join(calc_working_dir, f"{script_basename}.log")
+                        with open(output_redirect_file, 'w') as log_f:
+                            result = subprocess.run(
+                                ['bash', script_name],
+                                cwd=calc_working_dir,
+                                stdout=log_f,
+                                stderr=subprocess.STDOUT
+                            )
                         elapsed_time = time.time() - start_time
                         
                         # If calculation ran past the threshold, it started normally
@@ -13274,10 +13346,6 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                         print(f"⚠ Warning: Could not organize files: {e}")
                     finally:
                         os.chdir(saved_cwd)
-                    
-            except subprocess.TimeoutExpired:
-                print("✗ Error: Calculations timed out after 2 hours")
-                return 1
             except Exception as e:
                 print(f"✗ Error running calculations: {e}")
                 return 1
@@ -13322,6 +13390,8 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         except Exception:
             return None, None
 
+    update_list_file: Optional[str] = None
+
     # Determine which similarity folder to use dynamically based on the most recent stage
     # Priority: use the most recently set similarity folder (from optimization/refinement that just ran)
     similarity_base = None
@@ -13362,6 +13432,8 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             similarity_base = sorted(similarity_candidates, key=_sim_sort_key)[-1]
         else:
             print("Warning: similarity folder not found")
+            if getattr(context, 'is_workflow', False):
+                return 1
             return 0
     
     # Store similarity folder for protocol summary
@@ -13399,18 +13471,34 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                 except Exception:
                     pass
     
-    # Verify orca_out_N or opt_out_N subfolder exists and count input structures
-    out_folder_found = False
+    # Verify output subfolder exists and count input structures.
+    out_candidates = [
+        item
+        for item in sorted(os.listdir(similarity_base))
+        if item.startswith("orca_out_") or item.startswith("opt_out_") or item.startswith("gaussian_out_")
+    ]
+
+    out_folder_found = len(out_candidates) > 0
     sim_input_count = 0
-    for item in sorted(os.listdir(similarity_base)):
-        if item.startswith("orca_out_") or item.startswith("opt_out_"):
-            out_folder_found = True
-            out_dir = os.path.join(similarity_base, item)
-            sim_input_count = len(glob.glob(os.path.join(out_dir, "*.out")))
-            break
+    if out_folder_found:
+        if getattr(context, 'is_workflow', False) and len(out_candidates) > 1:
+            print(
+                f"Error: Multiple output folders found in {similarity_base}/: {', '.join(out_candidates)}. "
+                "Workflow mode requires a single deterministic folder."
+            )
+            return 1
+
+        selected_out = out_candidates[0]
+        out_dir = os.path.join(similarity_base, selected_out)
+        sim_input_count = (
+            len(glob.glob(os.path.join(out_dir, "*.out")))
+            + len(glob.glob(os.path.join(out_dir, "*.log")))
+        )
     
     if not out_folder_found:
-        print(f"Warning: No orca_out_* or opt_out_* folder found in {similarity_base}/")
+        print(f"Warning: No orca_out_*, gaussian_out_*, or opt_out_* folder found in {similarity_base}/")
+        if getattr(context, 'is_workflow', False):
+            return 1
         return 0
     
     args = stage['args']
@@ -13429,6 +13517,8 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         similarity_script = find_similarity_script()
         if not similarity_script:
             print("Warning: similarity-v01.py script not found")
+            if getattr(context, 'is_workflow', False):
+                return 1
             return 0  # Not an error
     
     # Default: concise output (no extra printing)
@@ -13447,6 +13537,11 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     has_cores_arg = any(arg.startswith('--cores') or arg.startswith('-j') for arg in other_args)
     if not has_cores_arg and hasattr(context, 'ascec_parallel_cores') and context.ascec_parallel_cores > 0:
         cmd.extend(['--cores', str(context.ascec_parallel_cores)])
+
+    # Default similarity threshold when user doesn't provide one.
+    has_threshold_arg = any(arg.startswith('--th=') or arg.startswith('--threshold=') for arg in other_args)
+    if not has_threshold_arg:
+        cmd.extend(['--th', '2.0'])
     
     # No need to specify motif prefix - similarity script auto-detects from filenames:
     # conf_* files → creates motifs_*/ folder (after calculation)
@@ -13652,13 +13747,12 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         context.similarity_dir = similarity_base
         
         # Cleanup temp file if created (but DON'T clear recalculated_files - it's needed for the redo loop!)
-        if hasattr(context, 'recalculated_files') and context.recalculated_files:
+        if update_list_file and os.path.exists(update_list_file):
             try:
-                update_list_file = ""  # Initialize
                 os.remove(update_list_file)
                 # NOTE: Do NOT clear context.recalculated_files here!
-                # The optimization stage redo needs this list to know which files to regenerate
-            except:
+                # The optimization stage redo needs this list to know which files to regenerate.
+            except Exception:
                 pass
         
         return 0
@@ -13668,14 +13762,18 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         if e.stderr:
             print(f"Error output: {e.stderr}")
         # Cleanup temp file if it exists
-        if hasattr(context, 'recalculated_files') and context.recalculated_files:
+        if update_list_file and os.path.exists(update_list_file):
             try:
-                update_list_file = ""  # Initialize
                 os.remove(update_list_file)
-            except:
+            except Exception:
                 pass
         return e.returncode
     except Exception as e:
+        if update_list_file and os.path.exists(update_list_file):
+            try:
+                os.remove(update_list_file)
+            except Exception:
+                pass
         print(f"Error running similarity analysis: {e}")
         return 1
 
@@ -13902,6 +14000,8 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     
     if not motif_files and not combined_file:
         print("Warning: No motif/umotif files found in motifs directory")
+        if getattr(context, 'is_workflow', False):
+            return 1
         return 0
     
     # Create refinement directory (or reuse if resuming)
@@ -14425,12 +14525,14 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                 
                 # Measure execution time to detect launch failures
                 start_time = time.time()
-                result = subprocess.run(
-                    ['bash', script_name],
-                    cwd=opt_working_dir,
-                    capture_output=True,
-                    text=True
-                )
+                output_redirect_file = os.path.join(opt_working_dir, f"{basename_only}.log")
+                with open(output_redirect_file, 'w') as log_f:
+                    result = subprocess.run(
+                        ['bash', script_name],
+                        cwd=opt_working_dir,
+                        stdout=log_f,
+                        stderr=subprocess.STDOUT
+                    )
                 elapsed_time = time.time() - start_time
                 
                 # If calculation ran past the threshold, it started normally
