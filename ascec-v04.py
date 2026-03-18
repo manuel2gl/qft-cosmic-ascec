@@ -1744,6 +1744,8 @@ def resolve_template_reference(context: 'WorkflowContext', template_token: str) 
     try:
         with open(out_path, 'w', encoding='utf-8') as f:
             f.write(template_content)
+        if hasattr(context, 'generated_template_files'):
+            context.generated_template_files.append(out_path)
         return out_path
     except Exception:
         return None
@@ -2306,6 +2308,30 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
         """Center text within given width."""
         padding = (width - len(text)) // 2
         return " " * padding + text
+
+    def format_concise_path(path_value: str) -> str:
+        """Render paths concisely for summary output (e.g., /similarity_2/orca_out_3)."""
+        if not path_value:
+            return path_value
+
+        raw = str(path_value).strip()
+        if not raw:
+            return raw
+
+        # Keep simple labels (e.g., Annealing) untouched.
+        if not any(sep in raw for sep in ('/', '\\')):
+            return raw
+
+        normalized = os.path.normpath(raw)
+        parts = [p for p in normalized.split(os.sep) if p and p != '.']
+        if not parts:
+            return raw
+
+        concise_parts = parts[-2:] if len(parts) >= 2 else parts
+        concise = '/' + '/'.join(concise_parts)
+        if raw.endswith('/') and not concise.endswith('/'):
+            concise += '/'
+        return concise
     
     def _extract_time_from_orca_summary(summary_file: str) -> Optional[float]:
         """Extract total execution time from orca_summary.txt file."""
@@ -2537,7 +2563,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                             mean_time = wall_time / result['completed']
                             f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
                         if 'similarity_folder' in result and result['similarity_folder']:
-                            f.write(f"    Outputs to:       {result['similarity_folder']}\n")
+                            f.write(f"    Outputs to:       {format_concise_path(result['similarity_folder'])}\n")
                     
                     elif stage_type == 'Similarity':
                         live_critical_pct = None
@@ -2553,7 +2579,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                             live_clusters = _extract_final_clusters_from_summary(sim_summary_file)
 
                         if 'similarity_folder' in result and result['similarity_folder']:
-                            f.write(f"    Working dir:      {result['similarity_folder']}\n")
+                            f.write(f"    Working dir:      {format_concise_path(result['similarity_folder'])}\n")
                         if 'threshold' in result:
                             f.write(f"    Threshold:        {result['threshold']}\n")
                         if 'rmsd_threshold' in result:
@@ -2645,11 +2671,11 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                             mean_time = wall_time / result['completed']
                             f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
                         if 'similarity_folder' in result and result['similarity_folder']:
-                            f.write(f"    Outputs to:       {result['similarity_folder']}\n")
+                            f.write(f"    Outputs to:       {format_concise_path(result['similarity_folder'])}\n")
 
                     elif stage_type == 'Refinement':
                         if 'motifs_source' in result and result['motifs_source']:
-                            f.write(f"    Inputs from:      {result['motifs_source']}\n")
+                            f.write(f"    Inputs from:      {format_concise_path(result['motifs_source'])}\n")
                         if 'completed' in result and 'total' in result:
                             f.write(f"    Completed:        {result['completed']}/{result['total']} refinements\n")
                         # Calculate and show mean execution time
@@ -2657,7 +2683,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                             mean_time = wall_time / result['completed']
                             f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
                         if 'similarity_folder' in result and result['similarity_folder']:
-                            f.write(f"    Outputs to:       {result['similarity_folder']}\n")
+                            f.write(f"    Outputs to:       {format_concise_path(result['similarity_folder'])}\n")
 
                     # Wall time for non-similarity stages
                     if wall_time and stage_type != 'Similarity':
@@ -8764,6 +8790,7 @@ class WorkflowContext:
     current_stage: Optional[Dict[str, Any]] = None  # Active workflow stage (for stage-aware helpers)
     update_progress: Optional[Callable[[str], None]] = None  # Compact workflow progress callback
     completed_stage_count: int = 0  # Number of finished workflow stages for progress rendering
+    generated_template_files: List[str] = dataclasses.field(default_factory=list)  # Temp files extracted from embedded template labels
     
     def get_previous_stage_output_dir(self, stage_type: str) -> Optional[str]:
         """
@@ -11568,6 +11595,16 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         generate_protocol_summary(cache_file=cache_file)
         if context.workflow_verbose_level >= 1:
             print(f"\n→ Protocol cache saved: {cache_file}")
+
+    # Remove temporary template files extracted from embedded labels.
+    # Keep user-provided real template files untouched.
+    if getattr(context, 'generated_template_files', None):
+        for temp_tpl in context.generated_template_files:
+            try:
+                if temp_tpl and os.path.isfile(temp_tpl):
+                    os.remove(temp_tpl)
+            except OSError:
+                pass
     
     return 0
 
@@ -13135,11 +13172,27 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
 
                 launcher_inputs: List[str] = []
                 seen_inputs = set()
+
+                # Prefer currently scheduled inputs (can include subdir relative paths).
                 for inp in sorted(input_files, key=natural_sort_key):
-                    base_inp = os.path.basename(inp)
-                    if base_inp not in seen_inputs:
-                        seen_inputs.add(base_inp)
-                        launcher_inputs.append(base_inp)
+                    norm_inp = inp.replace('\\\\', '/').strip()
+                    if norm_inp and norm_inp not in seen_inputs:
+                        seen_inputs.add(norm_inp)
+                        launcher_inputs.append(norm_inp)
+
+                # Fallback: discover valid inputs recursively if the stage list is empty.
+                if not launcher_inputs:
+                    for root, _, files in os.walk(optimization_dir_path):
+                        rel_root = os.path.relpath(root, optimization_dir_path)
+                        for file_name in files:
+                            if not is_valid_input_file(file_name):
+                                continue
+                            rel_path = file_name if rel_root == '.' else os.path.join(rel_root, file_name)
+                            rel_path = rel_path.replace('\\\\', '/')
+                            if rel_path not in seen_inputs:
+                                seen_inputs.add(rel_path)
+                                launcher_inputs.append(rel_path)
+                    launcher_inputs = sorted(launcher_inputs, key=natural_sort_key)
 
                 if launcher_inputs:
                     output_ext = '.out' if qm_program == 'orca' else '.log'
@@ -13148,7 +13201,8 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                             lf.write(launcher_env_setup + "\n\n")
                         lf.write("###\n\n")
                         for i, inp_name in enumerate(launcher_inputs):
-                            out_name = os.path.splitext(inp_name)[0] + output_ext
+                            inp_base = os.path.splitext(os.path.basename(inp_name))[0]
+                            out_name = inp_base + output_ext
                             if qm_program == 'orca':
                                 cmd = f"orca {inp_name} > {out_name}"
                             else:
@@ -13159,9 +13213,11 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                             else:
                                 lf.write(f"{cmd}\n")
                     os.chmod(launcher_script, 0o755)
-            except Exception:
-                # Non-critical: runtime execution does not depend on this convenience launcher.
-                pass
+                elif context.workflow_verbose_level >= 1:
+                    print(f"Warning: No input files found to populate {os.path.basename(launcher_script)}")
+            except Exception as e:
+                if context.workflow_verbose_level >= 1:
+                    print(f"Warning: Could not refresh launcher script: {e}")
             
             # Get exclusions from cache (already loaded earlier)
             # Use appropriate key based on which optimization stage this is
