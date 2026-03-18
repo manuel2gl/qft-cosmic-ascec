@@ -10731,10 +10731,19 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             # Get similarity orca output directory
                             sim_dir = context.similarity_dir if hasattr(context, 'similarity_dir') else "similarity"
                             
-                            # Find the orca_out directory in similarity
-                            orca_dirs = glob.glob(os.path.join(sim_dir, "orca_out*"))
-                            if orca_dirs:
-                                sim_orca_dir = orca_dirs[0]  # Use first match (e.g., orca_out_581)
+                            # Find the orca_out directory in similarity (deterministic target)
+                            sim_orca_dir = None
+                            preferred_sim_folder = getattr(context, 'optimization_sim_folder', None)
+                            if isinstance(preferred_sim_folder, str) and preferred_sim_folder:
+                                preferred_path = os.path.abspath(preferred_sim_folder)
+                                if os.path.isdir(preferred_path) and os.path.basename(preferred_path).startswith('orca_out_'):
+                                    sim_orca_dir = preferred_path
+                            if sim_orca_dir is None:
+                                orca_dirs = sorted(glob.glob(os.path.join(sim_dir, "orca_out*")), key=natural_sort_key)
+                                if orca_dirs:
+                                    sim_orca_dir = orca_dirs[-1]
+
+                            if sim_orca_dir:
                                 
                                 # Clean similarity directory BEFORE copying files (keep only orca_out and cache)
                                 if sim_dir and os.path.exists(sim_dir):
@@ -11214,20 +11223,23 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             if base_sim_dir and 'orca_out' in base_sim_dir:
                                 base_sim_dir = os.path.dirname(base_sim_dir)
                             
-                            # Find the orca_out directory in similarity
-                            # Check if sim_dir already includes orca_out folder
-                            if sim_dir and ('orca_out' in sim_dir or 'gaussian_out' in sim_dir):
-                                # sim_dir already points to orca_out folder (e.g., "similarity_2/orca_out_5")
-                                sim_orca_dir = sim_dir
-                            elif sim_dir:
-                                # sim_dir is base folder, search for orca_out subdirectory
-                                orca_dirs = glob.glob(os.path.join(sim_dir, "orca_out*"))
-                                if orca_dirs:
-                                    sim_orca_dir = orca_dirs[0]
-                                else:
-                                    sim_orca_dir = None
-                            else:
-                                sim_orca_dir = None
+                            # Find the orca_out directory in similarity (deterministic target)
+                            sim_orca_dir = None
+                            preferred_sim_folder = getattr(context, 'refinement_sim_folder', None)
+                            if isinstance(preferred_sim_folder, str) and preferred_sim_folder:
+                                preferred_path = os.path.abspath(preferred_sim_folder)
+                                if os.path.isdir(preferred_path) and os.path.basename(preferred_path).startswith('orca_out_'):
+                                    sim_orca_dir = preferred_path
+
+                            if sim_orca_dir is None:
+                                # Check if sim_dir already includes an out folder path
+                                if sim_dir and ('orca_out' in sim_dir or 'gaussian_out' in sim_dir):
+                                    sim_orca_dir = sim_dir
+                                elif sim_dir:
+                                    # sim_dir is base folder, search for orca_out subdirectory
+                                    orca_dirs = sorted(glob.glob(os.path.join(sim_dir, "orca_out*")), key=natural_sort_key)
+                                    if orca_dirs:
+                                        sim_orca_dir = orca_dirs[-1]
                             
                             if sim_orca_dir:
                                 # Clean similarity directory BEFORE copying files (keep only orca_out and cache)
@@ -13111,6 +13123,45 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                 qm_program = 'orca' if first_file.endswith('.inp') else 'gaussian'
             else:
                 qm_program = 'orca'  # Default
+
+            # Keep a user-ready launcher in sync with current inputs.
+            # This avoids header-only launchers after resume/redo paths.
+            try:
+                launcher_env_setup = ""
+                if os.path.exists(launcher_script):
+                    with open(launcher_script, 'r') as lf:
+                        existing_launcher = lf.read()
+                    launcher_env_setup = existing_launcher.split('###')[0].rstrip() if '###' in existing_launcher else existing_launcher.rstrip()
+
+                launcher_inputs: List[str] = []
+                seen_inputs = set()
+                for inp in sorted(input_files, key=natural_sort_key):
+                    base_inp = os.path.basename(inp)
+                    if base_inp not in seen_inputs:
+                        seen_inputs.add(base_inp)
+                        launcher_inputs.append(base_inp)
+
+                if launcher_inputs:
+                    output_ext = '.out' if qm_program == 'orca' else '.log'
+                    with open(launcher_script, 'w') as lf:
+                        if launcher_env_setup:
+                            lf.write(launcher_env_setup + "\n\n")
+                        lf.write("###\n\n")
+                        for i, inp_name in enumerate(launcher_inputs):
+                            out_name = os.path.splitext(inp_name)[0] + output_ext
+                            if qm_program == 'orca':
+                                cmd = f"orca {inp_name} > {out_name}"
+                            else:
+                                cmd = f"g16 {inp_name}"
+
+                            if i < len(launcher_inputs) - 1:
+                                lf.write(f"{cmd} ; \\\n")
+                            else:
+                                lf.write(f"{cmd}\n")
+                    os.chmod(launcher_script, 0o755)
+            except Exception:
+                # Non-critical: runtime execution does not depend on this convenience launcher.
+                pass
             
             # Get exclusions from cache (already loaded earlier)
             # Use appropriate key based on which optimization stage this is
@@ -13452,6 +13503,10 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                             if context.workflow_verbose_level >= 1:
                                 if 'Summary written to' in output:
                                     print("\nSummary file(s) generated")
+                            if similarity_folder:
+                                context.optimization_sim_folder = similarity_folder
+                                sim_base = similarity_folder.split('/')[0] if '/' in similarity_folder else similarity_folder
+                                context.pending_similarity_folder = sim_base
                             # Look for similarity folder reference
                             if 'Copied' in output and 'similarity' in output:
                                 for line in output.split('\n'):
@@ -13528,8 +13583,13 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     
     # Check if there's a pending_similarity_folder (set by optimization/refinement organize step)
     if hasattr(context, 'pending_similarity_folder') and context.pending_similarity_folder:
-        similarity_base = context.pending_similarity_folder
-        # Clear it after use so it doesn't affect next stage
+        pending_sim = context.pending_similarity_folder
+        pending_base = pending_sim.split('/')[0] if '/' in pending_sim else pending_sim
+        if os.path.isdir(pending_base):
+            similarity_base = pending_base
+        elif getattr(context, 'workflow_verbose_level', 0) >= 1:
+            print(f"Warning: Pending similarity folder '{pending_base}' not found. Using fallback selection.")
+        # Clear it after checking so stale values don't affect later stages
         context.pending_similarity_folder = None
     
     # Fallback: check what optimization_sim_folder or refinement_sim_folder were set
@@ -13562,6 +13622,26 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             similarity_base = sorted(similarity_candidates, key=_sim_sort_key)[-1]
         else:
             print("Warning: similarity folder not found")
+            if getattr(context, 'is_workflow', False):
+                return 1
+            return 0
+
+    # Final guard in case a stale/non-existent folder name slipped through selection logic.
+    if not os.path.isdir(similarity_base):
+        similarity_candidates = [
+            d for d in os.listdir('.')
+            if d.startswith('similarity') and os.path.isdir(d)
+        ]
+        if similarity_candidates:
+            def _sim_sort_key(name: str) -> int:
+                if name == 'similarity':
+                    return 1
+                match = re.search(r'^similarity_(\d+)$', name)
+                return int(match.group(1)) if match else 0
+
+            similarity_base = sorted(similarity_candidates, key=_sim_sort_key)[-1]
+        else:
+            print(f"Warning: similarity folder not found ({similarity_base})")
             if getattr(context, 'is_workflow', False):
                 return 1
             return 0
@@ -14829,9 +14909,13 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                     # Save original find_out_files function
                     original_find_out_files = find_out_files
                     
-                    def filtered_find_out_files(root_dir):
+                    def filtered_find_out_files(root_dir, include_orca=True, include_gaussian=True):
                         """Find .out files but exclude those matching exclusion patterns."""
-                        all_files = original_find_out_files(root_dir)
+                        all_files = original_find_out_files(
+                            root_dir,
+                            include_orca=include_orca,
+                            include_gaussian=include_gaussian
+                        )
                         filtered_files = []
                         for file_path in all_files:
                             basename = os.path.splitext(os.path.basename(file_path))[0]
@@ -14868,6 +14952,10 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                 if context.workflow_verbose_level >= 1:
                     if 'Summary written to' in output:
                         print("\nSummary file(s) generated")
+                if similarity_folder:
+                    context.refinement_sim_folder = similarity_folder
+                    sim_base = similarity_folder.split('/')[0] if '/' in similarity_folder else similarity_folder
+                    context.pending_similarity_folder = sim_base
                 if 'Copied' in output and 'similarity' in output:
                     # Extract the copy message and similarity folder
                     for line in output.split('\n'):
