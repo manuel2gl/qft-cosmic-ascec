@@ -93,10 +93,10 @@ def parse_verbosity_level(argv: List[str]) -> int:
     return 0
 
 
-# Supports both legacy placeholder (.asc,) and explicit input-file markers
-# (e.g. formic_annealing.in, formic_annealing.asc, etc.).
+# Supports placeholder marker (.asc,) and explicit input-file markers
+# that end with .asc (e.g. formic_annealing.asc).
 PROTOCOL_MARKER_RE = re.compile(
-    r'^\s*(?:\.asc|[^,\s#]+\.(?:asc|in|inp|com|gjf))\s*,',
+    r'^\s*(?:\.asc|[^,\s#]+\.asc)\s*,',
     re.IGNORECASE,
 )
 
@@ -6466,8 +6466,14 @@ def combine_xyz_files(output_filename="combined_results.xyz", exclude_pattern="_
     for root, _, files in os.walk("."):
         for file in files:
             filepath = os.path.join(root, file)
-            if filepath.endswith(".xyz") and exclude_pattern not in file and file != output_filename:
-                all_xyz_files.append(filepath)
+            if not filepath.endswith(".xyz"):
+                continue
+            # Never merge existing aggregate files into combined_results.
+            if file == output_filename or file.startswith("combined_r") or file.startswith("combined_results"):
+                continue
+            if exclude_pattern in file:
+                continue
+            all_xyz_files.append(filepath)
 
     if not all_xyz_files:
         print(f"No relevant .xyz files found (excluding '{exclude_pattern}' and '{output_filename}').")
@@ -7908,8 +7914,8 @@ def summarize_calculations(directory=".", file_types=None):
     # Return total number of summaries created
     return sum(results_by_type.values())
 
-def find_out_files(root_dir):
-    """Find all .out (ORCA) and .log (Gaussian) files in the directory tree using parallel processing."""
+def find_out_files(root_dir, include_orca: bool = True, include_gaussian: bool = True):
+    """Find calculation output files in the directory tree using parallel processing."""
     import multiprocessing as mp
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import os
@@ -7926,7 +7932,7 @@ def find_out_files(root_dir):
         root, files = dir_data
         local_out_files = []
         for file in files:
-            if file.endswith('.out') or file.endswith('.log'):
+            if (include_orca and file.endswith('.out')) or (include_gaussian and file.endswith('.log')):
                 local_out_files.append(os.path.join(root, file))
         return local_out_files
     
@@ -8157,11 +8163,11 @@ def group_files_by_base_with_tracking(directory='.'):
     return tracking
 
 
-def create_summary_with_tracking(directory):
+def create_summary_with_tracking(directory, file_types_override: Optional[List[str]] = None):
     """Create summaries and return list of created files."""
     created_files = []
     
-    # Check for ORCA files (.out)
+    # Check for ORCA files (.out) and Gaussian files (.log)
     orca_files = []
     gaussian_files = []
     
@@ -8174,11 +8180,14 @@ def create_summary_with_tracking(directory):
     
     try:
         # Determine which file types to process
-        file_types_to_process = []
-        if orca_files:
-            file_types_to_process.append('orca')
-        if gaussian_files:
-            file_types_to_process.append('gaussian')
+        if file_types_override is not None:
+            file_types_to_process = [ft for ft in file_types_override if ft in ('orca', 'gaussian')]
+        else:
+            file_types_to_process = []
+            if orca_files:
+                file_types_to_process.append('orca')
+            if gaussian_files:
+                file_types_to_process.append('gaussian')
         
         # Create summaries for found file types
         if file_types_to_process:
@@ -8195,11 +8204,11 @@ def create_summary_with_tracking(directory):
     return created_files
 
 
-def collect_out_files_with_tracking(reuse_existing=False, target_sim_folder=None):
-    """Collect .out (ORCA) and .log (Gaussian) files and return the created similarity folder path."""
+def collect_out_files_with_tracking(reuse_existing=False, target_sim_folder=None, include_gaussian: bool = True):
+    """Collect output files and return the created similarity folder path."""
     try:
         current_directory = os.getcwd()
-        all_out_files = find_out_files(current_directory)
+        all_out_files = find_out_files(current_directory, include_orca=True, include_gaussian=include_gaussian)
         
         # Filter out backup files, ORCA intermediate files, and non-calculation output files
         all_out_files = [f for f in all_out_files if not (
@@ -10096,6 +10105,109 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         progress_lines = len(lines)
         last_progress_render = tuple(lines)
 
+    def copy_final_ensemble_to_root() -> None:
+        """Copy final ensemble files from the last similarity output to input root."""
+        input_root = os.path.dirname(os.path.abspath(input_file))
+
+        # Resolve the last similarity directory from context first, then cache fallback.
+        similarity_candidates: List[str] = []
+        if getattr(context, 'similarity_dir', None):
+            similarity_candidates.append(str(context.similarity_dir))
+
+        if use_cache and isinstance(cache_file, str) and cache_file and os.path.exists(cache_file):
+            cache_data = load_protocol_cache(cache_file) or {}
+            cache_stages = cache_data.get('stages', {}) if isinstance(cache_data, dict) else {}
+            for idx in range(len(stages), 0, -1):
+                if stages[idx - 1].get('type') != 'similarity':
+                    continue
+                stage_key = f"similarity_{idx}"
+                stage_data = cache_stages.get(stage_key, {}) if isinstance(cache_stages, dict) else {}
+                if not isinstance(stage_data, dict):
+                    continue
+                stage_result = stage_data.get('result', {})
+                if not isinstance(stage_result, dict):
+                    continue
+                working_dir = stage_result.get('working_dir')
+                if isinstance(working_dir, str) and working_dir:
+                    similarity_candidates.append(working_dir)
+                break
+
+        resolved_similarity_dir = None
+        for candidate in similarity_candidates:
+            candidate_dir = candidate
+            base_name = os.path.basename(candidate_dir)
+            if base_name.startswith('orca_out_') or base_name.startswith('gaussian_out_') or base_name.startswith('opt_out_'):
+                candidate_dir = os.path.dirname(candidate_dir)
+
+            abs_candidate = os.path.abspath(candidate_dir)
+            if os.path.isdir(abs_candidate):
+                resolved_similarity_dir = abs_candidate
+                break
+
+        if not resolved_similarity_dir:
+            print("Warning: Could not resolve final similarity directory for final ensemble copy.")
+            return
+
+        umotif_dirs = sorted(glob.glob(os.path.join(resolved_similarity_dir, 'umotifs_*')))
+        motif_dirs = sorted(glob.glob(os.path.join(resolved_similarity_dir, 'motifs_*')))
+
+        # Prefer the most refined/final ensemble when present.
+        source_dir = umotif_dirs[-1] if umotif_dirs else (motif_dirs[-1] if motif_dirs else None)
+        if not source_dir:
+            print(f"Warning: No motifs_/umotifs_ folder found in {resolved_similarity_dir} for final ensemble copy.")
+            return
+
+        source_xyz = None
+        source_mol = None
+
+        preferred_xyz = [
+            os.path.join(source_dir, 'all_umotifs_combined.xyz'),
+            os.path.join(source_dir, 'all_motifs_combined.xyz'),
+        ]
+        preferred_mol = [
+            os.path.join(source_dir, 'all_umotifs_combined.mol'),
+            os.path.join(source_dir, 'all_motifs_combined.mol'),
+        ]
+
+        for path in preferred_xyz:
+            if os.path.exists(path):
+                source_xyz = path
+                break
+        for path in preferred_mol:
+            if os.path.exists(path):
+                source_mol = path
+                break
+
+        if source_xyz is None:
+            xyz_candidates = sorted(glob.glob(os.path.join(source_dir, 'all_*_combined.xyz')))
+            if xyz_candidates:
+                source_xyz = xyz_candidates[-1]
+        if source_mol is None:
+            mol_candidates = sorted(glob.glob(os.path.join(source_dir, 'all_*_combined.mol')))
+            if mol_candidates:
+                source_mol = mol_candidates[-1]
+
+        copied_any = False
+        copied_xyz = False
+        copied_mol = False
+        if source_xyz and os.path.exists(source_xyz):
+            shutil.copy2(source_xyz, os.path.join(input_root, 'final_ensemble.xyz'))
+            copied_any = True
+            copied_xyz = True
+        if source_mol and os.path.exists(source_mol):
+            shutil.copy2(source_mol, os.path.join(input_root, 'final_ensemble.mol'))
+            copied_any = True
+            copied_mol = True
+
+        if copied_any:
+            if context.workflow_verbose_level >= 1:
+                if copied_xyz:
+                    print(f"Final ensemble copied to: {os.path.join(input_root, 'final_ensemble.xyz')}")
+                if copied_mol:
+                    print(f"Final ensemble copied to: {os.path.join(input_root, 'final_ensemble.mol')}")
+        else:
+            print(f"Warning: No final combined ensemble files found in {source_dir}.")
+
     context = WorkflowContext(input_file=input_file)
     context.is_workflow = True  # We're in workflow mode
     context.workflow_verbose_level = parse_verbosity_level(sys.argv)
@@ -11417,6 +11529,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         print(f"{'-' * 60}")
     else:
         render_final_workflow_summary()
+
+    # Export final ensemble at root directory from the last similarity stage.
+    copy_final_ensemble_to_root()
     
     # Clean up temporary folders from retry attempts (final safety cleanup)
     temp_calc_folders = glob.glob("calculation_tmp_*")
@@ -11500,7 +11615,7 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
     
     context.annealing_dirs = [os.path.dirname(f) for f in replicated_files]
     
-    # Actually run the annealing simulations with retry logic
+    # Actually run the annealing simulations
     if verbose:
         print(f"Running {num_replicas} annealing simulation(s)")
     
@@ -11509,10 +11624,36 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
     if not verbose and callable(progress_cb):
         progress_cb(f"0/{num_replicas} ...")
     completed_replicas = 0
+
+    def _replica_already_completed(replica_dir: str, replica_input_name: str) -> bool:
+        """Return True when a replica has a completed annealing result set."""
+        output_file = os.path.join(replica_dir, os.path.splitext(replica_input_name)[0] + '.out')
+        has_result = bool(glob.glob(os.path.join(replica_dir, 'result_*.xyz')))
+        has_tvse = bool(glob.glob(os.path.join(replica_dir, 'tvse_*.dat')))
+        if not (has_result and has_tvse):
+            return False
+        if not os.path.exists(output_file):
+            return False
+        try:
+            with open(output_file, 'r') as f:
+                content = f.read()
+            return ('Normal annealing termination' in content) or ('Annealing simulation finished' in content)
+        except OSError:
+            return False
+
     for i, input_file in enumerate(replicated_files, 1):
         run_dir = os.path.dirname(input_file)
         run_name = os.path.basename(run_dir)
         input_basename = os.path.basename(input_file)
+
+        # Keep workflow idempotent: if a replica already completed, do not re-run it.
+        if _replica_already_completed(run_dir, input_basename):
+            completed_replicas += 1
+            if verbose:
+                print(f"\n  {run_name}... ✓ (already completed)")
+            elif callable(progress_cb):
+                progress_cb(f"{completed_replicas}/{num_replicas} ...")
+            continue
         
         if verbose:
             print(f"\n  {run_name}...", end=" ", flush=True)
@@ -13142,15 +13283,12 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                         
                         # Measure execution time to detect launch failures
                         start_time = time.time()
-                        # Write output to file instead of capturing to memory to avoid deadlock
-                        output_redirect_file = os.path.join(calc_working_dir, f"{script_basename}.log")
-                        with open(output_redirect_file, 'w') as log_f:
-                            result = subprocess.run(
-                                ['bash', script_name],
-                                cwd=calc_working_dir,
-                                stdout=log_f,
-                                stderr=subprocess.STDOUT
-                            )
+                        result = subprocess.run(
+                            ['bash', script_name],
+                            cwd=calc_working_dir,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL
+                        )
                         elapsed_time = time.time() - start_time
                         
                         # If calculation ran past the threshold, it started normally
@@ -13313,7 +13451,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                             output = f.getvalue()
                             if context.workflow_verbose_level >= 1:
                                 if 'Summary written to' in output:
-                                    print("\nSummary written to orca_summary.txt")
+                                    print("\nSummary file(s) generated")
                             # Look for similarity folder reference
                             if 'Copied' in output and 'similarity' in output:
                                 for line in output.split('\n'):
@@ -13464,11 +13602,10 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                     pass
     
     # Verify output subfolder exists and count input structures.
-    out_candidates = [
-        item
-        for item in sorted(os.listdir(similarity_base))
-        if item.startswith("orca_out_") or item.startswith("opt_out_") or item.startswith("gaussian_out_")
-    ]
+    out_candidates = []
+    for item in sorted(os.listdir(similarity_base)):
+        if item.startswith("orca_out_") or item.startswith("opt_out_") or item.startswith("gaussian_out_"):
+            out_candidates.append(item)
 
     out_folder_found = len(out_candidates) > 0
     sim_input_count = 0
@@ -14517,14 +14654,12 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                 
                 # Measure execution time to detect launch failures
                 start_time = time.time()
-                output_redirect_file = os.path.join(opt_working_dir, f"{basename_only}.log")
-                with open(output_redirect_file, 'w') as log_f:
-                    result = subprocess.run(
-                        ['bash', script_name],
-                        cwd=opt_working_dir,
-                        stdout=log_f,
-                        stderr=subprocess.STDOUT
-                    )
+                result = subprocess.run(
+                    ['bash', script_name],
+                    cwd=opt_working_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
                 elapsed_time = time.time() - start_time
                 
                 # If calculation ran past the threshold, it started normally
@@ -14732,7 +14867,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                 output = f.getvalue()
                 if context.workflow_verbose_level >= 1:
                     if 'Summary written to' in output:
-                        print("\nSummary written to orca_summary.txt")
+                        print("\nSummary file(s) generated")
                 if 'Copied' in output and 'similarity' in output:
                     # Extract the copy message and similarity folder
                     for line in output.split('\n'):
