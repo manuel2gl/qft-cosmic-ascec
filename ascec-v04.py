@@ -2305,9 +2305,12 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
         return f"{hours}:{minutes:02d}:{secs:06.3f}"
     
     def center_text(text: str, width: int = 75) -> str:
-        """Center text within given width."""
-        padding = (width - len(text)) // 2
-        return " " * padding + text
+        """Center text within a fixed-width field for box-drawing alignment."""
+        if width <= 0:
+            return ""
+        if len(text) >= width:
+            return text[:width]
+        return text.center(width)
 
     def format_concise_path(path_value: str) -> str:
         """Render paths concisely for summary output (e.g., /similarity_2/orca_out_3)."""
@@ -13161,8 +13164,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             else:
                 qm_program = 'orca'  # Default
 
-            # Keep a user-ready launcher in sync with current inputs.
-            # This avoids header-only launchers after resume/redo paths.
+            # Rebuild optimization launcher using the same style as refinement launcher.
             try:
                 launcher_env_setup = ""
                 if os.path.exists(launcher_script):
@@ -13171,53 +13173,34 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                     launcher_env_setup = existing_launcher.split('###')[0].rstrip() if '###' in existing_launcher else existing_launcher.rstrip()
 
                 launcher_inputs: List[str] = []
-                seen_inputs = set()
-
-                # Prefer currently scheduled inputs (can include subdir relative paths).
-                for inp in sorted(input_files, key=natural_sort_key):
-                    norm_inp = inp.replace('\\\\', '/').strip()
-                    if norm_inp and norm_inp not in seen_inputs:
-                        seen_inputs.add(norm_inp)
-                        launcher_inputs.append(norm_inp)
-
-                # Fallback: discover valid inputs recursively if the stage list is empty.
-                if not launcher_inputs:
-                    for root, _, files in os.walk(optimization_dir_path):
-                        rel_root = os.path.relpath(root, optimization_dir_path)
-                        for file_name in files:
-                            if not is_valid_input_file(file_name):
-                                continue
-                            rel_path = file_name if rel_root == '.' else os.path.join(rel_root, file_name)
-                            rel_path = rel_path.replace('\\\\', '/')
-                            if rel_path not in seen_inputs:
-                                seen_inputs.add(rel_path)
-                                launcher_inputs.append(rel_path)
-                    launcher_inputs = sorted(launcher_inputs, key=natural_sort_key)
+                seen_basenames = set()
+                for root, _, files in os.walk(optimization_dir_path):
+                    for file_name in files:
+                        if not is_valid_input_file(file_name):
+                            continue
+                        if file_name not in seen_basenames:
+                            seen_basenames.add(file_name)
+                            launcher_inputs.append(file_name)
+                launcher_inputs = sorted(launcher_inputs, key=natural_sort_key)
 
                 if launcher_inputs:
-                    output_ext = '.out' if qm_program == 'orca' else '.log'
                     with open(launcher_script, 'w') as lf:
                         if launcher_env_setup:
                             lf.write(launcher_env_setup + "\n\n")
                         lf.write("###\n\n")
                         for i, inp_name in enumerate(launcher_inputs):
-                            inp_base = os.path.splitext(os.path.basename(inp_name))[0]
-                            out_name = inp_base + output_ext
+                            inp_base = os.path.splitext(inp_name)[0]
                             if qm_program == 'orca':
-                                cmd = f"orca {inp_name} > {out_name}"
+                                cmd = f"orca {inp_base}.inp > {inp_base}.out"
                             else:
-                                cmd = f"g16 {inp_name}"
-
+                                cmd = f"g16 {inp_base}.com"
                             if i < len(launcher_inputs) - 1:
                                 lf.write(f"{cmd} ; \\\n")
                             else:
                                 lf.write(f"{cmd}\n")
                     os.chmod(launcher_script, 0o755)
-                elif context.workflow_verbose_level >= 1:
-                    print(f"Warning: No input files found to populate {os.path.basename(launcher_script)}")
-            except Exception as e:
-                if context.workflow_verbose_level >= 1:
-                    print(f"Warning: Could not refresh launcher script: {e}")
+            except Exception:
+                pass
             
             # Get exclusions from cache (already loaded earlier)
             # Use appropriate key based on which optimization stage this is
@@ -14098,10 +14081,10 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     
     if not launcher_sh:
         # Try to auto-create launcher
-        opt_dir = "optimization"
-        if not os.path.exists(opt_dir):
-            os.makedirs(opt_dir, exist_ok=True)
-        auto_launcher = create_auto_launcher(opt_dir, "orca", qm_alias, quiet=workflow_concise)
+        ref_launcher_dir = "refinement"
+        if not os.path.exists(ref_launcher_dir):
+            os.makedirs(ref_launcher_dir, exist_ok=True)
+        auto_launcher = create_auto_launcher(ref_launcher_dir, "orca", qm_alias, quiet=workflow_concise)
         if auto_launcher:
             launcher_sh = auto_launcher
             if not workflow_concise:
@@ -14384,6 +14367,15 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             return 1
     
     # Create launcher script if provided
+    # If auto-generated launcher was created before directory reset, recreate it now.
+    if launcher_sh and not os.path.exists(launcher_sh):
+        auto_launcher = create_auto_launcher(opt_dir, "orca", qm_alias, quiet=workflow_concise)
+        if auto_launcher and os.path.exists(auto_launcher):
+            launcher_sh = auto_launcher
+        else:
+            print("Error: Launcher template not found and auto-launcher regeneration failed")
+            return 1
+
     if launcher_sh:
         launcher_path = os.path.join(opt_dir, f"launcher_{qm_program}.sh")
         
