@@ -22,9 +22,9 @@
 
 ## What is ASCEC?
 
-**ASCEC** (*Annealing Simulado Con Energía Cuántica*) is an intelligent computational orchestrator designed to explore complex potential energy surfaces (PES). By pairing robust stochastic sampling (Simulated Annealing) with the **Similarity** topological clustering module, it automates the discovery of low-energy molecular conformations.
+**ASCEC** (*Annealing Simulado Con Energía Cuántica*) is a Python tool designed to automatically sample molecular configurational PES and perform screening of topological features. 
 
-It eliminates the tedious manual processing of thousands of configurations by automatically filtering redundancies, correcting imaginary frequencies, and refining unique minima using high-level quantum mechanical (QM) evaluations.
+Acting as an intelligent computational orchestrator, it pairs robust stochastic sampling (Simulated Annealing) with the **Similarity** topological clustering module to automate the discovery of low-energy molecular conformations. It eliminates the tedious manual processing of thousands of configurations by automatically filtering redundancies, correcting imaginary frequencies, and refining unique minima using high-level quantum mechanical (QM) evaluations.
 
 ### Key Features
 
