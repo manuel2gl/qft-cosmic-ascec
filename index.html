@@ -222,6 +222,10 @@
             box-shadow: 0 0 5px rgba(52, 152, 219, 0.3);
         }
 
+        input[type="checkbox"] {
+            accent-color: #2f7fbc;
+        }
+
         .custom-inline-control {
             width: 100%;
         }
@@ -325,25 +329,44 @@
 
         /* Quick molecule buttons */
         .quick-mol-buttons {
-            display: flex;
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
             gap: 8px;
-            flex-wrap: wrap;
         }
 
         .quick-mol-btn {
-            padding: 8px 16px;
-            background: #e0e4e8;
-            color: #34495e;
-            border: 1px solid #dcdde1;
-            border-radius: 4px;
+            appearance: none;
+            -webkit-appearance: none;
+            border: 1px solid #cfd6dc;
+            border-radius: 6px;
+            min-height: 34px;
+            padding: 6px 10px;
+            line-height: 1.2;
+            background: #dde3e8;
+            color: #334d63;
             cursor: pointer;
             font-size: 13px;
-            transition: background 0.3s;
+            font-weight: 500;
+            transition: background 0.2s ease, transform 0.2s ease;
+            text-align: center;
+            white-space: nowrap;
         }
 
         .quick-mol-btn:hover {
-            background: #bdc3c7;
+            background: #c8d2db;
             transform: translateY(-1px);
+        }
+
+        @media (max-width: 1200px) {
+            .quick-mol-buttons {
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 740px) {
+            .quick-mol-buttons {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
         }
 
         /* Theory level cards */
@@ -1084,6 +1107,236 @@
             height: 340px;
         }
 
+        .smart-simulation-layout {
+            display: block;
+        }
+
+        .smart-sim-main {
+            min-width: 0;
+        }
+
+        .smart-box-stage {
+            display: block;
+        }
+
+        .smart-box-top-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin: 0;
+            padding: 2px;
+            border-radius: 6px;
+            border: none;
+            background: transparent;
+            align-self: start;
+            width: 92px;
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 12;
+            pointer-events: auto;
+        }
+
+        .smart-box-top-controls input,
+        .smart-box-top-controls select,
+        .smart-box-top-controls label {
+            pointer-events: auto;
+        }
+
+        .smart-box-top-controls .form-group {
+            margin: 0;
+        }
+
+        .smart-box-top-controls .form-group label {
+            font-size: 0.66em;
+            color: #506477;
+            margin-bottom: 2px;
+        }
+
+        .smart-box-top-controls .form-group input,
+        .smart-box-top-controls .form-group select {
+            height: 20px;
+            padding: 1px 4px;
+            font-size: 9px;
+            width: 100%;
+        }
+
+        .smart-top-inline {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            width: 100%;
+            justify-content: space-between;
+            margin-top: 2px;
+        }
+
+        .smart-pack-mini {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-size: 0.7em;
+            color: #3f5468;
+        }
+
+        .smart-pack-mini input,
+        .smart-pack-mini select {
+            width: 42px;
+            height: 20px;
+            padding: 1px 3px;
+            font-size: 9px;
+            border: 1px solid #d0dbe4;
+            border-radius: 4px;
+            background: #ffffff;
+        }
+
+        .smart-box-top-controls .auto-box-compact {
+            margin-top: 1px;
+            margin-left: 0;
+            font-size: 0.62em;
+            color: #3f5468;
+            display: inline-flex;
+            align-items: center;
+            gap: 2px;
+            white-space: nowrap;
+        }
+
+        .smart-box-viewer-shell {
+            position: relative;
+            background: #ffffff;
+            border: 1px solid #d8e0e8;
+            border-radius: 8px;
+            overflow: hidden;
+            padding: 8px;
+        }
+
+        .smart-box-viewer-shell #basic-box-viewer {
+            height: 330px;
+            min-height: 330px;
+            border: none;
+            border-radius: 0;
+            background: #ffffff;
+            width: 100%;
+        }
+
+        .smart-sim-side {
+            border: none;
+            border-radius: 8px;
+            background: transparent;
+            padding: 7px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-height: 0;
+            width: 176px;
+            position: absolute;
+            top: 8px;
+            right: 0;
+            z-index: 6;
+        }
+
+        .smart-sim-side-head {
+            font-size: 0.76em;
+            font-weight: 700;
+            color: #2a5b85;
+            text-transform: none;
+            letter-spacing: 0.01em;
+            text-align: right;
+        }
+
+        .smart-type-list {
+            flex: 1 1 auto;
+            max-height: 286px;
+            min-height: 24px;
+            overflow-y: auto;
+            display: grid;
+            gap: 6px;
+            align-content: start;
+            justify-items: end;
+            --type-chip-width: 20ch;
+        }
+
+        .smart-type-item {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 6px;
+            border-radius: 11px;
+            background: #edf5ff;
+            border: 1px solid #c6dbf3;
+            font-size: 0.74em;
+            width: var(--type-chip-width);
+            min-width: 20ch;
+            max-width: 30ch;
+        }
+
+        .smart-type-main {
+            min-width: 0;
+            display: inline-flex;
+            align-items: baseline;
+            gap: 3px;
+        }
+
+        .smart-type-name {
+            color: #1f3f63;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
+        }
+
+        .smart-type-count-inline {
+            color: #4d6376;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .smart-type-count {
+            color: #4d6376;
+            font-variant-numeric: tabular-nums;
+            font-size: 0.92em;
+        }
+
+        .btn-type-remove {
+            appearance: none;
+            -webkit-appearance: none;
+            border: 1px solid #d7a39a;
+            background: #fef0ed;
+            color: #b5402d;
+            border-radius: 999px;
+            width: 14px;
+            height: 14px;
+            line-height: 1;
+            font-size: 9px;
+            cursor: pointer;
+            padding: 0;
+        }
+
+        .btn-type-remove:hover {
+            background: #ffe1db;
+        }
+
+        .btn-type-remove-ghost {
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        .smart-type-item-empty {
+            opacity: 0.72;
+        }
+
+        .smart-type-empty {
+            border: 1px dashed #c4d0db;
+            border-radius: 6px;
+            padding: 10px 8px;
+            color: #6f8598;
+            font-size: 0.8em;
+            text-align: center;
+            background: #ffffff;
+        }
+
         .smart-box-controls {
             display: flex;
             gap: 8px;
@@ -1095,17 +1348,25 @@
         .smart-box-controls .form-group {
             margin: 0;
             min-width: 240px;
+            z-index: 12;
             flex: 1;
+        }
+
+        .smart-box-controls .btn-sm {
+            height: 36px;
+            padding: 0 11px;
+            display: inline-flex;
+            align-items: center;
         }
 
         .smart-box-controls .btn-sm,
         .smart-box-controls #smart-sim-name {
-            height: 36px;
+            height: 30px;
+            font-size: 12px;
         }
 
-        .smart-box-controls .btn-sm {
-            display: inline-flex;
-            align-items: center;
+        .smart-box-controls #smart-sim-name {
+            background: #ffffff;
         }
 
         .mol-preview-card {
@@ -1253,6 +1514,28 @@
             .smart-center-row {
                 grid-template-columns: 1fr;
             }
+
+            .smart-box-viewer-shell #basic-box-viewer {
+                height: 280px;
+                min-height: 280px;
+            }
+
+            .smart-box-top-controls {
+                position: static;
+                width: 100%;
+                margin-bottom: 8px;
+            }
+
+            .smart-sim-side {
+                position: static;
+                width: 100%;
+                margin-top: 8px;
+                max-height: none;
+            }
+        }
+
+        #basic-mol-viewer {
+            height: 300px !important;
         }
 
         /* Advanced Mode: each row is its own 2-column equal-height grid */
@@ -1675,7 +1958,7 @@
             <button class="smart-header-item active" id="header-smart-btn" onclick="switchMainTab('basic')">Smart Mode</button>
             <button class="smart-header-item" id="header-advanced-btn" onclick="switchMainTab('advanced')">Advanced Generation</button>
             <a class="smart-header-item"
-                href="https://raw.githubusercontent.com/manuel2gl/qft-ascec-similarity/main/manual.pdf"
+                href="https://github.com/manuel2gl/qft-ascec-similarity/blob/main/manual.pdf"
                 target="_blank">User Manual</a>
             <a class="smart-header-item" href="https://github.com/manuel2gl/qft-ascec-similarity"
                 target="_blank">GitHub</a>
@@ -1699,13 +1982,52 @@
             <!-- Simulation Box Preview (Box 6) -->
             <div class="card smart-simulation-box">
                 <h2>Simulation Box</h2>
-                <div id="basic-box-viewer" class="viewer-3d" style="height: 340px; min-height: 340px;">
-                </div>
-                <div class="smart-box-controls">
-                    <button class="btn btn-sm btn-secondary" onclick="updateBasicBoxViewer()">🔄 Refresh</button>
-                    <button class="btn btn-sm btn-primary" onclick="downloadBoxXYZ()">⬇️ Download XYZ</button>
-                    <div class="form-group" style="flex: 1; margin: 0;">
-                        <input type="text" id="smart-sim-name" value="" placeholder="Simulation name" oninput="syncSmartToAdvanced()">
+                <div class="smart-simulation-layout">
+                    <div class="smart-sim-main">
+                        <div class="smart-box-stage">
+                            <div class="smart-box-viewer-shell">
+                                <div class="smart-box-top-controls">
+                                    <div class="form-group">
+                                        <label>Box (Å)</label>
+                                        <input type="number" id="smart-box-size-top" value="7.0" step="0.5" min="3" oninput="applyTopSmartBoxControls('box')">
+                                    </div>
+                                    <div class="smart-top-inline">
+                                        <label class="smart-pack-mini" title="Packing percentage">
+                                            <select id="smart-packing-top-input" onchange="applyTopSmartBoxControls('packing')">
+                                                <option value="5">5</option>
+                                                <option value="10" selected>10</option>
+                                                <option value="15">15</option>
+                                                <option value="20">20</option>
+                                                <option value="25">25</option>
+                                                <option value="30">30</option>
+                                                <option value="custom">Custom…</option>
+                                            </select>
+                                            <span>%</span>
+                                        </label>
+                                        <label class="auto-box-compact" title="Automatically compute box from packing" style="margin-top:0;">
+                                            <input type="checkbox" id="smart-use-packing-top" checked>
+                                            auto
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div id="basic-box-viewer" class="viewer-3d"></div>
+
+                                <aside class="smart-sim-side" aria-live="polite">
+                                    <div class="smart-sim-side-head">Added molecules (<span id="basic-molecule-types-total">0</span>)</div>
+                                    <div id="basic-molecule-type-list" class="smart-type-list"></div>
+                                </aside>
+
+                                <div class="smart-box-controls">
+                                    <button class="btn btn-sm btn-secondary" onclick="updateBasicBoxViewer()">Refresh</button>
+                                    <button class="btn btn-sm btn-primary" onclick="downloadMoleculesXYZ()">Download XYZ</button>
+                                    <button class="btn btn-sm btn-primary" onclick="downloadBoxXYZ()">Download Box XYZ</button>
+                                    <div class="form-group" style="flex: 1; margin: 0; min-width: 200px;">
+                                        <input type="text" id="smart-sim-name" value="" placeholder="Simulation name" oninput="syncSmartToAdvanced()">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1753,6 +2075,7 @@
                         <button class="quick-mol-btn"
                             onclick="basicLoadSmiles('C1=CC=NC=C1', 'pyridine')">Pyridine</button>
                         <button class="quick-mol-btn" onclick="basicLoadSmiles('C1CCOC1', 'thf')">THF</button>
+                        <button class="quick-mol-btn" onclick="basicLoadSmiles('CCCCCC', 'hexane')">Hexane</button>
                     </div>
                     <div style="margin-top: 12px; background: #f8f9fa; border-radius: 6px; padding: 10px; font-size: 0.85em;">
                         <div style="display: flex; gap: 15px; margin-bottom: 6px;">
@@ -1775,7 +2098,7 @@
 
                     <!-- 3D Viewer for converted molecule -->
                     <div id="basic-viewer-section" style="margin-top: 0;">
-                        <div id="basic-mol-viewer" class="viewer-3d" style="height: 240px; position: relative;">
+                        <div id="basic-mol-viewer" class="viewer-3d" style="height: 300px; position: relative;">
                             <div class="viewer-3d-placeholder" id="basic-mol-viewer-placeholder">
                                 <span style="font-size: 1.5em;">⏣</span>
                                 <p style="margin-top: 8px;">Generate a molecule or drop a .mol file here</p>
@@ -1893,7 +2216,7 @@
                     <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-top:10px;">
                         <div class="form-group" style="flex:1; min-width:70px; margin-bottom:0;">
                             <label>Replicas</label>
-                            <input type="number" id="smart-replicas" value="3" min="1" max="10">
+                            <input type="number" id="smart-replicas" value="3" min="1" max="10" oninput="syncSmartBoxControlsToTop()">
                         </div>
                         <div class="form-group" style="flex:1.2; min-width:100px; margin-bottom:0;">
                             <label>Packing (%)</label>
@@ -2969,7 +3292,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                             <li><strong>similarity:</strong> Topological screening with --th threshold</li>
                         </ul>
                         <p style="margin-top: 10px;">For extensive documentation, see the 
-                            <a href="https://raw.githubusercontent.com/manuel2gl/qft-ascec-similarity/main/manual.pdf" target="_blank">User Manual</a>.
+                            <a href="https://github.com/manuel2gl/qft-ascec-similarity/blob/main/manual.pdf" target="_blank">User Manual</a>.
                         </p>
                     </div>
 
@@ -3029,7 +3352,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                     </div>
 
                     <div class="install-callout">
-                        Manual setup: open the <a href="https://raw.githubusercontent.com/manuel2gl/qft-ascec-similarity/main/manual.pdf" target="_blank">User Manual</a> and follow <strong>Step-by-Step Conda Installation</strong>.
+                        Manual setup: open the <a href="https://github.com/manuel2gl/qft-ascec-similarity/blob/main/manual.pdf" target="_blank">User Manual</a> and follow <strong>Step-by-Step Conda Installation</strong>.
                     </div>
                 </div>
 
@@ -3121,6 +3444,9 @@ H  -0.757000  0.586000  0.000000"></textarea>
         let molAutoRotateInterval = null;
         let advOptRescueManual = false;
         let advRefRescueManual = false;
+        let hasShownSaveAsFallbackHint = false;
+        let smartViewFramed = false;
+        let advancedViewFramed = false;
 
         // Toast notification function (replaces alert())
         function toast(message, type = 'info', duration = 2500) {
@@ -3257,13 +3583,17 @@ H  -0.757000  0.586000  0.000000"></textarea>
             setupMolViewerDropZone();
 
             // Add change listeners for smart mode tab
+            // Exclude top Simulation Box controls; they have dedicated handlers.
+            const topSmartControlIds = new Set(['smart-use-packing-top', 'smart-packing-top-input', 'smart-box-size-top']);
             document.querySelectorAll('#basic-tab input, #basic-tab select').forEach(el => {
-                el.addEventListener('change', () => { 
+                el.addEventListener('change', () => {
+                    if (topSmartControlIds.has(el.id)) return;
                     updateSmartPipeline();
                     syncSmartToAdvanced();
-                    updatePreview(); 
+                    updatePreview();
                 });
                 el.addEventListener('input', () => {
+                    if (topSmartControlIds.has(el.id)) return;
                     updateSmartPipeline();
                     syncSmartToAdvanced();
                 });
@@ -3271,15 +3601,39 @@ H  -0.757000  0.586000  0.000000"></textarea>
             
             // Add change listeners for advanced tab
             document.querySelectorAll('#advanced-tab input, #advanced-tab select').forEach(el => {
-                el.addEventListener('change', updatePreview);
-                el.addEventListener('input', updatePreview);
+                el.addEventListener('change', () => {
+                    syncAdvancedToSmart();
+                    updatePreview();
+                });
+                el.addEventListener('input', () => {
+                    syncAdvancedToSmart();
+                    updatePreview();
+                });
             });
             
             // Initialize the Smart Mode box viewer - SAME as clicking Refresh
             // Use setTimeout to ensure DOM is fully rendered
             setTimeout(function() {
-                updateBasicBoxViewer();
+                ensureSmartBoxAutoInit();
+                renderBasicMoleculeTypesPanel();
+                syncSmartBoxControlsToTop();
             }, 100);
+
+            // Hard-wire mirror sync for duplicated controls in Simulation Box.
+            ['smart-use-packing', 'smart-packing', 'smart-packing-custom', 'smart-box-size'].forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener('change', syncSmartBoxControlsToTop);
+                el.addEventListener('input', syncSmartBoxControlsToTop);
+            });
+
+            const topAutoBox = document.getElementById('smart-use-packing-top');
+            if (topAutoBox) {
+                topAutoBox.addEventListener('change', (e) => {
+                    e.stopPropagation();
+                    toggleTopAutoBoxFromSimulation();
+                });
+            }
 
             document.addEventListener('click', function (e) {
                 const panel = document.getElementById('basic-molecule-menu');
@@ -3296,6 +3650,10 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 if (panel.contains(e.target) || btn.contains(e.target)) return;
                 closeAdvancedMoleculeMenu();
             });
+        });
+
+        window.addEventListener('load', function () {
+            ensureSmartBoxAutoInit(80, 250);
         });
 
         // Tab switching
@@ -3322,7 +3680,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 // Initialize or refresh the Smart Mode box viewer
                 setTimeout(() => {
                     if (!basicBoxViewer) {
-                        initSmartModeBoxViewer();
+                        ensureSmartBoxAutoInit();
                     } else {
                         basicBoxViewer.resize();
                         updateBasicBoxViewer();
@@ -3369,25 +3727,123 @@ H  -0.757000  0.586000  0.000000"></textarea>
             });
         }
 
+        function fallbackBlobDownload(blob, filename) {
+            try {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.style.display = 'none';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                return true;
+            } catch (err) {
+                console.warn('Fallback download failed:', err);
+                return false;
+            }
+        }
+
+        function getFileExtension(filename) {
+            const idx = String(filename || '').lastIndexOf('.');
+            return idx >= 0 ? filename.slice(idx).toLowerCase() : '';
+        }
+
+        function getPickerTypeOptions(filename, mimeType) {
+            const ext = getFileExtension(filename);
+            const type = mimeType || 'application/octet-stream';
+            if (!ext) return undefined;
+            return [{
+                description: 'File',
+                accept: { [type]: [ext] }
+            }];
+        }
+
+        function openBlobInNewTab(blob) {
+            const url = URL.createObjectURL(blob);
+            const popup = window.open(url, '_blank', 'noopener');
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+            return !!popup;
+        }
+
+        async function getSaveFileHandle(filename, mimeType) {
+            if (typeof window.showSaveFilePicker !== 'function' || !window.isSecureContext) {
+                return null;
+            }
+
+            const pickerOptions = {
+                suggestedName: filename,
+                types: getPickerTypeOptions(filename, mimeType)
+            };
+
+            return window.showSaveFilePicker(pickerOptions);
+        }
+
+        async function saveBlobWithPrompt(blob, filename) {
+            if (typeof window.showSaveFilePicker === 'function' && window.isSecureContext) {
+                try {
+                    const handle = await getSaveFileHandle(filename, blob.type || 'application/octet-stream');
+                    if (!handle) throw new Error('No file handle available');
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    return 'picker';
+                } catch (err) {
+                    if (err && err.name === 'AbortError') return 'cancelled';
+                    console.warn('Save picker failed, using fallback download:', err);
+                }
+            }
+
+            // Firefox and other browsers can only offer standard download behavior here.
+            if (!hasShownSaveAsFallbackHint) {
+                hasShownSaveAsFallbackHint = true;
+            }
+
+            const downloaded = fallbackBlobDownload(blob, filename);
+            if (downloaded) return 'fallback';
+
+            const opened = openBlobInNewTab(blob);
+            if (opened) return 'manual-tab';
+
+            return 'cancelled';
+        }
+
+        async function saveTextWithPrompt(content, filename, type = 'text/plain') {
+            const blob = new Blob([content], { type });
+            return saveBlobWithPrompt(blob, filename);
+        }
+
         async function downloadInstallScript() {
             const scriptUrl = 'https://raw.githubusercontent.com/manuel2gl/qft-ascec-similarity/main/install.sh';
             try {
+                // Open picker first to preserve transient user activation in Chromium browsers.
+                const handle = await getSaveFileHandle('install.sh', 'text/x-shellscript');
+
                 const response = await fetch(scriptUrl, { cache: 'no-store' });
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}`);
                 }
-
                 const blob = await response.blob();
-                const blobUrl = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = blobUrl;
-                a.download = 'install.sh';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(blobUrl);
-                toast('install.sh downloaded', 'success');
+
+                if (handle) {
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    toast('install.sh saved', 'success');
+                    return;
+                }
+
+                const mode = await saveBlobWithPrompt(blob, 'install.sh');
+                if (mode === 'picker') {
+                    toast('install.sh saved', 'success');
+                } else if (mode === 'manual-tab') {
+                    toast('install.sh opened in a tab', 'info', 3500);
+                } else if (mode === 'fallback') {
+                    toast('install.sh downloaded', 'success');
+                }
             } catch (err) {
+                if (err && err.name === 'AbortError') return;
                 window.open(scriptUrl, '_blank', 'noopener');
                 toast('Browser blocked download. Opened install.sh page instead.', 'warning');
             }
@@ -3413,6 +3869,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             
             // Already created
             if (basicBoxViewer) {
+                if (typeof basicBoxViewer.enableFog === 'function') basicBoxViewer.enableFog(false);
                 basicBoxViewer.resize();
                 return;
             }
@@ -3423,11 +3880,21 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 backgroundColor: 'white',
                 antialias: true
             });
+            smartViewFramed = false;
             
             if (basicBoxViewer) {
+                if (typeof basicBoxViewer.enableFog === 'function') basicBoxViewer.enableFog(false);
                 startAutoRotate();
                 container.addEventListener('mouseenter', () => { isPaused = true; });
                 container.addEventListener('mouseleave', () => { isPaused = false; });
+
+                // First paint immediately so user sees the box without pressing Refresh.
+                setTimeout(() => {
+                    if (basicBoxViewer) {
+                        basicBoxViewer.resize();
+                        updateBasicBoxViewer();
+                    }
+                }, 0);
             }
         }
 
@@ -3454,6 +3921,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                     backgroundColor: 'white',
                     antialias: true
                 });
+                advancedViewFramed = false;
 
                 if (boxViewer) {
                     console.log('✓ Created Advanced Mode box viewer');
@@ -3504,11 +3972,12 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 initSmartModeBoxViewer();
                 if (!basicBoxViewer) return;
             }
-            
+
             // Restart animation in case it stopped
             startAutoRotate();
 
             try {
+                if (typeof basicBoxViewer.enableFog === 'function') basicBoxViewer.enableFog(false);
                 basicBoxViewer.removeAllModels();
                 basicBoxViewer.removeAllShapes();
 
@@ -3517,11 +3986,11 @@ H  -0.757000  0.586000  0.000000"></textarea>
                                 parseFloat(document.getElementById('basic-box-size')?.value) || 
                                 parseFloat(document.getElementById('box-size')?.value) || 7;
                 const half = boxSize / 2;
+                const smartBoxColor = 0x7f8c8d;
                 
-                // Use slightly thicker geometry in Smart Mode to reduce AA shimmer on Firefox.
-                // Keep proportional scaling, but enforce robust minimum radii.
-                const edgeRadius = Math.max(0.08, Math.min(0.18, 0.085 * (boxSize / 10)));
-                const cornerRadius = Math.max(0.05, Math.min(0.11, 0.06 * (boxSize / 10)));
+                // Fixed display radii keep edge thickness identical between empty/full views.
+                const edgeRadius = 0.1;
+                const cornerRadius = 0.078;
 
                 // Draw elegant box edges (muted gray for Smart Mode)
                 const edges = [
@@ -3536,7 +4005,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                     basicBoxViewer.addCylinder({
                         start: { x: s[0], y: s[1], z: s[2] },
                         end: { x: e[0], y: e[1], z: e[2] },
-                        radius: edgeRadius, color: 0x95a5a6, fromCap: true, toCap: true
+                        radius: edgeRadius, color: smartBoxColor, fromCap: true, toCap: true
                     });
                 });
 
@@ -3548,7 +4017,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 corners.forEach(c => {
                     basicBoxViewer.addSphere({
                         center: { x: c[0], y: c[1], z: c[2] },
-                        radius: cornerRadius, color: 0x95a5a6
+                        radius: cornerRadius, color: smartBoxColor
                     });
                 });
 
@@ -3557,7 +4026,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 corners.forEach(c => {
                     cornerXyz += `X ${c[0]} ${c[1]} ${c[2]}\n`;
                 });
-                basicBoxViewer.addModel(cornerXyz, 'xyz');
+                const cornerModel = basicBoxViewer.addModel(cornerXyz, 'xyz');
+                const cornerModelId = (cornerModel && typeof cornerModel.getID === 'function') ? cornerModel.getID() : null;
                 basicBoxViewer.setStyle({elem: 'X'}, {sphere: {radius: 0.001, opacity: 0}});
 
                 // Add molecules if any
@@ -3569,26 +4039,33 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
                     let xyzString = `${totalAtoms}\nCluster preview\n`;
                     molecules.forEach(mol => {
+                        // Keep display geometry identical to source XYZ.
                         mol.atoms.forEach((atom, i) => {
                             const [x, y, z] = mol.coords[i];
                             xyzString += `${atom} ${x.toFixed(6)} ${y.toFixed(6)} ${z.toFixed(6)}\n`;
                         });
                     });
 
-                    basicBoxViewer.addModel(xyzString, 'xyz');
-                    basicBoxViewer.setStyle({}, {
+                    const moleculeModel = basicBoxViewer.addModel(xyzString, 'xyz');
+                    moleculeModel.setStyle({}, {
                         stick: { radius: 0.12, colorscheme: 'Jmol' },
                         sphere: { radius: 0.25, colorscheme: 'Jmol' }
                     });
+                    // Keep helper corner atoms hidden after molecule styling.
+                    basicBoxViewer.setStyle({elem: 'X'}, {sphere: {radius: 0.001, opacity: 0}});
                 }
 
                 // Force resize to ensure canvas is correct size
                 basicBoxViewer.resize();
                 
-                // Reset view to default orientation and zoom
-                basicBoxViewer.setView([0, 0, 0, 0, 0, 0, 0, 1]);  // Reset rotation matrix
-                basicBoxViewer.zoomTo();
-                basicBoxViewer.zoom(1.3, 0);  // Fill more of viewport
+                // Refit camera to box every update to keep box visually constant.
+                if (cornerModelId !== null) {
+                    basicBoxViewer.zoomTo({model: cornerModelId});
+                } else {
+                    basicBoxViewer.zoomTo({elem: 'X'});
+                }
+                basicBoxViewer.zoom(1.3, 0);
+                smartViewFramed = true;
                 basicBoxViewer.render();
                 
                 console.log('✓ Smart Mode box rendered (box size: ' + boxSize + ' Å)');
@@ -3612,9 +4089,9 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 const boxSize = parseFloat(document.getElementById('box-size')?.value) || 7;
                 const half = boxSize / 2;
                 
-                // Scale edge/corner radii proportionally to box size (reference: 10 Å)
-                const edgeRadius = Math.min(0.2, 0.08 * (boxSize / 10));
-                const cornerRadius = Math.min(0.1, 0.06 * (boxSize / 10));
+                // Keep edge/corner thickness visually stable.
+                const edgeRadius = 0.08;
+                const cornerRadius = 0.06;
 
                 // Draw technical box edges (blue for Advanced Mode)
                 const edges = [
@@ -3678,11 +4155,11 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 // Force resize to ensure canvas is correct size
                 boxViewer.resize();
                 
-                // Reset view to default orientation and zoom
-                boxViewer.setView([0, 0, 0, 0, 0, 0, 0, 1]);  // Reset rotation matrix
-                boxViewer.zoomTo();
+                // Refit camera to box every update to keep box visually constant.
+                boxViewer.zoomTo({elem: 'X'});
                 const advZoom = inputMode === 'manual' ? 1.18 : 1.3;
-                boxViewer.zoom(advZoom, 0);  // Slightly less zoom in Manual XYZ mode
+                boxViewer.zoom(advZoom, 0);
+                advancedViewFramed = true;
                 boxViewer.render();
                 
                 console.log('✓ Advanced Mode box rendered (box size: ' + boxSize + ' Å)');
@@ -3704,13 +4181,14 @@ H  -0.757000  0.586000  0.000000"></textarea>
             if (basicBoxViewer) {
                 basicBoxViewer.resize();
                 basicBoxViewer.zoomTo();
-                basicBoxViewer.zoom(1.3, 0);
+                basicBoxViewer.zoom(1.08, 0);
                 basicBoxViewer.render();
             }
         }
 
-        function downloadBoxXYZ() {
-            const boxSize = parseFloat(document.getElementById('basic-box-size')?.value) || 
+        function buildMoleculesXYZ(includeBoxMarkers = false) {
+            const boxSize = parseFloat(document.getElementById('smart-box-size')?.value) ||
+                            parseFloat(document.getElementById('basic-box-size')?.value) ||
                             parseFloat(document.getElementById('box-size')?.value) || 7;
             const half = boxSize / 2;
 
@@ -3721,11 +4199,13 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 [-half, half, half], [half, half, half]
             ];
 
-            let totalAtoms = 8;
+            let totalAtoms = includeBoxMarkers ? 8 : 0;
             molecules.forEach(mol => totalAtoms += mol.atoms.length);
 
             let xyzContent = `${totalAtoms}\n`;
-            xyzContent += `Simulation box preview | BoxL=${boxSize.toFixed(1)} A (X = box markers)\n`;
+            xyzContent += includeBoxMarkers
+                ? `Simulation box preview | BoxL=${boxSize.toFixed(1)} A (X = box markers)\n`
+                : `Molecule coordinates only | BoxL=${boxSize.toFixed(1)} A\n`;
 
             molecules.forEach(mol => {
                 mol.atoms.forEach((atom, i) => {
@@ -3734,19 +4214,39 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 });
             });
 
-            vertices.forEach(([x, y, z]) => {
-                xyzContent += `X   ${x.toFixed(6).padStart(12)} ${y.toFixed(6).padStart(12)} ${z.toFixed(6).padStart(12)}\n`;
-            });
+            if (includeBoxMarkers) {
+                vertices.forEach(([x, y, z]) => {
+                    xyzContent += `X   ${x.toFixed(6).padStart(12)} ${y.toFixed(6).padStart(12)} ${z.toFixed(6).padStart(12)}\n`;
+                });
+            }
 
-            const blob = new Blob([xyzContent], { type: 'text/plain' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'simulation_box_preview.xyz';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            return xyzContent;
+        }
+
+        async function downloadMoleculesXYZ() {
+            if (molecules.length === 0) {
+                toast('No molecules to export', 'warning');
+                return;
+            }
+            const mode = await saveTextWithPrompt(buildMoleculesXYZ(false), 'molecules.xyz', 'text/plain');
+            if (mode === 'picker') {
+                toast('Molecule XYZ saved', 'success');
+            } else if (mode === 'manual-tab') {
+                toast('Molecule XYZ opened in a tab', 'info', 3500);
+            } else if (mode === 'fallback') {
+                toast('Molecule XYZ downloaded', 'success');
+            }
+        }
+
+        async function downloadBoxXYZ() {
+            const mode = await saveTextWithPrompt(buildMoleculesXYZ(true), 'simulation_box_preview.xyz', 'text/plain');
+            if (mode === 'picker') {
+                toast('Box XYZ saved', 'success');
+            } else if (mode === 'manual-tab') {
+                toast('Box XYZ opened in a tab', 'info', 3500);
+            } else if (mode === 'fallback') {
+                toast('Box XYZ downloaded', 'success');
+            }
         }
 
         // BASIC MODE: Load SMILES
@@ -4841,24 +5341,306 @@ H  -0.757000  0.586000  0.000000"></textarea>
             return parseFloat(packingMode) || 10;
         }
 
+        let isSyncingSmartBoxMirror = false;
+
+        const ASCEC_COVALENT_RADII = {
+            H: 0.31, He: 0.28, Li: 1.28, Be: 0.96, B: 0.84, C: 0.73, N: 0.71, O: 0.66, F: 0.57, Ne: 0.58,
+            Na: 1.66, Mg: 1.41, Al: 1.21, Si: 1.11, P: 1.07, S: 1.05, Cl: 1.02, Ar: 1.06,
+            K: 2.03, Ca: 1.76, Sc: 1.70, Ti: 1.60, V: 1.53, Cr: 1.39, Mn: 1.39, Fe: 1.32, Co: 1.26, Ni: 1.24, Cu: 1.32, Zn: 1.22,
+            Ga: 1.22, Ge: 1.20, As: 1.19, Se: 1.20, Br: 1.20, Kr: 1.16,
+            Rb: 2.20, Sr: 1.95, Y: 1.90, Zr: 1.75, Nb: 1.64, Mo: 1.54, Tc: 1.47, Ru: 1.46, Rh: 1.42, Pd: 1.39, Ag: 1.45, Cd: 1.44,
+            In: 1.42, Sn: 1.39, Sb: 1.39, Te: 1.38, I: 1.39, Xe: 1.40,
+            Cs: 2.44, Ba: 2.15, La: 2.07, Ce: 2.04, Pr: 2.03, Nd: 2.01, Pm: 1.99, Sm: 1.98, Eu: 1.98, Gd: 1.96, Tb: 1.94, Dy: 1.92,
+            Ho: 1.92, Er: 1.89, Tm: 1.90, Yb: 1.87, Lu: 1.87,
+            Hf: 1.75, Ta: 1.70, W: 1.62, Re: 1.51, Os: 1.44, Ir: 1.41, Pt: 1.36, Au: 1.36, Hg: 1.32,
+            Tl: 1.45, Pb: 1.46, Bi: 1.48, Po: 1.40, At: 1.50, Rn: 1.50
+        };
+        const ASCEC_OVERLAP_FACTOR = 0.74;
+        const ASCEC_HB_LENGTH = 2.5;
+        const ASCEC_HB_RADIUS = 1.2;
+
+        function normalizeElementSymbol(symbol) {
+            const s = String(symbol || '').trim();
+            if (!s) return '';
+            if (s.length === 1) return s.toUpperCase();
+            return s[0].toUpperCase() + s.slice(1).toLowerCase();
+        }
+
+        function calculateAscecMoleculeEffectiveVolume(mol) {
+            if (!mol || !Array.isArray(mol.atoms) || mol.atoms.length === 0) return 0;
+
+            let atomicVolumeSum = 0;
+            let donors = 0;
+            let acceptors = 0;
+
+            mol.atoms.forEach((atom) => {
+                const el = normalizeElementSymbol(atom);
+                const radius = ASCEC_COVALENT_RADII[el] || 1.5;
+                atomicVolumeSum += (4.0 / 3.0) * Math.PI * Math.pow(radius, 3);
+
+                if (el === 'H') donors += 1;
+                else if (el === 'N' || el === 'O' || el === 'F') acceptors += 1;
+                else if (el === 'S') acceptors += 0.5;
+                else if (el === 'Cl') acceptors += 0.3;
+            });
+
+            const molecularVolume = atomicVolumeSum * ASCEC_OVERLAP_FACTOR;
+            const hbBonds = Math.min(donors, acceptors);
+            const hbVolumePerBond = Math.PI * Math.pow(ASCEC_HB_RADIUS, 2) * ASCEC_HB_LENGTH;
+            const hbNetworkVolume = hbBonds * hbVolumePerBond;
+
+            return molecularVolume + hbNetworkVolume;
+        }
+
+        function calculateAscecTotalEffectiveVolume() {
+            return molecules.reduce((sum, mol) => sum + calculateAscecMoleculeEffectiveVolume(mol), 0);
+        }
+
+        function getActiveAutoPackingPercent() {
+            const smartAuto = document.getElementById('smart-use-packing')?.checked !== false;
+            const advAuto = document.getElementById('adv-use-packing')?.checked !== false;
+            const topAuto = document.getElementById('smart-use-packing-top')?.checked !== false;
+
+            if (smartAuto) {
+                return getSmartPackingValue();
+            }
+
+            if (advAuto) {
+                return getAdvancedPackingValue();
+            }
+
+            if (topAuto) {
+                const topValue = document.getElementById('smart-packing-top-input')?.value || '10';
+                if (topValue === 'custom') {
+                    return getSmartPackingValue();
+                }
+                const topNumeric = Number(topValue);
+                if (Number.isFinite(topNumeric) && topNumeric > 0) return topNumeric;
+            }
+
+            return null;
+        }
+
+        function calculateAscecAutoBoxLengthForPackingPercent(packingPercent) {
+            if (molecules.length === 0) return null;
+
+            const packingFraction = Number(packingPercent) / 100;
+            if (!Number.isFinite(packingFraction) || packingFraction <= 0) return null;
+
+            const totalEffectiveVolume = calculateAscecTotalEffectiveVolume();
+            if (!Number.isFinite(totalEffectiveVolume) || totalEffectiveVolume <= 0) return null;
+
+            const requiredBoxVolume = totalEffectiveVolume / packingFraction;
+            return Math.pow(requiredBoxVolume, 1.0 / 3.0);
+        }
+
+        function applyAscecAutoBoxLength(boxLength) {
+            if (!Number.isFinite(boxLength) || boxLength <= 0) return;
+
+            const newValue = boxLength.toFixed(1);
+
+            const smartBoxInput = document.getElementById('smart-box-size');
+            if (smartBoxInput) smartBoxInput.value = newValue;
+
+            const topBoxInput = document.getElementById('smart-box-size-top');
+            if (topBoxInput) topBoxInput.value = newValue;
+
+            const advBoxInput = document.getElementById('box-size');
+            if (advBoxInput) advBoxInput.value = newValue;
+
+            updateBasicBoxViewer();
+            updateBoxViewer();
+            syncSmartBoxControlsToTop();
+        }
+
+        function recomputeAscecAutoBoxFromPackingPercent(packingPercent) {
+            const boxLength = calculateAscecAutoBoxLengthForPackingPercent(packingPercent);
+            if (!boxLength) return null;
+            applyAscecAutoBoxLength(boxLength);
+            return boxLength;
+        }
+
+        function applyAutoBoxState(autoBox) {
+            const enabled = !!autoBox;
+
+            const mainAuto = document.getElementById('smart-use-packing');
+            const topAuto = document.getElementById('smart-use-packing-top');
+            const advAuto = document.getElementById('adv-use-packing');
+
+            if (mainAuto) mainAuto.checked = enabled;
+            if (topAuto) topAuto.checked = enabled;
+            if (advAuto) advAuto.checked = enabled;
+            if (mainAuto) mainAuto.disabled = false;
+            if (topAuto) topAuto.disabled = false;
+            if (advAuto) advAuto.disabled = false;
+
+            const smartPacking = document.getElementById('smart-packing');
+            const smartPackingCustom = document.getElementById('smart-packing-custom');
+            const smartBox = document.getElementById('smart-box-size');
+            if (smartPacking) smartPacking.disabled = !enabled;
+            if (smartPackingCustom) smartPackingCustom.disabled = !enabled;
+            if (smartBox) smartBox.disabled = enabled;
+
+            const topPacking = document.getElementById('smart-packing-top-input');
+            const topBox = document.getElementById('smart-box-size-top');
+            if (topPacking) topPacking.disabled = !enabled;
+            if (topBox) {
+                topBox.disabled = enabled;
+                topBox.style.opacity = enabled ? '0.65' : '1';
+            }
+
+            const advPacking = document.getElementById('adv-packing');
+            const advPackingCustom = document.getElementById('adv-packing-custom');
+            const advBox = document.getElementById('box-size');
+            if (advPacking) advPacking.disabled = !enabled;
+            if (advPackingCustom) advPackingCustom.disabled = !enabled;
+            if (advBox) advBox.disabled = false;
+        }
+
+        function setAutoBoxFromSource(source) {
+            if (isSyncingSmartBoxMirror) return;
+            isSyncingSmartBoxMirror = true;
+            try {
+                const topAuto = document.getElementById('smart-use-packing-top');
+                const mainAuto = document.getElementById('smart-use-packing');
+                const advAuto = document.getElementById('adv-use-packing');
+
+                let enabled = true;
+                if (source === 'top') enabled = topAuto?.checked !== false;
+                else if (source === 'adv') enabled = advAuto?.checked !== false;
+                else enabled = mainAuto?.checked !== false;
+
+                applyAutoBoxState(enabled);
+
+                if (enabled) {
+                    const packing = source === 'top'
+                        ? getActiveAutoPackingPercent()
+                        : (source === 'adv' ? getAdvancedPackingValue() : getSmartPackingValue());
+                    if (packing !== null) {
+                        calculateBoxLengthForPackingWithPercent(packing);
+                    }
+                }
+
+                syncSmartToAdvanced();
+            } finally {
+                isSyncingSmartBoxMirror = false;
+                syncSmartBoxControlsToTop();
+            }
+        }
+
+        function syncSmartBoxControlsToTop() {
+            if (isSyncingSmartBoxMirror) return;
+            isSyncingSmartBoxMirror = true;
+            try {
+                const mainBox = document.getElementById('smart-box-size');
+                const mainAuto = document.getElementById('smart-use-packing');
+                const mainPacking = document.getElementById('smart-packing');
+                const mainPackingCustom = document.getElementById('smart-packing-custom');
+
+                const topBox = document.getElementById('smart-box-size-top');
+                const topAuto = document.getElementById('smart-use-packing-top');
+                const topPackingInput = document.getElementById('smart-packing-top-input');
+                const advBox = document.getElementById('box-size');
+                const advPacking = document.getElementById('adv-packing');
+                const advPackingCustom = document.getElementById('adv-packing-custom');
+
+                if (topBox && mainBox) topBox.value = mainBox.value;
+                if (topAuto && mainAuto) topAuto.checked = mainAuto.checked;
+                if (topPackingInput && mainPacking) topPackingInput.value = mainPacking.value || '10';
+
+                if (advBox && mainBox) advBox.value = mainBox.value;
+                if (advPacking && mainPacking) advPacking.value = mainPacking.value || '10';
+                if (advPackingCustom && mainPackingCustom) advPackingCustom.value = mainPackingCustom.value || '10';
+            } finally {
+                isSyncingSmartBoxMirror = false;
+            }
+        }
+
+        function applyTopSmartBoxControls(source) {
+            const topBox = document.getElementById('smart-box-size-top');
+            const topAuto = document.getElementById('smart-use-packing-top');
+            const topPackingInput = document.getElementById('smart-packing-top-input');
+
+            const mainBox = document.getElementById('smart-box-size');
+            const mainPacking = document.getElementById('smart-packing');
+            const mainPackingCustom = document.getElementById('smart-packing-custom');
+
+            if (source === 'box') {
+                if (mainBox && topBox) mainBox.value = topBox.value;
+                if (topAuto) topAuto.checked = false;
+                setAutoBoxFromSource('top');
+                updateBasicBoxViewer();
+                return;
+            }
+
+            if (source === 'auto') {
+                setAutoBoxFromSource('top');
+                updateBasicBoxViewer();
+                return;
+            }
+
+            if (source === 'packing') {
+                if (mainPacking && topPackingInput) mainPacking.value = topPackingInput.value || '10';
+                if (mainPackingCustom && topPackingInput) mainPackingCustom.value = topPackingInput.value || '10';
+                if (topAuto) topAuto.checked = true;
+                setAutoBoxFromSource('top');
+            }
+
+            if (mainPacking && topPackingInput) mainPacking.value = topPackingInput.value || '10';
+            toggleSmartPackingCustom();
+            if (document.getElementById('smart-use-packing')?.checked !== false) {
+                updateSmartBoxSize();
+            }
+            updateBasicBoxViewer();
+            syncSmartToAdvanced();
+            syncSmartBoxControlsToTop();
+        }
+
+        function toggleTopAutoBoxFromSimulation() {
+            const topAuto = document.getElementById('smart-use-packing-top');
+            const mainAuto = document.getElementById('smart-use-packing');
+            if (!topAuto || !mainAuto) return;
+
+            const enabled = topAuto.checked;
+            mainAuto.checked = enabled;
+            applyAutoBoxState(enabled);
+            if (enabled) {
+                calculateBoxLengthForPackingWithPercent(getSmartPackingValue());
+            }
+            syncSmartToAdvanced();
+            updateBasicBoxViewer();
+            syncSmartBoxControlsToTop();
+        }
+
+        function ensureSmartBoxAutoInit(maxRetries = 20, delayMs = 180) {
+            let retries = 0;
+            const tick = () => {
+                const container = document.getElementById('basic-box-viewer');
+                if (typeof $3Dmol !== 'undefined' && container && container.offsetParent !== null) {
+                    if (!basicBoxViewer) {
+                        initSmartModeBoxViewer();
+                    }
+                    updateBasicBoxViewer();
+                    return;
+                }
+                retries += 1;
+                if (retries < maxRetries) {
+                    setTimeout(tick, delayMs);
+                }
+            };
+            tick();
+        }
+
         function toggleSmartPackingCustom() {
             const sel = document.getElementById('smart-packing');
             const wrap = document.getElementById('smart-packing-custom-wrap');
             if (!sel || !wrap) return;
             wrap.style.display = sel.value === 'custom' ? 'block' : 'none';
+            syncSmartBoxControlsToTop();
         }
 
         function toggleSmartUsePacking() {
-            const autoBox = document.getElementById('smart-use-packing')?.checked !== false;
-            const packingSel = document.getElementById('smart-packing');
-            const packingCustom = document.getElementById('smart-packing-custom');
-            const boxInput = document.getElementById('smart-box-size');
-
-            if (packingSel) packingSel.disabled = !autoBox;
-            if (packingCustom) packingCustom.disabled = !autoBox;
-            if (boxInput) boxInput.disabled = autoBox;
-
-            if (autoBox) updateSmartBoxSize();
+            setAutoBoxFromSource('smart');
         }
 
         function toggleSmartSimilarityMode() {
@@ -4976,6 +5758,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
         function updateSmartBoxSize() {
             if (document.getElementById('smart-use-packing')?.checked === false) {
                 syncSmartToAdvanced();
+                syncSmartBoxControlsToTop();
                 return;
             }
 
@@ -4986,12 +5769,14 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 document.getElementById('box-size').value = '10.0';
                 updateBasicBoxViewer();
                 updateBoxViewer();
+                syncSmartBoxControlsToTop();
                 return;
             }
 
             // Use the centralized calculation
             calculateBoxLengthForPackingWithPercent(packingPercent);
             syncSmartToAdvanced();
+            syncSmartBoxControlsToTop();
         }
 
         // Update quench parameters display
@@ -5144,22 +5929,27 @@ end
             const charge = document.getElementById('smart-charge')?.value;
             const mult = document.getElementById('smart-multiplicity')?.value;
             const boxSize = document.getElementById('smart-box-size')?.value;
+            const smartUsePacking = document.getElementById('smart-use-packing')?.checked !== false;
 
-            if (simName) {
-                const advSimName = document.getElementById('sim-name');
-                if (advSimName) advSimName.value = simName;
-            }
-            if (charge) {
+            const advSimName = document.getElementById('sim-name');
+            if (advSimName) advSimName.value = simName;
+
+            if (charge !== undefined) {
                 const advCharge = document.getElementById('adv-charge');
                 if (advCharge) advCharge.value = charge;
             }
-            if (mult) {
+            if (mult !== undefined) {
                 const advMult = document.getElementById('adv-multiplicity');
                 if (advMult) advMult.value = mult;
             }
-            if (boxSize) {
+            if (boxSize !== undefined) {
                 const advBoxSize = document.getElementById('box-size');
                 if (advBoxSize) advBoxSize.value = boxSize;
+            }
+
+            const advUsePacking = document.getElementById('adv-use-packing');
+            if (advUsePacking) {
+                advUsePacking.checked = smartUsePacking;
             }
 
             // Annealing settings
@@ -5442,11 +6232,11 @@ end
                 const advRecoveryMode = document.getElementById('adv-recovery-mode');
                 if (advRecoveryMode) advRecoveryMode.value = recoveryMode;
             }
-            if (recoveryTh) {
+            if (recoveryTh !== undefined) {
                 const advRecoveryTh = document.getElementById('adv-recovery-th');
                 if (advRecoveryTh) advRecoveryTh.value = recoveryTh;
             }
-            if (recoveryRedo) {
+            if (recoveryRedo !== undefined) {
                 const advRecoveryRedo = document.getElementById('adv-recovery-redo');
                 if (advRecoveryRedo) advRecoveryRedo.value = recoveryRedo;
             }
@@ -5464,22 +6254,27 @@ end
             const charge = document.getElementById('adv-charge')?.value;
             const mult = document.getElementById('adv-multiplicity')?.value;
             const boxSize = document.getElementById('box-size')?.value;
+            const advUsePacking = document.getElementById('adv-use-packing')?.checked !== false;
 
-            if (simName) {
-                const smartSimName = document.getElementById('smart-sim-name');
-                if (smartSimName) smartSimName.value = simName;
-            }
-            if (charge) {
+            const smartSimName = document.getElementById('smart-sim-name');
+            if (smartSimName) smartSimName.value = simName;
+
+            if (charge !== undefined) {
                 const smartCharge = document.getElementById('smart-charge');
                 if (smartCharge) smartCharge.value = charge;
             }
-            if (mult) {
+            if (mult !== undefined) {
                 const smartMult = document.getElementById('smart-multiplicity');
                 if (smartMult) smartMult.value = mult;
             }
-            if (boxSize) {
+            if (boxSize !== undefined) {
                 const smartBoxSize = document.getElementById('smart-box-size');
                 if (smartBoxSize) smartBoxSize.value = boxSize;
+            }
+
+            const smartUsePacking = document.getElementById('smart-use-packing');
+            if (smartUsePacking) {
+                smartUsePacking.checked = advUsePacking;
             }
 
             // Annealing settings
@@ -5728,11 +6523,11 @@ end
                 toggleSmartSimilarityMode();
             }
 
-            if (sim1Th) {
+            if (sim1Th !== undefined) {
                 const smartSimTh = document.getElementById('smart-sim-th');
                 if (smartSimTh) smartSimTh.value = sim1Th;
             }
-            if (sim1J) {
+            if (sim1J !== undefined) {
                 const smartSimJ = document.getElementById('smart-sim-j');
                 if (smartSimJ) smartSimJ.value = sim1J;
             }
@@ -5750,11 +6545,11 @@ end
                 const smartRecoveryMode = document.getElementById('smart-recovery-mode');
                 if (smartRecoveryMode) smartRecoveryMode.value = recoveryMode;
             }
-            if (recoveryTh) {
+            if (recoveryTh !== undefined) {
                 const smartRecoveryTh = document.getElementById('smart-recovery-th');
                 if (smartRecoveryTh) smartRecoveryTh.value = recoveryTh;
             }
-            if (recoveryRedo) {
+            if (recoveryRedo !== undefined) {
                 const smartRecoveryRedo = document.getElementById('smart-recovery-redo');
                 if (smartRecoveryRedo) smartRecoveryRedo.value = recoveryRedo;
             }
@@ -5766,12 +6561,11 @@ end
         }
 
         // Generate files from Smart Mode
-        function generateSmartFiles() {
+        async function generateSmartFiles() {
             syncSmartToAdvanced();
             buildProtocolFromSettings();
             updatePreview();
-            downloadAscFile();
-            toast('ASC file downloaded', 'success');
+            await downloadAscFile();
         }
 
         // Preview protocol from Smart Mode
@@ -5796,6 +6590,8 @@ end
             updateSmartPipeline();
             updateSmartOptPreview();
             updateSmartRefPreview();
+            syncSmartBoxControlsToTop();
+            renderBasicMoleculeTypesPanel();
         }
 
         // =============================================
@@ -6123,16 +6919,8 @@ end
         }
 
         function toggleAdvUsePacking() {
-            const usePacking = document.getElementById('adv-use-packing')?.checked !== false;
-            const packingSel = document.getElementById('adv-packing');
-            const packingCustom = document.getElementById('adv-packing-custom');
-            const boxInput = document.getElementById('box-size');
-
-            if (packingSel) packingSel.disabled = !usePacking;
-            if (packingCustom) packingCustom.disabled = !usePacking;
-            if (boxInput) boxInput.disabled = usePacking;
-
-            if (usePacking) {
+            setAutoBoxFromSource('adv');
+            if (document.getElementById('adv-use-packing')?.checked !== false) {
                 toggleAdvPackingCustom();
                 updateBoxSize();
             }
@@ -6171,42 +6959,7 @@ end
         }
 
         function calculateBoxLengthForPackingWithPercent(packingPercent) {
-            if (molecules.length === 0) return;
-
-            const vdwVolumes = {
-                'H': 7.24, 'C': 20.58, 'N': 15.60, 'O': 14.71,
-                'F': 13.31, 'Cl': 22.45, 'Br': 26.52, 'I': 32.52,
-                'S': 24.43, 'P': 24.0
-            };
-
-            let totalVolume = 0;
-            molecules.forEach(mol => {
-                mol.atoms.forEach(atom => {
-                    totalVolume += vdwVolumes[atom] || 15.0;
-                });
-            });
-
-            const packingFraction = packingPercent / 100;
-            const requiredBoxVolume = totalVolume / packingFraction;
-            let boxLength = Math.pow(requiredBoxVolume, 1.0 / 3.0);
-            boxLength = Math.max(7.0, boxLength);
-
-            const newValue = (Math.ceil(boxLength * 2) / 2).toFixed(1);
-
-            // Update Smart Mode box size
-            const smartBoxInput = document.getElementById('smart-box-size');
-            if (smartBoxInput) {
-                smartBoxInput.value = newValue;
-            }
-
-            // Update Advanced Mode box size
-            const boxInput = document.getElementById('box-size');
-            if (boxInput) {
-                boxInput.value = newValue;
-            }
-
-            updateBasicBoxViewer();
-            updateBoxViewer();
+            recomputeAscecAutoBoxFromPackingPercent(packingPercent);
         }
 
         // Update all previews and pipeline
@@ -6688,54 +7441,9 @@ end
         }
 
         function calculateBoxLengthForPacking() {
-            if (molecules.length === 0) return;
-
-            // Simple van der Waals atom volumes
-            const vdwVolumes = {
-                'H': 7.24, 'C': 20.58, 'N': 15.60, 'O': 14.71,
-                'F': 13.31, 'Cl': 22.45, 'Br': 26.52, 'I': 32.52,
-                'S': 24.43, 'P': 24.0
-            };
-
-            let totalVolume = 0;
-            molecules.forEach(mol => {
-                mol.atoms.forEach(atom => {
-                    totalVolume += vdwVolumes[atom] || 15.0; // default for others
-                });
-            });
-
-            // Get packing percentage from either Smart or Advanced mode
-            const smartPacking = getSmartPackingValue();
-            const packingPercent = smartPacking || parseFloat(document.getElementById('adv-packing')?.value) || 10;
-            const packingFraction = packingPercent / 100;
-            const requiredBoxVolume = totalVolume / packingFraction;
-            let boxLength = Math.pow(requiredBoxVolume, 1.0 / 3.0);
-
-            // Enforce a sensible minimum
-            boxLength = Math.max(7.0, boxLength);
-
-            // Round up to nearest 0.5
-            const newValue = (Math.ceil(boxLength * 2) / 2).toFixed(1);
-
-            // Update Smart Mode box size
-            const smartBoxInput = document.getElementById('smart-box-size');
-            if (smartBoxInput) {
-                const previousValue = smartBoxInput.value;
-                smartBoxInput.value = newValue;
-                if (previousValue !== newValue) {
-                    updateBasicBoxViewer();
-                }
-            }
-
-            // Update Advanced Mode box size
-            const boxInput = document.getElementById('box-size');
-            if (boxInput) {
-                const previousValue = boxInput.value;
-                boxInput.value = newValue;
-                if (previousValue !== newValue) {
-                    updateBoxViewer();
-                }
-            }
+            const packingPercent = getActiveAutoPackingPercent();
+            if (packingPercent === null) return;
+            recomputeAscecAutoBoxFromPackingPercent(packingPercent);
         }
 
         // Molecule list management
@@ -6749,13 +7457,70 @@ end
             const countDisplay2 = document.getElementById('mol-count-display');
             if (countDisplay2) countDisplay2.textContent = molecules.length;
             renderBasicMoleculeMenu();
+            renderBasicMoleculeTypesPanel();
             renderAdvancedMoleculeMenu();
+            updateBasicBoxViewer();
         }
 
         function getCommonMoleculeName(name) {
             if (!name) return 'molecule';
             const cleaned = String(name).trim().replace(/[\s_-]*\d+$/, '');
             return cleaned || String(name).trim() || 'molecule';
+        }
+
+        function getMoleculeTypeSummary() {
+            const summary = {};
+            molecules.forEach((mol) => {
+                const common = getCommonMoleculeName(mol.name);
+                if (!summary[common]) {
+                    summary[common] = { count: 0, atoms: mol.atoms.length };
+                }
+                summary[common].count += 1;
+            });
+            return summary;
+        }
+
+        function renderBasicMoleculeTypesPanel() {
+            const totalEl = document.getElementById('basic-molecule-types-total');
+            const listEl = document.getElementById('basic-molecule-type-list');
+            if (totalEl) totalEl.textContent = String(molecules.length);
+            if (!listEl) return;
+
+            if (molecules.length === 0) {
+                listEl.style.setProperty('--type-chip-width', '20ch');
+                listEl.innerHTML = `
+                    <div class="smart-type-item smart-type-item-empty" title="No molecules yet">
+                        <div class="smart-type-main">
+                            <div class="smart-type-name">No molecules</div>
+                            <div class="smart-type-count-inline">(0)</div>
+                        </div>
+                        <span class="btn-type-remove btn-type-remove-ghost">X</span>
+                    </div>
+                `;
+                return;
+            }
+
+            const summary = getMoleculeTypeSummary();
+            const labels = Object.entries(summary).map(([name, info]) => `${name} (${info.count})`);
+            const longestLabelChars = labels.reduce((max, label) => Math.max(max, label.length), 0);
+            const clampedWidthCh = Math.min(30, Math.max(20, longestLabelChars + 2));
+            listEl.style.setProperty('--type-chip-width', `${clampedWidthCh}ch`);
+
+            const rows = Object.entries(summary).map(([name, info]) => {
+                const escaped = name.replace(/'/g, "\\'");
+                const titleSafe = name.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                return `
+                    <div class="smart-type-item" title="${titleSafe}">
+                        <div class="smart-type-main">
+                            <div class="smart-type-name">${name}</div>
+                            <div class="smart-type-count-inline">(${info.count})</div>
+                        </div>
+                        <button class="btn-type-remove" title="Remove ${name}" onclick="removeMoleculeType('${escaped}')">X</button>
+                    </div>
+                `;
+            }).join('');
+
+            listEl.innerHTML = rows;
         }
 
         function renderBasicMoleculeMenu() {
@@ -6852,6 +7617,20 @@ end
 
         function removeMolecule(idx) {
             molecules.splice(idx, 1);
+            updateMoleculeList();
+            updatePreview();
+            updateBasicBoxViewer();
+            updateBoxViewer();
+        }
+
+        function removeMoleculeType(commonName) {
+            const target = String(commonName || '').trim().toLowerCase();
+            if (!target) return;
+
+            const before = molecules.length;
+            molecules = molecules.filter((mol) => getCommonMoleculeName(mol.name).toLowerCase() !== target);
+            if (molecules.length === before) return;
+
             updateMoleculeList();
             updatePreview();
             updateBasicBoxViewer();
@@ -7492,7 +8271,7 @@ H   1.981282  0.134064  0.000000`;
             return advancedName || smartName || 'input';
         }
 
-        function downloadAscFile(fromPreviewPanel = false) {
+        async function downloadAscFile(fromPreviewPanel = false) {
             let content = generateAscFile();
             if (fromPreviewPanel) {
                 const panelText = document.getElementById('preview-panel-text');
@@ -7506,19 +8285,14 @@ H   1.981282  0.134064  0.000000`;
                 }
             }
             const fileName = getAscFileNameBase();
-            downloadFile(content, `${fileName}.asc`, 'text/plain');
-        }
-
-        function downloadFile(content, filename, type) {
-            const blob = new Blob([content], { type });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            const mode = await saveTextWithPrompt(content, `${fileName}.asc`, 'text/plain');
+            if (mode === 'picker') {
+                toast('ASC file saved', 'success');
+            } else if (mode === 'manual-tab') {
+                toast('ASC opened in a tab', 'info', 3500);
+            } else if (mode === 'fallback') {
+                toast('ASC file downloaded', 'success');
+            }
         }
 
         function copyToClipboard() {
