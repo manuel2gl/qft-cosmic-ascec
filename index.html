@@ -3909,6 +3909,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             // If already created, just update
             if (boxViewer) {
                 console.log('Advanced Mode viewer already exists, updating...');
+                if (typeof boxViewer.enableFog === 'function') boxViewer.enableFog(false);
                 boxViewer.resize();
                 updateBoxViewer();
                 return;
@@ -3924,6 +3925,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 advancedViewFramed = false;
 
                 if (boxViewer) {
+                    if (typeof boxViewer.enableFog === 'function') boxViewer.enableFog(false);
                     console.log('✓ Created Advanced Mode box viewer');
                     updateBoxViewer();
                 }
@@ -4083,6 +4085,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             }
 
             try {
+                if (typeof boxViewer.enableFog === 'function') boxViewer.enableFog(false);
                 boxViewer.removeAllModels();
                 boxViewer.removeAllShapes();
 
