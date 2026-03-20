@@ -1148,7 +1148,7 @@
         }
 
         .smart-box-top-controls .form-group label {
-            font-size: 0.66em;
+            font-size: 0.78em;
             color: #506477;
             margin-bottom: 2px;
         }
@@ -1557,6 +1557,16 @@
             height: 100%;
             display: flex;
             flex-direction: column;
+        }
+
+        #adv-eref-preview-card {
+            display: flex;
+            flex-direction: column;
+        }
+        #adv-eref-preview-card .input-preview {
+            flex: 1 1 auto;
+            min-height: 80px;
+            height: 100%;
         }
 
         @media (max-width: 1100px) {
@@ -1988,7 +1998,7 @@
                             <div class="smart-box-viewer-shell">
                                 <div class="smart-box-top-controls">
                                     <div class="form-group">
-                                        <label>Box (Å)</label>
+                                        <label>Box Length (Å)</label>
                                         <input type="number" id="smart-box-size-top" value="7.0" step="0.5" min="3" oninput="applyTopSmartBoxControls('box')">
                                     </div>
                                     <div class="smart-top-inline">
@@ -2290,8 +2300,15 @@
                     </div>
                 </div>
 
-                <div class="card">
-                    <h2>Refinement</h2>
+                <div class="card" id="smart-ref-card">
+                    <div class="card-title-row">
+                        <h2>Refinement</h2>
+                        <label class="auto-box-compact" style="font-size:0.84em; gap:6px;">
+                            <input type="checkbox" id="smart-ref-enabled" checked onchange="toggleSmartRef()">
+                            optional
+                        </label>
+                    </div>
+                    <div id="smart-ref-body">
                     <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
                         <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                             <label>Theory</label>
@@ -2337,6 +2354,7 @@
                             </select>
                         </div>
                     </div>
+                    </div>
                 </div>
 
                 <div class="card">
@@ -2377,23 +2395,59 @@
                     </div>
                 </div>
 
-                <div class="card">
-                    <h2>Recovery Mode</h2>
-                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
-                        <div class="form-group" style="flex:2; min-width:130px; margin-bottom:0;">
-                            <label>Strategy</label>
-                            <select id="smart-recovery-mode">
-                                <option value="critical" selected>Critical</option>
-                                <option value="skip">Skipped</option>
-                            </select>
-                        </div>
-                        <div class="form-group" style="flex:1; min-width:90px; margin-bottom:0;">
-                            <label>Threshold (%)</label>
-                            <input type="number" id="smart-recovery-th" value="0" min="0" max="100">
-                        </div>
-                        <div class="form-group" style="flex:1; min-width:90px; margin-bottom:0;">
-                            <label>Redo</label>
-                            <input type="number" id="smart-recovery-redo" value="3" min="0" max="10">
+                <div class="card" id="smart-energy-ref-card">
+                    <div class="card-title-row">
+                        <h2>Energy Refinement</h2>
+                        <label class="auto-box-compact" style="font-size:0.84em; gap:6px;">
+                            <input type="checkbox" id="smart-energy-ref-enabled" onchange="toggleSmartEnergyRef()">
+                            optional
+                        </label>
+                    </div>
+                    <div id="smart-energy-ref-body" style="opacity:0.4; pointer-events:none;">
+                        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                            <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
+                                <label>Theory</label>
+                                <select id="smart-eref-theory" onchange="updateSmartEnergyRefMethod(); syncSmartToAdvanced();">
+                                    <option value="semiempirical">Semiempirical</option>
+                                    <option value="native-gfn">Native-GFN</option>
+                                    <option value="gfn">GFN-xTB</option>
+                                    <option value="dft">DFT</option>
+                                    <option value="post-hf" selected>Post-HF</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
+                                <label>Method</label>
+                                <select id="smart-eref-method" onchange="updateSmartEnergyRefPreview(); updateSmartPipeline(); buildProtocolFromSettings(); updatePipelineVisual(); syncSmartToAdvanced();"></select>
+                            </div>
+                            <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
+                                <label>Basis</label>
+                                <div class="custom-inline-control">
+                                    <select id="smart-eref-basis" onchange="toggleCustomInput('smart-eref-basis', 'smart-eref-basis-custom'); updateSmartEnergyRefPreview(); buildProtocolFromSettings(); syncSmartToAdvanced();">
+                                        <option value="" selected>(none)</option>
+                                        <option value="Other">Other...</option>
+                                    </select>
+                                    <div id="smart-eref-basis-custom-wrap" class="custom-inline-editor">
+                                        <input type="text" id="smart-eref-basis-custom" placeholder="Custom basis" oninput="updateSmartEnergyRefPreview(); buildProtocolFromSettings();">
+                                        <button type="button" class="custom-inline-reset" onclick="resetCustomControl('smart-eref-basis', 'smart-eref-basis-custom')">▾</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-group" style="flex:0 0 85px; margin-bottom:0;">
+                                <label>nprocs</label>
+                                <input type="number" id="smart-eref-nprocs" value="4" min="1" oninput="updateSmartEnergyRefPreview(); syncSmartToAdvanced(); buildProtocolFromSettings();">
+                            </div>
+                            <div class="form-group" style="flex:0 0 100px; margin-bottom:0;">
+                                <label>MaxCore (MB)</label>
+                                <input type="number" id="smart-eref-memory" value="4000" min="0" step="500" oninput="updateSmartEnergyRefPreview(); syncSmartToAdvanced(); buildProtocolFromSettings();">
+                            </div>
+                            <div class="form-group" style="flex:1; min-width:100px; margin-bottom:0;">
+                                <label>Job</label>
+                                <select id="smart-eref-job" onchange="updateSmartEnergyRefPreview(); buildProtocolFromSettings(); syncSmartToAdvanced();">
+                                    <option value="SP" selected>SP (Single Point)</option>
+                                    <option value="SP Freq">SP + Freq</option>
+                                    <option value="SP NumFreq">SP + NumFreq</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2417,15 +2471,25 @@
                         <span class="pipeline-step-label similarity">Similarity 1</span>
                         <span class="pipeline-step-theory" id="smart-pipe-sim1">th=2</span>
                     </div>
-                    <span class="pipeline-arrow-small">→</span>
-                    <div class="pipeline-step-compact">
+                    <span class="pipeline-arrow-small" id="smart-pipe-ref-arrow">→</span>
+                    <div class="pipeline-step-compact" id="smart-pipe-ref-step">
                         <span class="pipeline-step-label refinement">Refinement</span>
                         <span class="pipeline-step-theory" id="smart-pipe-ref">B97-3c</span>
                     </div>
-                    <span class="pipeline-arrow-small">→</span>
-                    <div class="pipeline-step-compact">
+                    <span class="pipeline-arrow-small" id="smart-pipe-sim2-arrow">→</span>
+                    <div class="pipeline-step-compact" id="smart-pipe-sim2-step">
                         <span class="pipeline-step-label similarity">Similarity 2</span>
                         <span class="pipeline-step-theory" id="smart-pipe-sim2">th=2</span>
+                    </div>
+                    <span class="pipeline-arrow-small" id="smart-pipe-eref-arrow" style="display:none;">→</span>
+                    <div class="pipeline-step-compact" id="smart-pipe-eref-step" style="display:none;">
+                        <span class="pipeline-step-label refinement" style="background:#e74c3c;">E-Refine</span>
+                        <span class="pipeline-step-theory" id="smart-pipe-eref">DLPNO-CCSD(T)</span>
+                    </div>
+                    <span class="pipeline-arrow-small" id="smart-pipe-sim3-arrow" style="display:none;">→</span>
+                    <div class="pipeline-step-compact" id="smart-pipe-sim3-step" style="display:none;">
+                        <span class="pipeline-step-label similarity">Similarity 3</span>
+                        <span class="pipeline-step-theory" id="smart-pipe-sim3">th=2</span>
                     </div>
                     <span class="pipeline-arrow-small">→</span>
                     <div class="pipeline-step-compact">
@@ -2469,15 +2533,25 @@
                         <span class="pipeline-step-label similarity">Similarity 1</span>
                         <span class="pipeline-step-theory" id="pipe-sim1-theory">th=2</span>
                     </div>
-                    <span class="pipeline-arrow-small">→</span>
-                    <div class="pipeline-step-compact">
+                    <span class="pipeline-arrow-small" id="adv-pipe-ref-arrow">→</span>
+                    <div class="pipeline-step-compact" id="adv-pipe-ref-step">
                         <span class="pipeline-step-label refinement">Refinement</span>
                         <span class="pipeline-step-theory" id="pipe-ref-theory">B3LYP</span>
                     </div>
-                    <span class="pipeline-arrow-small">→</span>
-                    <div class="pipeline-step-compact">
+                    <span class="pipeline-arrow-small" id="adv-pipe-sim2-arrow">→</span>
+                    <div class="pipeline-step-compact" id="adv-pipe-sim2-step">
                         <span class="pipeline-step-label similarity">Similarity 2</span>
                         <span class="pipeline-step-theory" id="pipe-sim2-theory">th=2</span>
+                    </div>
+                    <span class="pipeline-arrow-small" id="adv-pipe-eref-arrow" style="display:none;">→</span>
+                    <div class="pipeline-step-compact" id="adv-pipe-eref-step" style="display:none;">
+                        <span class="pipeline-step-label refinement" style="background:#e74c3c;">E-Refine</span>
+                        <span class="pipeline-step-theory" id="adv-pipe-eref">DLPNO-CCSD(T)</span>
+                    </div>
+                    <span class="pipeline-arrow-small" id="adv-pipe-sim3-arrow" style="display:none;">→</span>
+                    <div class="pipeline-step-compact" id="adv-pipe-sim3-step" style="display:none;">
+                        <span class="pipeline-step-label similarity">Similarity 3</span>
+                        <span class="pipeline-step-theory" id="adv-pipe-sim3">th=2</span>
                     </div>
                     <span class="pipeline-arrow-small">→</span>
                     <div class="pipeline-step-compact">
@@ -2840,8 +2914,15 @@
 
             <!-- Block 3: Refinement Settings -->
             <div class="settings-block" id="adv-ref-settings-block">
-                <div class="card">
-                    <h2>Refinement</h2>
+                <div class="card" id="adv-ref-card">
+                    <div class="card-title-row">
+                        <h2>Refinement</h2>
+                        <label class="auto-box-compact" style="font-size:0.84em; gap:6px;">
+                            <input type="checkbox" id="adv-ref-enabled" checked onchange="toggleAdvRef()">
+                            optional
+                        </label>
+                    </div>
+                    <div id="adv-ref-body">
                     <div class="form-row-3">
                         <div class="form-group">
                             <label>Theory</label>
@@ -2933,11 +3014,88 @@
                             </select>
                         </div>
                     </div>
+                    </div>
                 </div>
 
                 <div class="card" id="adv-ref-preview-card">
                     <h2>Refinement Input Preview</h2>
                     <textarea class="input-preview" id="orca-input2" rows="10" oninput="updatePreview()"></textarea>
+                </div>
+            </div>
+
+            <!-- Block 3b: Energy Refinement Settings (optional) -->
+            <div class="settings-block" id="adv-eref-settings-block" style="align-items:start;">
+                <div class="card">
+                    <div class="card-title-row">
+                        <h2>Energy Refinement</h2>
+                        <label class="auto-box-compact" style="font-size:0.84em; gap:6px;">
+                            <input type="checkbox" id="adv-energy-ref-enabled" onchange="toggleAdvEnergyRef()">
+                            optional
+                        </label>
+                    </div>
+                    <div id="adv-energy-ref-body" style="opacity:0.4; pointer-events:none;">
+                        <div class="form-row-3">
+                            <div class="form-group">
+                                <label>Theory</label>
+                                <select id="adv-eref-theory" onchange="updateAdvEnergyRefMethod(); updateAdvEnergyRefPreview(); updateAllPreviews();">
+                                    <option value="semiempirical">Semiempirical</option>
+                                    <option value="native-gfn">Native GFN</option>
+                                    <option value="gfn">GFN (Non-native)</option>
+                                    <option value="dft">DFT</option>
+                                    <option value="post-hf" selected>Post-HF / Wavefunction</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Method</label>
+                                <div class="custom-inline-control">
+                                    <select id="adv-eref-method" onchange="toggleCustomMethod('adv-eref'); updateAdvEnergyRefPreview(); updateAllPreviews();">
+                                        <option value="DLPNO-CCSD(T)" selected>DLPNO-CCSD(T)</option>
+                                        <option value="Other">Other...</option>
+                                    </select>
+                                    <div id="adv-eref-method-custom-wrap" class="custom-inline-editor">
+                                        <input type="text" id="adv-eref-method-custom" class="custom-method-input" placeholder="Enter custom method" oninput="updateAdvEnergyRefPreview(); updateAllPreviews();">
+                                        <button type="button" class="custom-inline-reset" onclick="resetCustomControl('adv-eref-method', 'adv-eref-method-custom')">▾</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Basis Set</label>
+                                <div class="custom-inline-control">
+                                    <select id="adv-eref-basis" onchange="toggleCustomInput('adv-eref-basis', 'adv-eref-basis-custom'); updateAdvEnergyRefPreview(); updateAllPreviews();">
+                                        <option value="" selected>(none)</option>
+                                        <option value="Other">Other...</option>
+                                    </select>
+                                    <div id="adv-eref-basis-custom-wrap" class="custom-inline-editor">
+                                        <input type="text" id="adv-eref-basis-custom" placeholder="Custom basis" oninput="updateAdvEnergyRefPreview(); updateAllPreviews();">
+                                        <button type="button" class="custom-inline-reset" onclick="resetCustomControl('adv-eref-basis', 'adv-eref-basis-custom')">▾</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-row-4">
+                            <div class="form-group">
+                                <label>nprocs</label>
+                                <input type="number" id="adv-eref-nprocs" value="4" min="1" oninput="updateAdvEnergyRefPreview(); updateAllPreviews();">
+                            </div>
+                            <div class="form-group">
+                                <label>MaxCore (MB)</label>
+                                <input type="number" id="adv-eref-memory" value="4000" min="0" step="500" oninput="updateAdvEnergyRefPreview(); updateAllPreviews();">
+                            </div>
+                            <div class="form-group">
+                                <label>Job Type</label>
+                                <select id="adv-eref-job" onchange="updateAdvEnergyRefPreview(); updateAllPreviews();">
+                                    <option value="SP" selected>SP (Single Point)</option>
+                                    <option value="SP Freq">SP + Freq</option>
+                                    <option value="SP NumFreq">SP + NumFreq</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" id="adv-eref-preview-card">
+                    <h2>Energy Refinement Input Preview</h2>
+                    <textarea class="input-preview" id="orca-input3" rows="8" oninput="updatePreview()"></textarea>
                 </div>
             </div>
 
@@ -3273,7 +3431,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             <div class="settings-block">
                 <div class="card">
                     <h2>Complete .asc File Preview</h2>
-                    <textarea class="input-preview" id="asc-preview" rows="16" style="min-height:420px;"># Add molecules to generate preview</textarea>
+                    <textarea class="input-preview" id="asc-preview" rows="16" style="flex:1; min-height:200px;"># Add molecules to generate preview</textarea>
                     <div class="btn-group">
                         <button class="btn btn-success" onclick="downloadAscFile()">Download .asc</button>
                         <button class="btn btn-secondary" onclick="openPreviewPanel()">Preview / Edit</button>
@@ -3282,27 +3440,18 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 </div>
 
                 <div class="card">
-                    <h2>Documentation</h2>
-                    <div class="info-box">
-                        <p><strong>Quick Reference:</strong></p>
-                        <ul style="margin: 10px 0; padding-left: 20px;">
-                            <li><strong>rN:</strong> Generate N random replicas with --box% flag</li>
-                            <li><strong>opt:</strong> Optimization stage using input1</li>
-                            <li><strong>ref:</strong> Refinement stage using input2</li>
-                            <li><strong>similarity:</strong> Topological screening with --th threshold</li>
-                        </ul>
-                        <p style="margin-top: 10px;">For extensive documentation, see the 
-                            <a href="https://raw.githubusercontent.com/manuel2gl/qft-ascec-similarity/main/manual.pdf" target="_blank">User Manual</a>.
-                        </p>
+                    <h2>Protocol Builder</h2>
+                    <p class="help-text" style="margin-bottom: 10px;">
+                        Define the workflow stages. For docs, see the
+                        <a href="https://raw.githubusercontent.com/manuel2gl/qft-ascec-similarity/main/manual.pdf" target="_blank">User Manual</a>.
+                    </p>
+
+                    <div class="protocol-builder" id="protocol-builder">
+                        <div id="protocol-stages"></div>
+                        <button class="btn btn-sm btn-primary" onclick="addProtocolStage()">+ Add Stage</button>
                     </div>
 
-                    <h3 style="margin-top: 15px;">Recovery Mode Flags</h3>
-                    <div style="font-size: 0.85em; color: #666;">
-                        <p><code>--rescue=METHOD</code>: Rescue method used for failed stage</p>
-                        <p><code>METHOD</code>: <code>HF-3c</code>, <code>Native-GFN2-xTB</code>, <code>Native-GFN1-xTB</code></p>
-                    </div>
-
-                    <h3 style="margin-top: 15px;">Protocol</h3>
+                    <h3 style="margin-top: 15px;">Protocol Preview</h3>
                     <textarea id="protocol-preview" rows="4" readonly style="font-family: monospace; font-size: 11px; resize: none; background: #f8f9fa;" placeholder="No protocol defined"></textarea>
                 </div>
             </div>
@@ -3484,7 +3633,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             ],
             'post-hf': [
                 { label: 'Ahlrichs (Def2)', values: ['def2-SVP', 'def2-TZVP', 'def2-TZVPP'] },
-                { label: 'Dunning (cc-)', values: ['cc-pVDZ', 'cc-pVTZ', 'aug-cc-pVDZ'] },
+                { label: 'Dunning (cc-)', values: ['cc-pVDZ', 'cc-pVTZ', 'aug-cc-pVDZ', 'aug-cc-pVTZ'] },
                 { label: 'Pople', values: ['6-31G*', '6-311G**'] }
             ]
         };
@@ -3574,6 +3723,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
             toggleCustomInput('adv-opt-rescue-method', 'adv-opt-rescue-method-custom');
             toggleCustomInput('adv-ref-basis', 'adv-ref-basis-custom');
             toggleCustomInput('adv-ref-rescue-method', 'adv-ref-rescue-method-custom');
+            updateAdvEnergyRefMethod();
+            toggleCustomInput('adv-eref-basis', 'adv-eref-basis-custom');
             syncAdvancedQmProcs();
             resetAdvOptRescueToSuggested();
             resetAdvRefRescueToSuggested();
@@ -3984,17 +4135,17 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 basicBoxViewer.removeAllShapes();
 
                 // Use smart-box-size (Smart Mode), basic-box-size (legacy), or box-size (Advanced)
-                const boxSize = parseFloat(document.getElementById('smart-box-size')?.value) || 
-                                parseFloat(document.getElementById('basic-box-size')?.value) || 
+                const boxSize = parseFloat(document.getElementById('smart-box-size')?.value) ||
+                                parseFloat(document.getElementById('basic-box-size')?.value) ||
                                 parseFloat(document.getElementById('box-size')?.value) || 7;
                 const half = boxSize / 2;
                 const smartBoxColor = 0x7f8c8d;
-                
+
                 // Fixed display radii keep edge thickness identical between empty/full views.
                 const edgeRadius = 0.1;
                 const cornerRadius = 0.078;
 
-                // Draw elegant box edges (muted gray for Smart Mode)
+                // Draw box edges at real coordinates
                 const edges = [
                     [[-half, -half, -half], [half, -half, -half]], [[half, -half, -half], [half, half, -half]],
                     [[half, half, -half], [-half, half, -half]], [[-half, half, -half], [-half, -half, -half]],
@@ -4011,7 +4162,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                     });
                 });
 
-                // Add spheres at corners for smooth joints
+                // Corner spheres at real coordinates
                 const corners = [
                     [-half, -half, -half], [half, -half, -half], [half, half, -half], [-half, half, -half],
                     [-half, -half, half], [half, -half, half], [half, half, half], [-half, half, half]
@@ -4032,16 +4183,15 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 const cornerModelId = (cornerModel && typeof cornerModel.getID === 'function') ? cornerModel.getID() : null;
                 basicBoxViewer.setStyle({elem: 'X'}, {sphere: {radius: 0.001, opacity: 0}});
 
-                // Add molecules if any
+                // Add molecules at their real XYZ coordinates (no scaling)
                 if (molecules.length > 0) {
                     console.log('Displaying', molecules.length, 'molecules in Smart Mode box');
-                    
+
                     let totalAtoms = 0;
                     molecules.forEach(mol => totalAtoms += mol.atoms.length);
 
                     let xyzString = `${totalAtoms}\nCluster preview\n`;
                     molecules.forEach(mol => {
-                        // Keep display geometry identical to source XYZ.
                         mol.atoms.forEach((atom, i) => {
                             const [x, y, z] = mol.coords[i];
                             xyzString += `${atom} ${x.toFixed(6)} ${y.toFixed(6)} ${z.toFixed(6)}\n`;
@@ -4053,7 +4203,6 @@ H  -0.757000  0.586000  0.000000"></textarea>
                         stick: { radius: 0.12, colorscheme: 'Jmol' },
                         sphere: { radius: 0.25, colorscheme: 'Jmol' }
                     });
-                    // Keep helper corner atoms hidden after molecule styling.
                     basicBoxViewer.setStyle({elem: 'X'}, {sphere: {radius: 0.001, opacity: 0}});
                 }
 
@@ -5890,6 +6039,155 @@ end
             if (previewEl) previewEl.textContent = preview;
         }
 
+        // Toggle Refinement block enabled/disabled
+        function toggleSmartRef() {
+            const enabled = document.getElementById('smart-ref-enabled')?.checked;
+            const body = document.getElementById('smart-ref-body');
+            if (body) {
+                body.style.opacity = enabled ? '1' : '0.4';
+                body.style.pointerEvents = enabled ? 'auto' : 'none';
+            }
+            if (!enabled) {
+                const textarea = document.getElementById('orca-input2');
+                if (textarea) textarea.value = '';
+            }
+            // Disable/enable advanced ref preview card
+            const advPreview = document.getElementById('adv-ref-preview-card');
+            if (advPreview) {
+                advPreview.style.opacity = enabled ? '1' : '0.4';
+                advPreview.style.pointerEvents = enabled ? 'auto' : 'none';
+            }
+            // Sync checkbox to advanced mode
+            const advCb = document.getElementById('adv-ref-enabled');
+            if (advCb && advCb.checked !== enabled) {
+                advCb.checked = enabled;
+                const advBody = document.getElementById('adv-ref-body');
+                if (advBody) {
+                    advBody.style.opacity = enabled ? '1' : '0.4';
+                    advBody.style.pointerEvents = enabled ? 'auto' : 'none';
+                }
+            }
+            if (enabled) updateSmartRefPreview();
+            updateSmartPipeline();
+            syncSmartToAdvanced();
+            buildProtocolFromSettings();
+            updatePipelineVisual();
+        }
+
+        function toggleAdvRef() {
+            const enabled = document.getElementById('adv-ref-enabled')?.checked;
+            const body = document.getElementById('adv-ref-body');
+            if (body) {
+                body.style.opacity = enabled ? '1' : '0.4';
+                body.style.pointerEvents = enabled ? 'auto' : 'none';
+            }
+            // Disable/enable advanced ref preview card
+            const advPreview = document.getElementById('adv-ref-preview-card');
+            if (advPreview) {
+                advPreview.style.opacity = enabled ? '1' : '0.4';
+                advPreview.style.pointerEvents = enabled ? 'auto' : 'none';
+            }
+            // Sync checkbox to smart mode
+            const smartCb = document.getElementById('smart-ref-enabled');
+            if (smartCb && smartCb.checked !== enabled) {
+                smartCb.checked = enabled;
+                toggleSmartRef();
+            }
+            if (!enabled) {
+                const ta = document.getElementById('orca-input2');
+                if (ta) ta.value = '';
+            } else {
+                updateAdvRefPreview();
+            }
+            buildProtocolFromSettings();
+            updatePipelineVisual();
+            updateSmartPipeline();
+        }
+
+        // Toggle Energy Refinement block enabled/disabled
+        function toggleSmartEnergyRef() {
+            const enabled = document.getElementById('smart-energy-ref-enabled')?.checked;
+            const body = document.getElementById('smart-energy-ref-body');
+            if (body) {
+                body.style.opacity = enabled ? '1' : '0.4';
+                body.style.pointerEvents = enabled ? 'auto' : 'none';
+            }
+            // Clear orca-input3 when disabled so it won't appear in the .asc file
+            if (!enabled) {
+                const textarea = document.getElementById('orca-input3');
+                if (textarea) textarea.value = '';
+            }
+            // Sync checkbox to advanced mode
+            const advCb = document.getElementById('adv-energy-ref-enabled');
+            if (advCb && advCb.checked !== enabled) {
+                advCb.checked = enabled;
+                const advBody = document.getElementById('adv-energy-ref-body');
+                if (advBody) {
+                    advBody.style.opacity = enabled ? '1' : '0.4';
+                    advBody.style.pointerEvents = enabled ? 'auto' : 'none';
+                }
+            }
+            if (enabled) updateSmartEnergyRefPreview();
+            updateSmartPipeline();
+            // Sync to advanced: protocol builder, pipeline, preview
+            syncSmartToAdvanced();
+            buildProtocolFromSettings();
+            updatePipelineVisual();
+        }
+
+        // Update Energy Refinement method dropdown based on theory
+        function updateSmartEnergyRefMethod() {
+            const theory = document.getElementById('smart-eref-theory').value;
+            const methodSelect = document.getElementById('smart-eref-method');
+            const basisSelect = document.getElementById('smart-eref-basis');
+            const methods = methodsByTheory[theory] || methodsByTheory['post-hf'];
+
+            const defaultMethod = theory === 'post-hf' ? 'DLPNO-CCSD(T)' : (theory === 'dft' ? 'B3LYP' : methods[0]);
+            methodSelect.innerHTML = methods.map((m) =>
+                `<option value="${m}" ${m === defaultMethod ? 'selected' : ''}>${m}</option>`
+            ).join('');
+
+            populateBasisSelect('smart-eref-basis', theory);
+            if (basisSelect) {
+                if (theory === 'post-hf') basisSelect.value = 'aug-cc-pVTZ';
+                else if (theory === 'dft') basisSelect.value = 'def2-TZVP';
+                else basisSelect.value = '';
+            }
+            toggleCustomInput('smart-eref-basis', 'smart-eref-basis-custom');
+            updateSmartEnergyRefPreview();
+            updateSmartPipeline();
+            buildProtocolFromSettings();
+            updatePipelineVisual();
+        }
+
+        // Generate Energy Refinement ORCA input preview
+        function updateSmartEnergyRefPreview() {
+            const enabled = document.getElementById('smart-energy-ref-enabled')?.checked;
+            if (!enabled) return;
+
+            const method = document.getElementById('smart-eref-method')?.value || 'DLPNO-CCSD(T)';
+            const theory = document.getElementById('smart-eref-theory')?.value || 'post-hf';
+            const basis = getSelectOrCustomValue('smart-eref-basis', 'smart-eref-basis-custom');
+            const jobRaw = document.getElementById('smart-eref-job')?.value || 'SP';
+            const nprocs = document.getElementById('smart-eref-nprocs')?.value || '4';
+            const maxcore = (document.getElementById('smart-eref-memory')?.value || '').trim();
+            const charge = document.getElementById('smart-charge')?.value || '0';
+            const mult = document.getElementById('smart-multiplicity')?.value || '1';
+
+            const methodLine = buildSmartMethodWithBasis(method, basis, theory);
+            // SP job: no Opt keyword, just the method line. Freq/NumFreq appended if selected.
+            const jobLine = jobRaw === 'SP' ? '' : jobRaw.replace('SP ', '');
+            const maxcoreLine = maxcore ? `%maxcore ${maxcore}\n` : '';
+
+            let input = `#name\n! ${methodLine}\n`;
+            if (jobLine) input += `! ${jobLine}\n`;
+            input += `%pal\n  nprocs ${nprocs}\nend\n${maxcoreLine}`;
+            input += `* xyz ${charge} ${mult}\n#\n*`;
+
+            const textarea = document.getElementById('orca-input3');
+            if (textarea) textarea.value = input;
+        }
+
         // Update pipeline visual overview
         function updateSmartPipeline() {
             const annealingTheory = document.getElementById('smart-annealing-theory')?.value || 'semiempirical';
@@ -5914,7 +6212,58 @@ end
             if (pipeRef) pipeRef.textContent = refMethod;
             if (pipeSim1) pipeSim1.textContent = `th=${simThreshold}`;
             if (pipeSim2) pipeSim2.textContent = `th=${sim2Threshold}`;
-            
+
+            // Refinement pipeline steps (optional, on by default)
+            const refEnabled = document.getElementById('smart-ref-enabled')?.checked !== false;
+            const pipeRefArrow = document.getElementById('smart-pipe-ref-arrow');
+            const pipeRefStep = document.getElementById('smart-pipe-ref-step');
+            const pipeSim2Arrow = document.getElementById('smart-pipe-sim2-arrow');
+            const pipeSim2Step = document.getElementById('smart-pipe-sim2-step');
+            if (pipeRefArrow) pipeRefArrow.style.display = refEnabled ? '' : 'none';
+            if (pipeRefStep) pipeRefStep.style.display = refEnabled ? '' : 'none';
+            if (pipeSim2Arrow) pipeSim2Arrow.style.display = refEnabled ? '' : 'none';
+            if (pipeSim2Step) pipeSim2Step.style.display = refEnabled ? '' : 'none';
+            // Sync to advanced pipeline
+            const advPipeRefArrow = document.getElementById('adv-pipe-ref-arrow');
+            const advPipeRefStep = document.getElementById('adv-pipe-ref-step');
+            const advPipeSim2Arrow = document.getElementById('adv-pipe-sim2-arrow');
+            const advPipeSim2Step = document.getElementById('adv-pipe-sim2-step');
+            if (advPipeRefArrow) advPipeRefArrow.style.display = refEnabled ? '' : 'none';
+            if (advPipeRefStep) advPipeRefStep.style.display = refEnabled ? '' : 'none';
+            if (advPipeSim2Arrow) advPipeSim2Arrow.style.display = refEnabled ? '' : 'none';
+            if (advPipeSim2Step) advPipeSim2Step.style.display = refEnabled ? '' : 'none';
+
+            // Energy Refinement pipeline steps (optional)
+            const erefEnabled = document.getElementById('smart-energy-ref-enabled')?.checked;
+            const erefMethod = document.getElementById('smart-eref-method')?.value || 'DLPNO-CCSD(T)';
+            const pipeErefArrow = document.getElementById('smart-pipe-eref-arrow');
+            const pipeErefStep = document.getElementById('smart-pipe-eref-step');
+            const pipeEref = document.getElementById('smart-pipe-eref');
+            const pipeSim3Arrow = document.getElementById('smart-pipe-sim3-arrow');
+            const pipeSim3Step = document.getElementById('smart-pipe-sim3-step');
+            const pipeSim3 = document.getElementById('smart-pipe-sim3');
+            // Show/hide energy refinement steps — restore CSS display, don't force inline-block
+            if (pipeErefArrow) pipeErefArrow.style.display = erefEnabled ? '' : 'none';
+            if (pipeErefStep) pipeErefStep.style.display = erefEnabled ? '' : 'none';
+            if (pipeEref) pipeEref.textContent = erefMethod;
+            if (pipeSim3Arrow) pipeSim3Arrow.style.display = erefEnabled ? '' : 'none';
+            if (pipeSim3Step) pipeSim3Step.style.display = erefEnabled ? '' : 'none';
+            if (pipeSim3) pipeSim3.textContent = `th=${sim2Threshold}`;
+
+            // Sync advanced pipeline too
+            const advPipeErefArrow = document.getElementById('adv-pipe-eref-arrow');
+            const advPipeErefStep = document.getElementById('adv-pipe-eref-step');
+            const advPipeEref = document.getElementById('adv-pipe-eref');
+            const advPipeSim3Arrow = document.getElementById('adv-pipe-sim3-arrow');
+            const advPipeSim3Step = document.getElementById('adv-pipe-sim3-step');
+            const advPipeSim3 = document.getElementById('adv-pipe-sim3');
+            if (advPipeErefArrow) advPipeErefArrow.style.display = erefEnabled ? '' : 'none';
+            if (advPipeErefStep) advPipeErefStep.style.display = erefEnabled ? '' : 'none';
+            if (advPipeEref) advPipeEref.textContent = erefMethod;
+            if (advPipeSim3Arrow) advPipeSim3Arrow.style.display = erefEnabled ? '' : 'none';
+            if (advPipeSim3Step) advPipeSim3Step.style.display = erefEnabled ? '' : 'none';
+            if (advPipeSim3) advPipeSim3.textContent = `th=${sim2Threshold}`;
+
             updateSmartOptPreview();
             updateSmartRefPreview();
         }
@@ -6127,6 +6476,18 @@ end
             }
             applyAdvancedOptRescueDefaults();
 
+            // Refinement enabled checkbox
+            const refEnabledSmart = document.getElementById('smart-ref-enabled')?.checked !== false;
+            const advRefCb = document.getElementById('adv-ref-enabled');
+            if (advRefCb && advRefCb.checked !== refEnabledSmart) {
+                advRefCb.checked = refEnabledSmart;
+                const advRefBody = document.getElementById('adv-ref-body');
+                if (advRefBody) {
+                    advRefBody.style.opacity = refEnabledSmart ? '1' : '0.4';
+                    advRefBody.style.pointerEvents = refEnabledSmart ? 'auto' : 'none';
+                }
+            }
+
             // Refinement settings
             const refTheory = document.getElementById('smart-ref-theory')?.value;
             const refMethod = document.getElementById('smart-ref-method')?.value;
@@ -6202,9 +6563,10 @@ end
             const sim2Threshold = sameSimilarity ? simThreshold : (document.getElementById('smart-sim2-th')?.value || simThreshold);
             const sim2Jobs = sameSimilarity ? simJobs : (document.getElementById('smart-sim2-j')?.value || simJobs);
             const sim2Rmsd = sameSimilarity ? simRmsd : (document.getElementById('smart-sim2-rmsd-th')?.value || '');
-            const recoveryMode = document.getElementById('smart-recovery-mode')?.value;
-            const recoveryTh = document.getElementById('smart-recovery-th')?.value;
-            const recoveryRedo = document.getElementById('smart-recovery-redo')?.value;
+            // Recovery mode is advanced-only; read defaults from advanced controls
+            const recoveryMode = document.getElementById('adv-recovery-mode')?.value;
+            const recoveryTh = document.getElementById('adv-recovery-th')?.value;
+            const recoveryRedo = document.getElementById('adv-recovery-redo')?.value;
 
             const advSimSame = document.getElementById('adv-sim-same');
             if (advSimSame) {
@@ -6231,17 +6593,48 @@ end
                 if (advSim1Rmsd) advSim1Rmsd.value = simRmsd;
                 if (advSim2Rmsd) advSim2Rmsd.value = sim2Rmsd;
             }
-            if (recoveryMode) {
-                const advRecoveryMode = document.getElementById('adv-recovery-mode');
-                if (advRecoveryMode) advRecoveryMode.value = recoveryMode;
+            // Recovery mode stays in advanced-only — no sync needed
+
+            // Energy Refinement sync
+            const erefEnabled = document.getElementById('smart-energy-ref-enabled')?.checked;
+            const advErefCb = document.getElementById('adv-energy-ref-enabled');
+            if (advErefCb && advErefCb.checked !== erefEnabled) {
+                advErefCb.checked = erefEnabled;
+                const advBody = document.getElementById('adv-energy-ref-body');
+                if (advBody) {
+                    advBody.style.opacity = erefEnabled ? '1' : '0.4';
+                    advBody.style.pointerEvents = erefEnabled ? 'auto' : 'none';
+                }
             }
-            if (recoveryTh !== undefined) {
-                const advRecoveryTh = document.getElementById('adv-recovery-th');
-                if (advRecoveryTh) advRecoveryTh.value = recoveryTh;
-            }
-            if (recoveryRedo !== undefined) {
-                const advRecoveryRedo = document.getElementById('adv-recovery-redo');
-                if (advRecoveryRedo) advRecoveryRedo.value = recoveryRedo;
+            if (erefEnabled) {
+                const erefTheory = document.getElementById('smart-eref-theory')?.value || 'post-hf';
+                const erefMethod = document.getElementById('smart-eref-method')?.value || 'DLPNO-CCSD(T)';
+                const erefBasis = getSelectOrCustomValue('smart-eref-basis', 'smart-eref-basis-custom');
+                const erefNprocs = document.getElementById('smart-eref-nprocs')?.value;
+                const erefMemory = document.getElementById('smart-eref-memory')?.value;
+                const erefJob = document.getElementById('smart-eref-job')?.value;
+
+                const advErefTheory = document.getElementById('adv-eref-theory');
+                if (advErefTheory) { advErefTheory.value = erefTheory; updateAdvEnergyRefMethod(); }
+                const advErefMethod = document.getElementById('adv-eref-method');
+                if (advErefMethod) {
+                    const opts = Array.from(advErefMethod.options).map(o => o.value);
+                    if (opts.includes(erefMethod)) { advErefMethod.value = erefMethod; }
+                    else { advErefMethod.value = 'Other'; const c = document.getElementById('adv-eref-method-custom'); if (c) c.value = erefMethod; }
+                    toggleCustomMethod('adv-eref');
+                }
+                const advErefBasis = document.getElementById('adv-eref-basis');
+                if (advErefBasis) {
+                    const bOpts = Array.from(advErefBasis.options).map(o => o.value);
+                    if (bOpts.includes(erefBasis)) { advErefBasis.value = erefBasis; }
+                    else if (erefBasis) { advErefBasis.value = 'Other'; const c = document.getElementById('adv-eref-basis-custom'); if (c) c.value = erefBasis; }
+                    else { advErefBasis.value = ''; }
+                    toggleCustomInput('adv-eref-basis', 'adv-eref-basis-custom');
+                }
+                if (erefNprocs) { const el = document.getElementById('adv-eref-nprocs'); if (el) el.value = erefNprocs; }
+                if (erefMemory) { const el = document.getElementById('adv-eref-memory'); if (el) el.value = erefMemory; }
+                if (erefJob) { const el = document.getElementById('adv-eref-job'); if (el) el.value = erefJob; }
+                updateAdvEnergyRefPreview();
             }
 
             // Done syncing
@@ -6452,6 +6845,18 @@ end
                 if (smartOptJob) smartOptJob.value = optJob;
             }
 
+            // Refinement enabled checkbox (adv → smart)
+            const refEnabledAdv = document.getElementById('adv-ref-enabled')?.checked !== false;
+            const smartRefCb = document.getElementById('smart-ref-enabled');
+            if (smartRefCb && smartRefCb.checked !== refEnabledAdv) {
+                smartRefCb.checked = refEnabledAdv;
+                const smartRefBody = document.getElementById('smart-ref-body');
+                if (smartRefBody) {
+                    smartRefBody.style.opacity = refEnabledAdv ? '1' : '0.4';
+                    smartRefBody.style.pointerEvents = refEnabledAdv ? 'auto' : 'none';
+                }
+            }
+
             // Refinement settings - map advanced to smart theory values
             const refTheory = document.getElementById('adv-ref-theory')?.value;
             const refMethod = getMethodValue('adv-ref');
@@ -6544,17 +6949,47 @@ end
             const recoveryTh = document.getElementById('adv-recovery-th')?.value;
             const recoveryRedo = document.getElementById('adv-recovery-redo')?.value;
 
-            if (recoveryMode) {
-                const smartRecoveryMode = document.getElementById('smart-recovery-mode');
-                if (smartRecoveryMode) smartRecoveryMode.value = recoveryMode;
+            // Recovery mode is advanced-only — no sync to smart needed
+
+            // Energy Refinement reverse sync (adv → smart)
+            const advErefEnabled = document.getElementById('adv-energy-ref-enabled')?.checked;
+            const smartErefCb = document.getElementById('smart-energy-ref-enabled');
+            if (smartErefCb && smartErefCb.checked !== advErefEnabled) {
+                smartErefCb.checked = advErefEnabled;
+                const smartBody = document.getElementById('smart-energy-ref-body');
+                if (smartBody) {
+                    smartBody.style.opacity = advErefEnabled ? '1' : '0.4';
+                    smartBody.style.pointerEvents = advErefEnabled ? 'auto' : 'none';
+                }
             }
-            if (recoveryTh !== undefined) {
-                const smartRecoveryTh = document.getElementById('smart-recovery-th');
-                if (smartRecoveryTh) smartRecoveryTh.value = recoveryTh;
-            }
-            if (recoveryRedo !== undefined) {
-                const smartRecoveryRedo = document.getElementById('smart-recovery-redo');
-                if (smartRecoveryRedo) smartRecoveryRedo.value = recoveryRedo;
+            if (advErefEnabled) {
+                const erefTheory = document.getElementById('adv-eref-theory')?.value;
+                const erefMethod = getMethodValue('adv-eref');
+                const erefBasisRaw = document.getElementById('adv-eref-basis');
+                const erefBasisCustom = document.getElementById('adv-eref-basis-custom');
+                const erefBasis = (erefBasisRaw?.value === 'Other') ? (erefBasisCustom?.value?.trim() || '') : (erefBasisRaw?.value || '');
+                const erefNprocs = document.getElementById('adv-eref-nprocs')?.value;
+                const erefMemory = document.getElementById('adv-eref-memory')?.value;
+                const erefJob = document.getElementById('adv-eref-job')?.value;
+
+                const smartErefTheory = document.getElementById('smart-eref-theory');
+                if (smartErefTheory && erefTheory) { smartErefTheory.value = erefTheory; updateSmartEnergyRefMethod(); }
+                const smartErefMethod = document.getElementById('smart-eref-method');
+                if (smartErefMethod) {
+                    const opts = Array.from(smartErefMethod.options).map(o => o.value);
+                    if (opts.includes(erefMethod)) smartErefMethod.value = erefMethod;
+                }
+                const smartErefBasis = document.getElementById('smart-eref-basis');
+                if (smartErefBasis) {
+                    const bOpts = Array.from(smartErefBasis.options).map(o => o.value);
+                    if (bOpts.includes(erefBasis)) smartErefBasis.value = erefBasis;
+                    else if (erefBasis) { smartErefBasis.value = 'Other'; const c = document.getElementById('smart-eref-basis-custom'); if (c) c.value = erefBasis; }
+                    else smartErefBasis.value = '';
+                    toggleCustomInput('smart-eref-basis', 'smart-eref-basis-custom');
+                }
+                if (erefNprocs) { const el = document.getElementById('smart-eref-nprocs'); if (el) el.value = erefNprocs; }
+                if (erefMemory) { const el = document.getElementById('smart-eref-memory'); if (el) el.value = erefMemory; }
+                if (erefJob) { const el = document.getElementById('smart-eref-job'); if (el) el.value = erefJob; }
             }
 
             // Done syncing
@@ -6586,6 +7021,8 @@ end
             updateSmartAnnealingMethod();
             updateSmartOptMethod();
             updateSmartRefMethod();
+            updateSmartEnergyRefMethod();
+            toggleSmartEnergyRef();
             updateSmartQuenchParams();
             toggleSmartSimilarityMode();
             toggleSmartUsePacking();
@@ -6697,6 +7134,81 @@ end
             toggleCustomMethod('adv-ref');
             toggleCustomInput('adv-ref-basis', 'adv-ref-basis-custom');
             applyAdvancedRefRescueDefaults();
+        }
+
+        // Advanced Energy Refinement: toggle, method update, preview
+        function toggleAdvEnergyRef() {
+            const enabled = document.getElementById('adv-energy-ref-enabled')?.checked;
+            const body = document.getElementById('adv-energy-ref-body');
+            if (body) {
+                body.style.opacity = enabled ? '1' : '0.4';
+                body.style.pointerEvents = enabled ? 'auto' : 'none';
+            }
+            // Sync checkbox to smart mode
+            const smartCb = document.getElementById('smart-energy-ref-enabled');
+            if (smartCb && smartCb.checked !== enabled) {
+                smartCb.checked = enabled;
+                toggleSmartEnergyRef();
+            }
+            if (!enabled) {
+                const ta = document.getElementById('orca-input3');
+                if (ta) ta.value = '';
+            } else {
+                updateAdvEnergyRefPreview();
+            }
+            buildProtocolFromSettings();
+            updatePipelineVisual();
+            updateSmartPipeline();
+        }
+
+        function updateAdvEnergyRefMethod() {
+            const theory = document.getElementById('adv-eref-theory').value;
+            const methodSelect = document.getElementById('adv-eref-method');
+            const methods = methodsByTheory[theory] || methodsByTheory['post-hf'];
+            const basisSelect = document.getElementById('adv-eref-basis');
+
+            const defaultMethod = theory === 'post-hf' ? 'DLPNO-CCSD(T)' : (theory === 'dft' ? 'B3LYP' : methods[0]);
+            methodSelect.innerHTML = methods.map((m) =>
+                `<option value="${m}" ${m === defaultMethod ? 'selected' : ''}>${m}</option>`
+            ).join('') + '<option value="Other">Other...</option>';
+
+            populateBasisSelect('adv-eref-basis', theory);
+            if (basisSelect) {
+                if (theory === 'post-hf') basisSelect.value = 'aug-cc-pVTZ';
+                else if (theory === 'dft') basisSelect.value = 'def2-TZVP';
+                else basisSelect.value = '';
+            }
+            toggleCustomMethod('adv-eref');
+            toggleCustomInput('adv-eref-basis', 'adv-eref-basis-custom');
+        }
+
+        function updateAdvEnergyRefPreview() {
+            const enabled = document.getElementById('adv-energy-ref-enabled')?.checked;
+            if (!enabled) return;
+
+            const method = getMethodValue('adv-eref');
+            const theory = document.getElementById('adv-eref-theory')?.value || 'post-hf';
+            const basisRaw = document.getElementById('adv-eref-basis');
+            const basisCustom = document.getElementById('adv-eref-basis-custom');
+            const basis = (basisRaw?.value === 'Other') ? (basisCustom?.value?.trim() || '') : (basisRaw?.value || '');
+            const jobRaw = document.getElementById('adv-eref-job')?.value || 'SP';
+            const nprocs = document.getElementById('adv-eref-nprocs')?.value || '4';
+            const maxcore = (document.getElementById('adv-eref-memory')?.value || '').trim();
+            const charge = document.getElementById('adv-charge')?.value || '0';
+            const mult = document.getElementById('adv-multiplicity')?.value || '1';
+
+            const formattedMethod = formatOrcaMethodLine(method);
+            const methodLine = basis ? `${formattedMethod} ${basis}` : formattedMethod;
+            const jobLine = jobRaw === 'SP' ? '' : jobRaw.replace('SP ', '');
+            const maxcoreLine = maxcore ? `%maxcore ${maxcore}\n` : '';
+
+            let input = `#name\n! ${methodLine}\n`;
+            if (jobLine) input += `! ${jobLine}\n`;
+            input += `%pal\n  nprocs ${nprocs}\nend\n${maxcoreLine}`;
+            input += `* xyz ${charge} ${mult}\n#\n*`;
+
+            const textarea = document.getElementById('orca-input3');
+            if (textarea) textarea.value = input;
         }
 
         // Toggle custom method input visibility
@@ -7072,6 +7584,33 @@ end
             if (pipeSim1) pipeSim1.textContent = `th=${sim1Th}`;
             if (pipeRef) pipeRef.textContent = refMethod;
             if (pipeSim2) pipeSim2.textContent = `th=${sim2Th}`;
+
+            // Refinement steps (optional, on by default)
+            const refEnabled = document.getElementById('smart-ref-enabled')?.checked !== false;
+            const advRefArrow = document.getElementById('adv-pipe-ref-arrow');
+            const advRefStep = document.getElementById('adv-pipe-ref-step');
+            const advSim2Arrow = document.getElementById('adv-pipe-sim2-arrow');
+            const advSim2Step = document.getElementById('adv-pipe-sim2-step');
+            if (advRefArrow) advRefArrow.style.display = refEnabled ? '' : 'none';
+            if (advRefStep) advRefStep.style.display = refEnabled ? '' : 'none';
+            if (advSim2Arrow) advSim2Arrow.style.display = refEnabled ? '' : 'none';
+            if (advSim2Step) advSim2Step.style.display = refEnabled ? '' : 'none';
+
+            // Energy Refinement steps (synced from Smart Mode)
+            const erefEnabled = document.getElementById('smart-energy-ref-enabled')?.checked;
+            const erefMethod = document.getElementById('smart-eref-method')?.value || 'DLPNO-CCSD(T)';
+            const ape = document.getElementById('adv-pipe-eref-arrow');
+            const aps = document.getElementById('adv-pipe-eref-step');
+            const apm = document.getElementById('adv-pipe-eref');
+            const as3a = document.getElementById('adv-pipe-sim3-arrow');
+            const as3s = document.getElementById('adv-pipe-sim3-step');
+            const as3m = document.getElementById('adv-pipe-sim3');
+            if (ape) ape.style.display = erefEnabled ? '' : 'none';
+            if (aps) aps.style.display = erefEnabled ? '' : 'none';
+            if (apm) apm.textContent = erefMethod;
+            if (as3a) as3a.style.display = erefEnabled ? '' : 'none';
+            if (as3s) as3s.style.display = erefEnabled ? '' : 'none';
+            if (as3m) as3m.textContent = `th=${sim2Th}`;
         }
 
         function getChangedSimilarityValues(bindings, defaults) {
@@ -7153,10 +7692,11 @@ end
             let refArgs = 'input2';
 
             // Update protocol stages with complete annealing parameters
+            const refEnabled = document.getElementById('smart-ref-enabled')?.checked !== false;
             protocolStages = [
-                { 
-                    type: 'rN', 
-                    n: parseInt(replicas), 
+                {
+                    type: 'rN',
+                    n: parseInt(replicas),
                     args: `--box${packing}`,
                     // Row 1: Simulation Mode & Number of Config
                     simMode: parseInt(simMode),
@@ -7170,16 +7710,28 @@ end
                     nmo: parseInt(nmo)
                 },
                 { type: 'opt', args: optArgs },
-                { type: 'similarity', args: sim1Args },
-                { type: 'ref', args: refArgs },
-                { type: 'similarity', args: sim2Args }
+                { type: 'similarity', args: sim1Args }
             ];
+
+            if (refEnabled) {
+                protocolStages.push({ type: 'ref', args: refArgs });
+                protocolStages.push({ type: 'similarity', args: sim2Args });
+            }
+
+            // Energy Refinement (optional 2nd ref + similarity)
+            const erefEnabled = document.getElementById('smart-energy-ref-enabled')?.checked;
+            if (erefEnabled) {
+                updateSmartEnergyRefPreview();
+                protocolStages.push({ type: 'ref', args: 'input3' });
+                protocolStages.push({ type: 'similarity', args: sim2Args });
+            }
 
             // Keep recovery values available for downstream ASC generation.
             protocolStages.recoveryMode = recoveryMode;
             protocolStages.recoveryTh = recoveryTh;
             protocolStages.recoveryRedo = recoveryRedo;
 
+            rebuildProtocolStages();
             updateProtocolPreview();
         }
 
@@ -7294,14 +7846,27 @@ end
             updateProtocolPreview();
         }
 
-        // Protocol functions
-        function addProtocolStage() {
-            const idx = protocolStages.length;
-            let defaultType = idx === 0 ? 'rN' : idx % 2 === 0 ? 'similarity' : 'opt';
-            let defaultArgs = getDefaultArgs(defaultType);
-            let defaultN = 3;
+        // Protocol functions — count existing stages of a type to auto-number
+        function countStageType(type) {
+            return protocolStages.filter(s => s.type === type).length;
+        }
 
-            protocolStages.push({ type: defaultType, args: defaultArgs, n: defaultN });
+        function getDefaultArgsForNewStage(type) {
+            if (type === 'rN') return '--box10';
+            if (type === 'opt') return 'input1';
+            if (type === 'similarity') return '--th=2';
+            if (type === 'ref') {
+                const refCount = countStageType('ref');
+                return `input${refCount + 2}`;  // 1st ref → input2, 2nd → input3, ...
+            }
+            return '';
+        }
+
+        function addProtocolStage() {
+            // After the default 5 stages, add a ref + similarity pair
+            const refArgs = getDefaultArgsForNewStage('ref');
+            protocolStages.push({ type: 'ref', args: refArgs });
+            protocolStages.push({ type: 'similarity', args: '--th=2' });
             rebuildProtocolStages();
             updateProtocolPreview();
         }
@@ -7316,7 +7881,13 @@ end
 
         function updateStageType(idx, value) {
             protocolStages[idx].type = value;
-            protocolStages[idx].args = getDefaultArgs(value);
+            // Count how many stages of this type exist BEFORE this index
+            if (value === 'ref') {
+                const refsBefore = protocolStages.slice(0, idx).filter(s => s.type === 'ref').length;
+                protocolStages[idx].args = `input${refsBefore + 2}`;  // 1st→input2, 2nd→input3
+            } else {
+                protocolStages[idx].args = getDefaultArgs(value);
+            }
             rebuildProtocolStages();
             updateProtocolPreview();
         }
@@ -7339,8 +7910,8 @@ end
 
         function rebuildProtocolStages() {
             const stagesDiv = document.getElementById('protocol-stages');
-            if (!stagesDiv) return;  // Element doesn't exist (e.g., in Smart Mode)
-            
+            if (!stagesDiv) return;
+
             stagesDiv.innerHTML = '';
 
             protocolStages.forEach((stage, idx) => {
@@ -7353,7 +7924,7 @@ end
                             <option value="similarity" ${stage.type === 'similarity' ? 'selected' : ''}>similarity</option>
                             <option value="ref" ${stage.type === 'ref' ? 'selected' : ''}>ref</option>
                         </select>
-                        <input type="number" value="${stage.n || 1}" min="1" max="99" 
+                        <input type="number" value="${stage.n || 1}" min="1" max="99"
                                style="width:50px;${stage.type !== 'rN' ? 'display:none;' : ''}"
                                onchange="updateStageN(${idx}, this.value)">
                         <input type="text" value="${stage.args}" placeholder="args" onchange="updateStageArgs(${idx}, this.value)">
@@ -7365,22 +7936,38 @@ end
 
         function updateProtocolPreview() {
             const preview = document.getElementById('protocol-preview');
-            if (!preview) return;  // Element doesn't exist
-            
+            if (!preview) return;
+
             if (protocolStages.length === 0) {
                 preview.value = 'No protocol defined';
                 updatePreview();
                 return;
             }
 
+            // Auto-number ref/opt stages: 1st ref → "ref", 2nd → "ref2", etc.
+            let refCount = 0;
+            let optCount = 0;
             let text = '.asc,\n';
             protocolStages.forEach((s, idx) => {
-                let name = s.type === 'rN' ? `r${s.n || 1}` : s.type;
+                let name;
+                if (s.type === 'rN') {
+                    name = `r${s.n || 1}`;
+                } else if (s.type === 'ref') {
+                    refCount++;
+                    name = refCount <= 1 ? 'ref' : `ref${refCount}`;
+                } else if (s.type === 'opt') {
+                    optCount++;
+                    name = optCount <= 1 ? 'opt' : `opt${optCount}`;
+                } else {
+                    name = s.type;
+                }
                 const line = s.args ? `${name} ${s.args}` : name;
                 text += line + (idx < protocolStages.length - 1 ? ',' : '') + '\n';
             });
 
             preview.value = text;
+            // Auto-size rows to fit content
+            preview.rows = Math.max(4, text.split('\n').length);
             updatePreview();
         }
 
@@ -8186,8 +8773,21 @@ H   1.981282  0.134064  0.000000`;
                 content += `\n# Protocol\n`;
                 content += `# (annealing, (pre)optimization, clustering, separated by "," or ".")\n\n`;
                 content += `.asc,\n`;
+                let ascRefCount = 0;
+                let ascOptCount = 0;
                 protocolStages.forEach((stage, idx) => {
-                    let stageName = stage.type === 'rN' ? `r${stage.n || 1}` : stage.type;
+                    let stageName;
+                    if (stage.type === 'rN') {
+                        stageName = `r${stage.n || 1}`;
+                    } else if (stage.type === 'ref') {
+                        ascRefCount++;
+                        stageName = ascRefCount <= 1 ? 'ref' : `ref${ascRefCount}`;
+                    } else if (stage.type === 'opt') {
+                        ascOptCount++;
+                        stageName = ascOptCount <= 1 ? 'opt' : `opt${ascOptCount}`;
+                    } else {
+                        stageName = stage.type;
+                    }
                     const line = stage.args ? `${stageName} ${stage.args}` : stageName;
                     content += line + (idx < protocolStages.length - 1 ? ',' : '') + '\n';
                 });
@@ -8216,6 +8816,19 @@ H   1.981282  0.134064  0.000000`;
                 } else {
                     content += `#name\n`;
                     content += orcaInput2 + '\n';
+                }
+            }
+
+            // Energy Refinement input3 (optional)
+            const orcaInput3 = document.getElementById('orca-input3')?.value || '';
+            if (orcaInput3) {
+                content += `\n#orca input3\n`;
+                const cleanedInput3 = orcaInput3.trimStart();
+                if (cleanedInput3.startsWith('#name')) {
+                    content += orcaInput3 + '\n';
+                } else {
+                    content += `#name\n`;
+                    content += orcaInput3 + '\n';
                 }
             }
 
