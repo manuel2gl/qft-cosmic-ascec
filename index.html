@@ -1637,7 +1637,8 @@
 
         #advanced-tab .form-row,
         #advanced-tab .form-row-3,
-        #advanced-tab .form-row-4 {
+        #advanced-tab .form-row-4,
+        #advanced-tab .form-row-5 {
             gap: 12px;
         }
 
@@ -1922,9 +1923,17 @@
             grid-template-columns: repeat(4, 1fr);
             gap: 10px;
         }
+        .form-row-5 {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 10px;
+        }
 
         @media (max-width: 800px) {
             .form-row-4 {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .form-row-5 {
                 grid-template-columns: repeat(2, 1fr);
             }
 
@@ -2166,7 +2175,7 @@
                 <div class="card">
                     <h2>Annealing Theory Level</h2>
                     <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
-                        <div class="form-group" style="flex:1; min-width:135px; margin-bottom:0;">
+                        <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                             <label>Theory</label>
                             <select id="smart-annealing-theory" onchange="updateSmartAnnealingMethod()">
                                 <option value="semiempirical" selected>Semiempirical</option>
@@ -2176,7 +2185,7 @@
                                 <option value="post-hf">Post-HF</option>
                             </select>
                         </div>
-                        <div class="form-group" style="flex:1; min-width:140px; margin-bottom:0;">
+                        <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                             <label>Method</label>
                             <div class="custom-inline-control">
                                 <select id="smart-annealing-method" onchange="toggleCustomMethod('smart-annealing'); updateSmartPipeline(); syncSmartToAdvanced();"></select>
@@ -2187,11 +2196,7 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="form-group" style="flex:0 0 90px; margin-bottom:0;">
-                            <label>nprocs</label>
-                            <input type="number" id="smart-annealing-nprocs" value="1" min="1">
-                        </div>
-                        <div class="form-group" style="flex:1; min-width:130px; margin-bottom:0;">
+                        <div class="form-group" style="flex:1; min-width:100px; margin-bottom:0;">
                             <label>Basis</label>
                             <div class="custom-inline-control">
                                 <select id="smart-annealing-basis" onchange="toggleCustomInput('smart-annealing-basis', 'smart-annealing-basis-custom'); syncSmartToAdvanced();">
@@ -2203,6 +2208,16 @@
                                     <button type="button" class="custom-inline-reset" onclick="resetCustomControl('smart-annealing-basis', 'smart-annealing-basis-custom')">▾</button>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-top:8px;">
+                        <div class="form-group" style="flex:0 0 80px; margin-bottom:0;">
+                            <label>nprocs</label>
+                            <input type="number" id="smart-annealing-nprocs" value="1" min="1">
+                        </div>
+                        <div class="form-group" style="flex:0 0 95px; margin-bottom:0;">
+                            <label>Concurrent</label>
+                            <input type="number" id="smart-annealing-concurrent" value="1" min="1">
                         </div>
                         <div class="form-group" style="flex:0 0 90px; margin-bottom:0;">
                             <label>Charge</label>
@@ -2295,7 +2310,7 @@
                             <label>Method</label>
                             <select id="smart-opt-method" onchange="updateSmartOptPreview(); updateSmartPipeline(); syncSmartToAdvanced();"></select>
                         </div>
-                        <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
+                        <div class="form-group" style="flex:1; min-width:100px; margin-bottom:0;">
                             <label>Basis</label>
                             <div class="custom-inline-control">
                                 <select id="smart-opt-basis" onchange="toggleCustomInput('smart-opt-basis', 'smart-opt-basis-custom'); updateSmartOptPreview(); syncSmartToAdvanced();">
@@ -2308,9 +2323,13 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="form-group" style="flex:0 0 85px; margin-bottom:0;">
+                        <div class="form-group" style="flex:0 0 80px; margin-bottom:0;">
                             <label>nprocs</label>
-                            <input type="number" id="smart-opt-nprocs" value="4" min="1">
+                            <input type="number" id="smart-opt-nprocs" value="1" min="1">
+                        </div>
+                        <div class="form-group" style="flex:0 0 95px; margin-bottom:0;">
+                            <label>Concurrent</label>
+                            <input type="number" id="smart-opt-concurrent" value="4" min="1">
                         </div>
                         <div class="form-group" style="flex:0 0 85px; margin-bottom:0;">
                             <label>MaxIter</label>
@@ -2351,7 +2370,7 @@
                             <label>Method</label>
                             <select id="smart-ref-method" onchange="updateSmartRefPreview(); updateSmartPipeline(); syncSmartToAdvanced();"></select>
                         </div>
-                        <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
+                        <div class="form-group" style="flex:1; min-width:100px; margin-bottom:0;">
                             <label>Basis</label>
                             <div class="custom-inline-control">
                                 <select id="smart-ref-basis" onchange="toggleCustomInput('smart-ref-basis', 'smart-ref-basis-custom'); updateSmartRefPreview(); syncSmartToAdvanced();">
@@ -2364,9 +2383,13 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="form-group" style="flex:0 0 85px; margin-bottom:0;">
+                        <div class="form-group" style="flex:0 0 80px; margin-bottom:0;">
                             <label>nprocs</label>
                             <input type="number" id="smart-ref-nprocs" value="4" min="1">
+                        </div>
+                        <div class="form-group" style="flex:0 0 95px; margin-bottom:0;">
+                            <label>Concurrent</label>
+                            <input type="number" id="smart-ref-concurrent" value="1" min="1">
                         </div>
                         <div class="form-group" style="flex:0 0 85px; margin-bottom:0;">
                             <label>MaxIter</label>
@@ -2658,7 +2681,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="form-row-4">
+                    <div class="form-row-5">
                         <div class="form-group">
                             <label>QM Procs</label>
                             <input type="number" id="adv-qm-nprocs" value="1" min="1" oninput="syncAdvancedQmProcs(); updateAllPreviews()">
@@ -2666,6 +2689,10 @@
                         <div class="form-group">
                             <label>ASCEC Procs</label>
                             <input type="number" id="adv-annealing-nprocs" value="4" min="1" oninput="updateAllPreviews()">
+                        </div>
+                        <div class="form-group">
+                            <label>Concurrent</label>
+                            <input type="number" id="adv-annealing-concurrent" value="1" min="1" oninput="updateAllPreviews()">
                         </div>
                         <div class="form-group">
                             <label>Charge</label>
@@ -2884,10 +2911,14 @@
                             </div>
                         </div>
                     </div>
-                    <div class="form-row-4">
+                    <div class="form-row-5">
                         <div class="form-group">
                             <label>nprocs</label>
-                            <input type="number" id="adv-opt-nprocs" value="4" min="1" oninput="updateAllPreviews()">
+                            <input type="number" id="adv-opt-nprocs" value="1" min="1" oninput="updateAllPreviews()">
+                        </div>
+                        <div class="form-group">
+                            <label>Concurrent</label>
+                            <input type="number" id="adv-opt-concurrent" value="4" min="1" oninput="updateAllPreviews()">
                         </div>
                         <div class="form-group">
                             <label>MaxCore (MB)</label>
@@ -2994,10 +3025,14 @@
                             </div>
                         </div>
                     </div>
-                    <div class="form-row-4">
+                    <div class="form-row-5">
                         <div class="form-group">
                             <label>nprocs</label>
                             <input type="number" id="adv-ref-nprocs" value="4" min="1" oninput="updateAllPreviews()">
+                        </div>
+                        <div class="form-group">
+                            <label>Concurrent</label>
+                            <input type="number" id="adv-ref-concurrent" value="1" min="1" oninput="updateAllPreviews()">
                         </div>
                         <div class="form-group">
                             <label>MaxCore (MB)</label>
@@ -6628,6 +6663,11 @@ end
                 const advQmNprocs = document.getElementById('adv-qm-nprocs');
                 if (advQmNprocs) advQmNprocs.value = annealingNprocs;
             }
+            const annealingConcurrent = document.getElementById('smart-annealing-concurrent')?.value;
+            if (annealingConcurrent) {
+                const advAnnealingConcurrent = document.getElementById('adv-annealing-concurrent');
+                if (advAnnealingConcurrent) advAnnealingConcurrent.value = annealingConcurrent;
+            }
             if (startTemp) {
                 if (quenchRoute === '1') {
                     const advLinearTi = document.getElementById('linear-ti');
@@ -6688,6 +6728,7 @@ end
             const optBasis = getSelectOrCustomValue('smart-opt-basis', 'smart-opt-basis-custom');
             const optMethodWithBasis = buildSmartMethodWithBasis(optMethod, optBasis, optTheory);
             const optNprocs = document.getElementById('smart-opt-nprocs')?.value;
+            const optConcurrent = document.getElementById('smart-opt-concurrent')?.value;
             const optMaxiter = document.getElementById('smart-opt-maxiter')?.value;
             const optJob = document.getElementById('smart-opt-job')?.value;
 
@@ -6739,6 +6780,10 @@ end
                 const advOptNprocs = document.getElementById('adv-opt-nprocs');
                 if (advOptNprocs) advOptNprocs.value = optNprocs;
             }
+            if (optConcurrent) {
+                const advOptConcurrent = document.getElementById('adv-opt-concurrent');
+                if (advOptConcurrent) advOptConcurrent.value = optConcurrent;
+            }
             if (optMaxiter) {
                 const advOptMaxiter = document.getElementById('adv-opt-maxiter');
                 if (advOptMaxiter) advOptMaxiter.value = optMaxiter;
@@ -6767,6 +6812,7 @@ end
             const refBasis = getSelectOrCustomValue('smart-ref-basis', 'smart-ref-basis-custom');
             const refMethodWithBasis = buildSmartMethodWithBasis(refMethod, refBasis, refTheory);
             const refNprocs = document.getElementById('smart-ref-nprocs')?.value;
+            const refConcurrent = document.getElementById('smart-ref-concurrent')?.value;
             const refMaxiter = document.getElementById('smart-ref-maxiter')?.value;
             const refJob = document.getElementById('smart-ref-job')?.value;
 
@@ -6817,6 +6863,10 @@ end
             if (refNprocs) {
                 const advRefNprocs = document.getElementById('adv-ref-nprocs');
                 if (advRefNprocs) advRefNprocs.value = refNprocs;
+            }
+            if (refConcurrent) {
+                const advRefConcurrent = document.getElementById('adv-ref-concurrent');
+                if (advRefConcurrent) advRefConcurrent.value = refConcurrent;
             }
             if (refMaxiter) {
                 const advRefMaxiter = document.getElementById('adv-ref-maxiter');
@@ -7000,7 +7050,12 @@ end
                 const smartNprocs = document.getElementById('smart-annealing-nprocs');
                 if (smartNprocs) smartNprocs.value = annealingNprocs;
             }
-            
+            const annealingConcurrentAdv = document.getElementById('adv-annealing-concurrent')?.value;
+            if (annealingConcurrentAdv) {
+                const smartAnnealingConcurrent = document.getElementById('smart-annealing-concurrent');
+                if (smartAnnealingConcurrent) smartAnnealingConcurrent.value = annealingConcurrentAdv;
+            }
+
             // Quench settings: use geometry or linear based on route
             if (quenchRoute === '1') {
                 // Linear route
@@ -7057,6 +7112,7 @@ end
             const optMethod = getMethodValue('adv-opt');
             const optBasis = getAdvancedOptBasisValue();
             const optNprocs = document.getElementById('adv-opt-nprocs')?.value;
+            const optConcurrent = document.getElementById('adv-opt-concurrent')?.value;
             const optMaxiter = document.getElementById('adv-opt-maxiter')?.value;
             const optJob = document.getElementById('adv-opt-job')?.value;
 
@@ -7108,6 +7164,10 @@ end
             if (optNprocs) {
                 const smartOptNprocs = document.getElementById('smart-opt-nprocs');
                 if (smartOptNprocs) smartOptNprocs.value = optNprocs;
+            }
+            if (optConcurrent) {
+                const smartOptConcurrent = document.getElementById('smart-opt-concurrent');
+                if (smartOptConcurrent) smartOptConcurrent.value = optConcurrent;
             }
             if (optMaxiter) {
                 const smartOptMaxiter = document.getElementById('smart-opt-maxiter');
@@ -7186,6 +7246,11 @@ end
             if (refMaxiter) {
                 const smartRefMaxiter = document.getElementById('smart-ref-maxiter');
                 if (smartRefMaxiter) smartRefMaxiter.value = refMaxiter;
+            }
+            const refConcurrent = document.getElementById('adv-ref-concurrent')?.value;
+            if (refConcurrent) {
+                const smartRefConcurrent = document.getElementById('smart-ref-concurrent');
+                if (smartRefConcurrent) smartRefConcurrent.value = refConcurrent;
             }
             if (refJob) {
                 const smartRefJob = document.getElementById('smart-ref-job');
@@ -7962,8 +8027,12 @@ end
             if (sim2Extra) sim2Args += ' ' + sim2Extra;
 
             // Opt/ref use the generated ORCA inputs directly.
-            let optArgs = 'input1';
-            let refArgs = 'input2';
+            const annConcurrentVal = parseInt(document.getElementById('adv-annealing-concurrent')?.value || '1');
+            const optConcurrentVal = parseInt(document.getElementById('adv-opt-concurrent')?.value || '4');
+            const refConcurrentVal = parseInt(document.getElementById('adv-ref-concurrent')?.value || '1');
+            let optArgs = optConcurrentVal > 1 ? `--concurrent=${optConcurrentVal} input1` : 'input1';
+            let refArgs = refConcurrentVal > 1 ? `--concurrent=${refConcurrentVal} input2` : 'input2';
+            const annConcurrentFlag = annConcurrentVal > 1 ? ` --concurrent=${annConcurrentVal}` : '';
 
             // Update protocol stages with complete annealing parameters
             const refEnabled = document.getElementById('smart-ref-enabled')?.checked !== false;
@@ -7971,7 +8040,7 @@ end
                 {
                     type: 'rN',
                     n: parseInt(replicas),
-                    args: `--box${packing}`,
+                    args: `--box${packing}${annConcurrentFlag}`,
                     // Row 1: Simulation Mode & Number of Config
                     simMode: parseInt(simMode),
                     // Row 2: Simulation Cube Length
@@ -7996,7 +8065,7 @@ end
             const erefEnabled = document.getElementById('smart-energy-ref-enabled')?.checked;
             if (erefEnabled) {
                 updateSmartEnergyRefPreview();
-                protocolStages.push({ type: 'ref', args: 'input3' });
+                protocolStages.push({ type: 'ref', args: refConcurrentVal > 1 ? `--concurrent=${refConcurrentVal} input3` : 'input3' });
                 protocolStages.push({ type: 'similarity', args: sim2Args });
             }
 
@@ -8111,7 +8180,7 @@ end
             // Default pipeline: r3 -> opt -> similarity -> ref -> similarity
             protocolStages = [
                 { type: 'rN', n: 3, args: '--box10' },
-                { type: 'opt', args: 'input1' },
+                { type: 'opt', args: '--concurrent=4 input1' },
                 { type: 'similarity', args: '--th=2' },
                 { type: 'ref', args: 'input2' },
                 { type: 'similarity', args: '--th=2' }
