@@ -3816,85 +3816,148 @@ def cleanup_qm_files(files_to_clean: List[str], state: SystemState):
         _print_verbose(f"Cleaned up {cleaned_count} leftover QM files during final cleanup.", 1, state)
 
 # Add this function somewhere in your script, e.g., near helper functions.
-def calculate_molecular_volume(mol_def, method='covalent_spheres') -> float:
+def calculate_molecular_volume(mol_def, method='coordinate_based') -> float:
     """
-    Calculates the approximate volume of a molecule using different methods.
-    
+    Calculates the approximate volume of a molecule using its xyz coordinates.
+
+    Uses the convex hull of atom positions expanded by their covalent radii to
+    compute a coordinate-aware volume. Falls back to a bounding-box approach
+    if scipy is not available.
+
     Args:
         mol_def: MoleculeData object containing atomic coordinates and numbers
-        method (str): Calculation method - 'covalent_spheres', 'convex_hull', or 'grid_based'
-    
+        method (str): 'coordinate_based' (default) or 'covalent_spheres' (legacy)
+
     Returns:
         float: Estimated molecular volume in Angstroms^3
     """
     if not mol_def.atoms_coords:
         return 0.0
-    
+
     if method == 'covalent_spheres':
-        # Sum of individual atomic volumes using covalent radii
-        # This is an upper bound estimate but computationally simple
+        # Legacy: sum of individual atomic volumes (not coordinate-aware)
         total_volume = 0.0
         for atomic_num, x, y, z in mol_def.atoms_coords:
-            radius = r_atom.get(atomic_num, 1.5)  # Default to 1.5 Å for unknown atoms
+            radius = r_atom.get(atomic_num, 1.5)
             atomic_volume = (4.0/3.0) * np.pi * (radius ** 3)
             total_volume += atomic_volume
-        
-        # Apply an overlap correction factor (molecules are not just isolated spheres)
-        # Typical values: 0.6-0.8 for organic molecules, 0.7-0.9 for inorganic
-        overlap_factor = 0.74  # Based on typical molecular packing
+        overlap_factor = 0.74
         return total_volume * overlap_factor
-    
-    elif method == 'convex_hull':
-        # Calculate volume using the convex hull of atomic spheres
-        # More accurate for elongated or complex-shaped molecules
-        try:
-            from scipy.spatial import ConvexHull
-            
-            # Create points on the surface of each atomic sphere
-            all_surface_points = []
-            for atomic_num, x, y, z in mol_def.atoms_coords:
-                radius = r_atom.get(atomic_num, 1.5)
-                center = np.array([x, y, z])
-                
-                # Generate points on sphere surface (using spherical coordinates)
-                n_points = 20  # Number of points per atom
-                phi = np.random.uniform(0, 2*np.pi, n_points)
-                costheta = np.random.uniform(-1, 1, n_points)
-                theta = np.arccos(costheta)
-                
-                sphere_points = center + radius * np.column_stack([
-                    np.sin(theta) * np.cos(phi),
-                    np.sin(theta) * np.sin(phi),
-                    np.cos(theta)
-                ])
-                all_surface_points.extend(sphere_points)
-            
-            if len(all_surface_points) < 4:
-                # Fall back to covalent_spheres method
-                return calculate_molecular_volume(mol_def, 'covalent_spheres')
-            
-            hull = ConvexHull(all_surface_points)
-            return hull.volume
-            
-        except ImportError:
-            # scipy not available, fall back to covalent_spheres
-            return calculate_molecular_volume(mol_def, 'covalent_spheres')
-        except Exception:
-            # Any other error, fall back to covalent_spheres
-            return calculate_molecular_volume(mol_def, 'covalent_spheres')
-    
-    else:
-        # Default to covalent_spheres method
-        return calculate_molecular_volume(mol_def, 'covalent_spheres')
+
+    # Default: coordinate-based volume using convex hull of atomic spheres
+    try:
+        from scipy.spatial import ConvexHull
+
+        # Generate surface points on each atomic sphere using 26 deterministic directions
+        all_surface_points = []
+        directions = []
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                for dz in [-1, 0, 1]:
+                    if dx == 0 and dy == 0 and dz == 0:
+                        continue
+                    norm = math.sqrt(dx*dx + dy*dy + dz*dz)
+                    directions.append((dx/norm, dy/norm, dz/norm))
+
+        for atomic_num, x, y, z in mol_def.atoms_coords:
+            radius = r_atom.get(atomic_num, 1.5)
+            for ddx, ddy, ddz in directions:
+                all_surface_points.append([x + radius*ddx, y + radius*ddy, z + radius*ddz])
+
+        if len(all_surface_points) < 4:
+            return _bounding_box_volume(mol_def)
+
+        hull = ConvexHull(np.array(all_surface_points))
+        return hull.volume
+
+    except ImportError:
+        return _bounding_box_volume(mol_def)
+    except Exception:
+        return _bounding_box_volume(mol_def)
+
+
+def _bounding_box_volume(mol_def) -> float:
+    """Fallback volume calculation using bounding box of atom positions + radii."""
+    if not mol_def.atoms_coords:
+        return 0.0
+
+    min_xyz = np.array([np.inf, np.inf, np.inf])
+    max_xyz = np.array([-np.inf, -np.inf, -np.inf])
+
+    for atomic_num, x, y, z in mol_def.atoms_coords:
+        radius = r_atom.get(atomic_num, 1.5)
+        pos = np.array([x, y, z])
+        min_xyz = np.minimum(min_xyz, pos - radius)
+        max_xyz = np.maximum(max_xyz, pos + radius)
+
+    extents = max_xyz - min_xyz
+    # Bounding box overestimates; apply correction factor (~0.52 for typical molecules)
+    return extents[0] * extents[1] * extents[2] * 0.52
+
+
+def calculate_molecular_extent(mol_def) -> float:
+    """
+    Calculate the longest molecular extent (max distance between any two atoms
+    including their covalent radii). This is the molecular 'diameter'.
+
+    Args:
+        mol_def: MoleculeData object containing atomic coordinates and numbers
+
+    Returns:
+        float: Longest extent in Angstroms
+    """
+    if not mol_def.atoms_coords or len(mol_def.atoms_coords) < 2:
+        if mol_def.atoms_coords:
+            r = r_atom.get(mol_def.atoms_coords[0][0], 1.5)
+            return 2.0 * r
+        return 0.0
+
+    max_dist = 0.0
+    coords = mol_def.atoms_coords
+    for i in range(len(coords)):
+        ai, xi, yi, zi = coords[i]
+        ri = r_atom.get(ai, 1.5)
+        for j in range(i + 1, len(coords)):
+            aj, xj, yj, zj = coords[j]
+            rj = r_atom.get(aj, 1.5)
+            dist = math.sqrt((xi - xj)**2 + (yi - yj)**2 + (zi - zj)**2) + ri + rj
+            if dist > max_dist:
+                max_dist = dist
+    return max_dist
+
+
+def has_primary_hydrogen_bonds(mol_defs) -> bool:
+    """
+    Detect whether the system has significant primary hydrogen bond donors/acceptors.
+    A system has primary H-bonds if at least one molecule has both H-bond donors
+    (H bonded to N, O, or F) and acceptors (N, O, F atoms).
+
+    Args:
+        mol_defs: List of MoleculeData objects
+
+    Returns:
+        bool: True if the system has primary hydrogen bonding potential
+    """
+    total_donors = 0
+    total_acceptors = 0
+    for mol_def in mol_defs:
+        for atomic_num, x, y, z in mol_def.atoms_coords:
+            element = get_element_symbol(atomic_num)
+            if element == 'H':
+                total_donors += 1
+            elif element in ['N', 'O', 'F']:
+                total_acceptors += 1
+    # Need at least 1 donor AND 1 acceptor for primary H-bonds
+    return total_donors >= 1 and total_acceptors >= 1
 
 
 def calculate_hydrogen_bond_potential(mol_def) -> Dict:
     """
     Calculate the potential hydrogen bonding volume based on donor/acceptor counts.
-    
+
     Args:
         mol_def: MoleculeData object containing atomic coordinates and numbers
-    
+
     Returns:
         Dictionary with hydrogen bond analysis and volume estimation
     """
@@ -3946,94 +4009,128 @@ def calculate_hydrogen_bond_potential(mol_def) -> Dict:
 def calculate_optimal_box_length(state: SystemState, target_packing_fractions: Optional[List[float]] = None) -> Dict:
     """
     Calculates optimal box lengths based on molecular volumes and target packing densities.
-    
+
+    Uses a unified approach:
+    - V_eff = V_mol_total + V_HB_total (H-bond volume is 0 if no H-bonds detected)
+    - Box lengths are computed for each target packing fraction
+    - The diagonal (sum of extents × 1.5 / sqrt(3)) serves as a minimum floor
+      for systems with 3 or fewer molecules
+
     Args:
         state: SystemState object containing molecule definitions
         target_packing_fractions: List of target packing fractions to calculate box sizes for
-    
+
     Returns:
         Dict: Results containing volumes, box lengths for different packing fractions, and recommendations
     """
     if target_packing_fractions is None:
-        # Use more conservative packing fractions for hydrogen-bonded systems
-        target_packing_fractions = [0.05, 0.10, 0.15, 0.20, 0.25]  # 5% to 25% packing
-    
+        target_packing_fractions = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50]
+
     if not state.all_molecule_definitions:
         return {'error': 'No molecule definitions found'}
-    
+
+    # Detect whether system has primary hydrogen bonds
+    system_has_hbonds = has_primary_hydrogen_bonds(state.all_molecule_definitions)
+
     results = {
         'individual_molecular_volumes': [],
         'total_molecular_volume': 0.0,
         'num_molecules': state.num_molecules,
         'box_length_recommendations': {},
-        'packing_analysis': {}
+        'packing_analysis': {},
+        'method': 'unified_volume_packing'
     }
-    
-    # Calculate volume and hydrogen bond potential for each unique molecule definition
+
+    # Calculate volume, extent, and hydrogen bond potential for each molecule
     unique_molecular_volumes = []
     unique_hb_analyses = []
-    total_hb_volume = 0.0
-    
+    unique_extents = []
+
     for mol_def in state.all_molecule_definitions:
-        volume = calculate_molecular_volume(mol_def, method='covalent_spheres')
+        volume = calculate_molecular_volume(mol_def)
         hb_analysis = calculate_hydrogen_bond_potential(mol_def)
-        
+        extent = calculate_molecular_extent(mol_def)
+
         unique_molecular_volumes.append(volume)
         unique_hb_analyses.append(hb_analysis)
-        
+        unique_extents.append(extent)
+
         results['individual_molecular_volumes'].append({
             'molecule_label': mol_def.label,
             'num_atoms': mol_def.num_atoms,
             'volume_A3': volume,
+            'extent_A': extent,
             'hb_donors': hb_analysis['donors'],
             'hb_acceptors': hb_analysis['acceptors'],
             'potential_hb_bonds': hb_analysis['potential_bonds'],
             'hb_network_volume_A3': hb_analysis['total_hb_volume']
         })
-    
-    # Calculate total volume of all molecules that will be placed
+
+    # Calculate totals across all molecules to be placed
     total_molecular_volume = 0.0
     total_hb_network_volume = 0.0
-    
+    total_extent_sum = 0.0
+
     for i, mol_def_idx in enumerate(state.molecules_to_add):
         if mol_def_idx < len(unique_molecular_volumes):
             total_molecular_volume += unique_molecular_volumes[mol_def_idx]
             total_hb_network_volume += unique_hb_analyses[mol_def_idx]['total_hb_volume']
-    
-    # Total effective volume includes both molecular and hydrogen bonding network volumes
+            total_extent_sum += unique_extents[mol_def_idx]
+
+    # Unified approach: V_eff always includes both molecular and H-bond volumes
+    # (if no H-bonds detected, total_hb_network_volume is simply 0)
     total_effective_volume = total_molecular_volume + total_hb_network_volume
-    
+
     results['total_molecular_volume'] = total_molecular_volume
     results['total_hb_network_volume'] = total_hb_network_volume
     results['total_effective_volume'] = total_effective_volume
-    
+    results['has_primary_hbonds'] = system_has_hbonds
+
+    # Diagonal-based box length (always computed as reference / floor)
+    diagonal = total_extent_sum * 1.5
+    diagonal_box_length = diagonal / math.sqrt(3.0)
+    results['diagonal_sum_extents'] = total_extent_sum
+    results['diagonal_value'] = diagonal
+    results['diagonal_box_length'] = diagonal_box_length
+
+    # For small systems (<=3 molecules), diagonal serves as minimum floor
+    num_molecules = state.num_molecules
+    if num_molecules <= 3:
+        results['small_system_floor'] = diagonal_box_length
+    else:
+        results['small_system_floor'] = None
+
     if total_effective_volume <= 0:
         return {'error': 'Total effective volume is zero or negative'}
-    
+
     # Calculate box lengths for different packing fractions
-    # For hydrogen-bonded systems, use more conservative packing fractions
     for packing_fraction in target_packing_fractions:
-        # Box volume = total_effective_volume / packing_fraction
         required_box_volume = total_effective_volume / packing_fraction
-        
-        # For a cubic box: L^3 = required_box_volume
         box_length = required_box_volume ** (1.0/3.0)
-        
+
+        # Apply diagonal floor for small systems (<=3 molecules)
+        floor_applied = False
+        if num_molecules <= 3 and box_length < diagonal_box_length:
+            box_length = diagonal_box_length
+            required_box_volume = box_length ** 3
+            floor_applied = True
+
         results['box_length_recommendations'][f'{packing_fraction:.1%}'] = {
             'packing_fraction': packing_fraction,
             'box_length_A': box_length,
             'box_volume_A3': required_box_volume,
             'free_volume_A3': required_box_volume - total_effective_volume,
-            'free_volume_fraction': 1.0 - packing_fraction,
+            'free_volume_fraction': 1.0 - (total_effective_volume / required_box_volume),
             'molecular_volume_fraction': total_molecular_volume / required_box_volume,
-            'hb_network_volume_fraction': total_hb_network_volume / required_box_volume
+            'hb_network_volume_fraction': total_hb_network_volume / required_box_volume,
+            'floor_applied': floor_applied
         }
-    
-    # Add analysis for current box length if available
+
+    # Current box analysis
     if hasattr(state, 'cube_length') and state.cube_length > 0:
         current_box_volume = state.cube_length ** 3
         current_packing_fraction = total_effective_volume / current_box_volume
-        
+
         results['current_box_analysis'] = {
             'current_box_length_A': state.cube_length,
             'current_box_volume_A3': current_box_volume,
@@ -4043,23 +4140,11 @@ def calculate_optimal_box_length(state: SystemState, target_packing_fractions: O
             'molecular_packing_fraction': total_molecular_volume / current_box_volume,
             'hb_network_fraction': total_hb_network_volume / current_box_volume
         }
-    
-    # Calculate largest molecular dimension for comparison with old method
-    max_molecular_extent = 0.0
-    for mol_def in state.all_molecule_definitions:
-        if not mol_def.atoms_coords:
-            continue
-        coords_array = np.array([atom[1:] for atom in mol_def.atoms_coords])
-        min_coords = np.min(coords_array, axis=0)
-        max_coords = np.max(coords_array, axis=0)
-        extents = max_coords - min_coords
-        current_max_extent = np.max(extents)
-        if current_max_extent > max_molecular_extent:
-            max_molecular_extent = current_max_extent
-    
+
+    # Largest single molecular extent (for reference)
+    max_molecular_extent = max(unique_extents) if unique_extents else 0.0
     results['max_molecular_extent_A'] = max_molecular_extent
-    results['old_method_recommendation_A'] = max_molecular_extent + 16.0  # 8 Å on each side
-    
+
     return results
 
 
@@ -4096,65 +4181,87 @@ def write_box_analysis_to_file(state: SystemState, output_file_handle):
 def provide_box_length_advice(state: SystemState):
     """
     Provides comprehensive advice on appropriate box lengths based on molecular volumes
-    and target packing densities. This is a much more rigorous approach than the simple
-    8 Angstrom rule of thumb.
+    and target packing densities using a unified volume-packing approach.
+    V_eff = V_mol + V_HB (where V_HB may be 0 if no H-bonds detected).
+    For systems with <=3 molecules, the diagonal box length serves as a minimum floor.
     """
     if not state.all_molecule_definitions:
         _print_verbose("Cannot provide box length advice: No molecule definitions found.", 0, state)
         return
 
     _print_verbose("\n" + "="*78, 1, state)
-    _print_verbose("Box length analysis", 1, state)
+    _print_verbose("Box length analysis (unified volume-packing approach)", 1, state)
     _print_verbose("="*78, 1, state)
     _print_verbose(f"Successfully parsed {state.natom} atoms", 1, state)
     _print_verbose("", 1, state)
-    
-    # Calculate optimal box lengths using volume-based approach
+
+    # Calculate optimal box lengths using unified volume-based approach
     results = calculate_optimal_box_length(state)
-    
+
     if 'error' in results:
         _print_verbose(f"Error in volume analysis: {results['error']}", 0, state)
         return
-    
+
+    system_has_hbonds = results.get('has_primary_hbonds', False)
+    num_molecules = results['num_molecules']
+    small_system_floor = results.get('small_system_floor')
+
     # Display molecular volume analysis
-    _print_verbose("1. Molecular volume and hydrogen bonding analysis:", 1, state)
+    _print_verbose("1. Molecular volume analysis:", 1, state)
     _print_verbose("-" * 50, 1, state)
-    
+
     total_molecular_volume = results['total_molecular_volume']
     total_hb_volume = results['total_hb_network_volume']
     total_effective_volume = results['total_effective_volume']
-    
-    _print_verbose(f"Number of molecules to place: {results['num_molecules']}", 1, state)
-    _print_verbose(f"  Total molecular volume: {total_molecular_volume:.2f} Å³", 1, state)
-    _print_verbose(f"  Total H-bond network volume: {total_hb_volume:.2f} Å³", 1, state)
-    _print_verbose(f"  Total effective volume: {total_effective_volume:.2f} Å³", 1, state)
-    
+
+    _print_verbose(f"Number of molecules to place: {num_molecules}", 1, state)
+    _print_verbose(f"  Total molecular volume (V_mol): {total_molecular_volume:.2f} Å³", 1, state)
+    _print_verbose(f"  Total H-bond network volume (V_HB): {total_hb_volume:.2f} Å³"
+                  f"{' (no primary H-bond donors/acceptors detected)' if not system_has_hbonds else ''}", 1, state)
+    _print_verbose(f"  Total effective volume (V_eff = V_mol + V_HB): {total_effective_volume:.2f} Å³", 1, state)
+
+    # Diagonal reference info
+    _print_verbose(f"\n  Diagonal reference:", 1, state)
+    _print_verbose(f"    Sum of molecular extents: {results['diagonal_sum_extents']:.2f} Å", 1, state)
+    _print_verbose(f"    Box diagonal (extents × 1.5): {results['diagonal_value']:.2f} Å", 1, state)
+    _print_verbose(f"    Diagonal box length (diagonal / √3): {results['diagonal_box_length']:.2f} Å", 1, state)
+    if small_system_floor is not None:
+        _print_verbose(f"    ** Minimum floor for ≤3 molecules: {small_system_floor:.2f} Å **", 1, state)
+    else:
+        _print_verbose(f"    (Not used as floor: system has >{3} molecules)", 1, state)
+
     _print_verbose("\nIndividual molecule analysis:", 1, state)
     for i, mol_info in enumerate(results['individual_molecular_volumes']):
-        # Get the molecular formula from the corresponding molecule definition
         if i < len(state.all_molecule_definitions):
             mol_def = state.all_molecule_definitions[i]
             molecular_formula = get_molecular_formula(mol_def)
-            _print_verbose(f"  • {mol_info['molecule_label']}: {molecular_formula} {mol_info['volume_A3']:.2f} Å³", 1, state)
+            extent_str = f", extent={mol_info['extent_A']:.2f} Å" if 'extent_A' in mol_info else ""
+            _print_verbose(f"  • {mol_info['molecule_label']}: {molecular_formula} {mol_info['volume_A3']:.2f} Å³{extent_str}", 1, state)
         else:
             _print_verbose(f"  • {mol_info['molecule_label']}: {mol_info['volume_A3']:.2f} Å³", 1, state)
-    
+
     # Display box length recommendations
-    _print_verbose("\n2. Box length recommendations (H-Bond Network Aware):", 1, state)
-    _print_verbose("-" * 70, 1, state)
-    
+    _print_verbose(f"\n2. Box length suggestions (5% to 50% packing):", 1, state)
+    _print_verbose("-" * 78, 1, state)
+
     recommendations = results['box_length_recommendations']
-    _print_verbose("Packing (%)    Box Length (Å)     Box Volume (Å³)       Free (%)", 1, state)
-    _print_verbose("-" * 70, 1, state)
+    _print_verbose("Packing (%)    Box Length (Å)     Box Volume (Å³)       Free (%)   Floor?", 1, state)
+    _print_verbose("-" * 78, 1, state)
 
     for key, rec in recommendations.items():
         pf = rec['packing_fraction']
         bl = rec['box_length_A']
         bv = rec['box_volume_A3']
         free_pct = rec['free_volume_fraction'] * 100
-        _print_verbose(f"    {pf*100:4.1f}          {bl:6.2f}             {bv:6.0f}               {free_pct:4.1f}", 1, state)
-    
-    # Current box analysis - show current cube length and largest molecular extent
+        floor_mark = "  *" if rec.get('floor_applied', False) else ""
+        _print_verbose(f"    {pf*100:4.1f}          {bl:6.2f}             {bv:6.0f}               {free_pct:4.1f}     {floor_mark}", 1, state)
+
+    if small_system_floor is not None:
+        has_floor = any(rec.get('floor_applied', False) for rec in recommendations.values())
+        if has_floor:
+            _print_verbose(f"  * Diagonal floor ({small_system_floor:.2f} Å) applied (system has ≤3 molecules)", 1, state)
+
+    # Current box analysis
     if 'current_box_analysis' in results:
         _print_verbose("\n3. Current box analysis:", 1, state)
         _print_verbose("-" * 26, 1, state)
@@ -4165,48 +4272,59 @@ def provide_box_length_advice(state: SystemState):
         _print_verbose(f"  Current free volume: {current['current_free_volume_A3']:.0f} Å³ "
                       f"({current['current_free_volume_fraction']:.1%})", 1, state)
         _print_verbose(f"  Largest molecular extent: {results['max_molecular_extent_A']:.2f} Å", 1, state)
-        
-        # Provide assessment of current box size for H-bonded systems
+
         pf = current['current_packing_fraction']
         if pf < 0.05:
             assessment = "Very dilute - good for isolated cluster studies"
         elif pf < 0.15:
-            assessment = "Dilute - appropriate for H-bonded cluster formation"
+            assessment = "Dilute - appropriate for cluster formation"
         elif pf < 0.25:
             assessment = "Moderate - suitable for network formation studies"
         elif pf < 0.35:
             assessment = "Dense - good for condensed phase simulations"
         elif pf < 0.45:
-            assessment = "Very dense - may constrain H-bond network flexibility"
+            assessment = "Very dense - may constrain molecular flexibility"
         else:
-            assessment = "Extremely dense - may prevent proper H-bond formation"
-        
+            assessment = "Extremely dense - may cause steric clashes"
+
         _print_verbose(f"  {assessment}", 1, state)
-    
-    # Store results in state for potential use elsewhere
+
+    # Store results in state
     max_extent = results['max_molecular_extent_A']
     state.max_molecular_extent = max_extent
     state.volume_based_recommendations = recommendations
-    
-    # Final recommendations
-    _print_verbose("\n4. Recommendations for H-bonded systems:", 1, state)
-    _print_verbose("-" * 40, 1, state)
-    
-    # Get recommendations as reasonable defaults for H-bonded systems
-    rec_5 = recommendations.get('5.0%', {}).get('box_length_A', 0)
+
+    # Final recommendations (unified)
+    _print_verbose("\n4. Recommendation:", 1, state)
+    _print_verbose("-" * 48, 1, state)
+
     rec_10 = recommendations.get('10.0%', {}).get('box_length_A', 0)
+    rec_5 = recommendations.get('5.0%', {}).get('box_length_A', 0)
     rec_15 = recommendations.get('15.0%', {}).get('box_length_A', 0)
-    
-    if rec_5 > 0 and rec_10 > 0 and rec_15 > 0:
-        _print_verbose(f"• For isolated clusters: {rec_5:.1f} Å (5% effective packing)", 1, state)
-        _print_verbose(f"• For cluster formation: {rec_10:.1f} Å (10% effective packing)", 1, state)
-        _print_verbose(f"• For network studies: {rec_15:.1f} Å (15% effective packing)", 1, state)
-        _print_verbose(f"• Includes space for H-bond network (avg. bond length: 2.5 Å)", 1, state)
-    
+
+    if rec_10 > 0:
+        _print_verbose(f">>> Default suggestion: {rec_10:.1f} Å (10% packing) <<<", 1, state)
+        _print_verbose("", 1, state)
+    if rec_5 > 0 and rec_15 > 0:
+        _print_verbose(f"  • For isolated clusters: {rec_5:.1f} Å (5% packing)", 1, state)
+        _print_verbose(f"  • For cluster formation: {rec_10:.1f} Å (10% packing)", 1, state)
+        _print_verbose(f"  • For network studies:   {rec_15:.1f} Å (15% packing)", 1, state)
+    if system_has_hbonds:
+        _print_verbose(f"  • V_eff includes H-bond network volume (avg. bond length: 2.5 Å)", 1, state)
+    else:
+        _print_verbose(f"  • No H-bonds detected; V_eff = V_mol (V_HB = 0)", 1, state)
+    _print_verbose(f"  • Use --box<P> to select a specific packing % (e.g., --box10)", 1, state)
+
+    if small_system_floor is not None:
+        _print_verbose(f"  • Note: diagonal floor ({small_system_floor:.2f} Å) was applied where the", 1, state)
+        _print_verbose(f"    volume-based box was smaller (system has ≤3 molecules)", 1, state)
+
     _print_verbose("\n" + "="*78, 1, state)
-    _print_verbose("Note: This analysis accounts for hydrogen bonding networks in molecular clusters.", 1, state)
-    _print_verbose("H-bond volume estimated using 2.5 Å average bond length and 1.2 Å interaction radius.", 1, state)
-    _print_verbose("Run the full simulation to validate these recommendations.", 1, state)
+    _print_verbose("Unified volume-packing method: V_eff = V_mol + V_HB.", 1, state)
+    if system_has_hbonds:
+        _print_verbose("H-bond volume estimated using 2.5 Å avg. bond length and 1.2 Å radius.", 1, state)
+    _print_verbose("Molecular volumes computed using coordinate-based convex hull.", 1, state)
+    _print_verbose(f"Diagonal reference: sum of extents × 1.5 / √3 = {results['diagonal_box_length']:.2f} Å.", 1, state)
     _print_verbose("="*78, 1, state)
 
 def format_time_difference(seconds: float) -> str:
@@ -5698,6 +5816,11 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
         launcher_path = os.path.join(output_dir, f"launcher_{qm_program}.sh")
         try:
             qm_executable = extract_qm_executable_from_launcher(launcher_base_content, qm_program_idx)
+            # Ensure ORCA uses full path - fall back to detect_orca_executable if needed
+            if qm_program == 'orca' and qm_executable in ('orca', qm_alias) and '/' not in qm_executable and '$' not in qm_executable:
+                detected_path = detect_orca_executable(qm_alias)
+                if detected_path:
+                    qm_executable = detected_path
             if not workflow_mode:
                 print(f"Using QM executable: {qm_executable}")
 
@@ -7646,8 +7769,52 @@ def extract_orca_root_from_launcher(launcher_content: str) -> Optional[str]:
         match = re.match(export_pattern, line)
         if match:
             return match.group(1)
-    
+
     return None
+
+
+def resolve_orca_executable_from_launcher(launcher_content: str, qm_alias: str = "orca") -> str:
+    """
+    Resolve the full ORCA executable path from launcher content.
+
+    Tries multiple strategies:
+    1. Extract ORCA_ROOT variable value from launcher and construct full path
+    2. Use detect_orca_executable() to find the actual binary
+    3. Fall back to the alias
+
+    Args:
+        launcher_content: Content of the launcher script
+        qm_alias: ORCA alias from input file (default: "orca")
+
+    Returns:
+        Full path to ORCA executable, or shell variable reference, or alias as last resort
+    """
+    # Strategy 1: Extract ORCA_ROOT value from launcher to get absolute path
+    root_pattern = r'^export\s+(ORCA[A-Z0-9_]*ROOT)\s*=\s*["\']?([^"\'\s]+)["\']?'
+    for line in launcher_content.split('\n'):
+        line = line.strip()
+        match = re.match(root_pattern, line)
+        if match:
+            var_name = match.group(1)
+            var_value = match.group(2)
+            if var_value.startswith('/') and '$' not in var_value:
+                # Absolute path - use it directly
+                full_path = os.path.join(var_value, "orca")
+                if os.path.exists(full_path):
+                    return full_path
+                # Path from launcher doesn't exist on disk, use variable reference
+                return f"${{{var_name}}}/orca"
+            else:
+                # Variable reference or relative path
+                return f"${{{var_name}}}/orca"
+
+    # Strategy 2: Detect ORCA executable from system PATH
+    detected = detect_orca_executable(qm_alias)
+    if detected:
+        return detected
+
+    # Strategy 3: Fall back to alias
+    return qm_alias
 
 
 # Summary functionality - integrated from summary_files.py
@@ -11617,12 +11784,17 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
     context.num_replicas = num_replicas
     verbose = getattr(context, 'workflow_verbose_level', 0) >= 1
     
-    # Parse --box flags from stage args
-    # Note: --retry is removed; launch failures are now auto-retried 10 times
+    # Parse --box and --concurrent flags from stage args
     box_size_override = None
+    concurrent_jobs = 1  # Default: serial replica execution
     args = stage.get('args', [])
     for arg in args:
-        if arg.startswith('--box'):
+        if arg.startswith('--concurrent='):
+            try:
+                concurrent_jobs = max(1, int(arg.split('=')[1]))
+            except ValueError:
+                pass
+        elif arg.startswith('--box'):
             # Extract packing percentage from flag (e.g., --box10 -> 10%)
             try:
                 packing_str = arg.replace('--box', '')
@@ -11693,32 +11865,23 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
         except OSError:
             return False
 
-    for i, input_file in enumerate(replicated_files, 1):
+    def _run_single_replica(input_file: str) -> Dict[str, Any]:
+        """Run a single annealing replica and return result dict."""
         run_dir = os.path.dirname(input_file)
         run_name = os.path.basename(run_dir)
         input_basename = os.path.basename(input_file)
 
-        # Keep workflow idempotent: if a replica already completed, do not re-run it.
-        if _replica_already_completed(run_dir, input_basename):
-            completed_replicas += 1
-            if verbose:
-                print(f"\n  {run_name}... ✓ (already completed)")
-            elif callable(progress_cb):
-                progress_cb(f"{completed_replicas}/{num_replicas} ...")
-            continue
-        
-        if verbose:
-            print(f"\n  {run_name}...", end=" ", flush=True)
-        
-        success = False
-        last_error = None
-        # Single execution per replica (no retries): each replica should generate one seed/run.
-        try:
-            # Run as subprocess in the run directory using the current interpreter.
-            cmd = [sys.executable, os.path.abspath(sys.argv[0]), input_basename]
+        result_info = {
+            'input_file': input_file,
+            'run_dir': run_dir,
+            'run_name': run_name,
+            'success': False,
+            'last_error': None,
+        }
 
-            # Discard child stdio to avoid extra per-replica log files in annealing folders.
-            result = subprocess.run(
+        try:
+            cmd = [sys.executable, os.path.abspath(sys.argv[0]), input_basename]
+            proc = subprocess.run(
                 cmd,
                 cwd=run_dir,
                 stdout=subprocess.DEVNULL,
@@ -11731,80 +11894,138 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
                 glob.glob(os.path.join(run_dir, 'tvse_*.dat'))
             )
 
-            # Success criteria: normal termination marker OR expected annealing artifacts.
             if os.path.exists(output_file):
                 with open(output_file, 'r') as f:
                     content = f.read()
                     if 'Normal annealing termination' in content or 'Annealing simulation finished' in content:
-                        success = True
+                        result_info['success'] = True
 
-            if not success and artifacts_exist:
-                success = True
+            if not result_info['success'] and artifacts_exist:
+                result_info['success'] = True
 
-            if not success and result.returncode != 0:
-                last_error = f"Exit code {result.returncode}"
-            elif not success and not os.path.exists(output_file):
-                last_error = "Output file not created"
-            elif not success:
-                last_error = "Annealing finished without normal termination marker"
+            if not result_info['success']:
+                # Check if result files were created
+                result_files = []
+                for pattern in ['result_*.xyz', 'result_*.mol']:
+                    result_files.extend(glob.glob(os.path.join(run_dir, pattern)))
+                if result_files:
+                    result_info['success'] = True
+
+            if not result_info['success']:
+                if proc.returncode != 0:
+                    result_info['last_error'] = f"Exit code {proc.returncode}"
+                elif not os.path.exists(output_file):
+                    result_info['last_error'] = "Output file not created"
+                else:
+                    result_info['last_error'] = "Annealing finished without normal termination marker"
 
         except Exception as e:
-            last_error = str(e)
-        
-        if success:
-            completed_replicas += 1
-            if verbose:
-                print("✓")
-            elif callable(progress_cb):
-                progress_cb(f"{completed_replicas}/{num_replicas} ...")
-        else:
-            # Check if result files were created even without proper termination message
-            result_files = []
-            for pattern in ['result_*.xyz', 'result_*.mol']:
-                result_files.extend(glob.glob(os.path.join(run_dir, pattern)))
-            
-            if result_files:
-                # Files were created, consider it a success
-                if verbose:
-                    print(f"✓ (output files created)")
-                success = True
+            result_info['last_error'] = str(e)
+
+        return result_info
+
+    def _process_replica_result(result_info: Dict[str, Any]):
+        """Process a completed replica result (thread-safe with lock)."""
+        nonlocal completed_replicas
+        run_name = result_info['run_name']
+        run_dir = result_info['run_dir']
+        input_basename = os.path.basename(result_info['input_file'])
+
+        if result_info['success']:
+            with _replica_lock:
                 completed_replicas += 1
-                if not verbose and callable(progress_cb):
-                    progress_cb(f"{completed_replicas}/{num_replicas} ...")
-            else:
-                if verbose:
-                    print(f"✗ (no output files)")
-                # Check output file for errors
+                current = completed_replicas
+            if verbose:
+                print(f"\n  {run_name}... ✓")
+            elif callable(progress_cb):
+                progress_cb(f"{current}/{num_replicas} ...")
+        else:
+            if verbose:
+                print(f"\n  {run_name}... ✗ (no output files)")
                 output_file = os.path.join(run_dir, input_basename.replace('.in', '.out'))
                 if os.path.exists(output_file):
                     try:
                         with open(output_file, 'r') as f:
                             content = f.read()
-                            # Look for traceback or error messages
                             if 'Traceback' in content:
                                 lines = content.split('\n')
-                                # Find traceback and show it
                                 for i, line in enumerate(lines):
                                     if 'Traceback' in line:
-                                        # Show traceback and a few lines after
                                         error_lines = lines[i:min(i+10, len(lines))]
-                                        if verbose:
-                                            print(f"    Traceback found in {run_name}/{input_basename.replace('.in', '.out')}:")
-                                            for eline in error_lines:
-                                                if eline.strip():
-                                                    print(f"      {eline}")
+                                        print(f"    Traceback found in {run_name}/{input_basename.replace('.in', '.out')}:")
+                                        for eline in error_lines:
+                                            if eline.strip():
+                                                print(f"      {eline}")
                                         break
-                            elif last_error:
-                                if verbose:
-                                    print(f"    {last_error}")
+                            elif result_info['last_error']:
+                                print(f"    {result_info['last_error']}")
                     except:
-                        if last_error:
-                            if verbose:
-                                print(f"    {last_error}")
-                if last_error:
+                        if result_info['last_error']:
+                            print(f"    {result_info['last_error']}")
+                elif result_info['last_error']:
+                    print(f"    {result_info['last_error']}")
+            failed_runs.append(run_name)
+
+    import threading
+    _replica_lock = threading.Lock()
+
+    # Build list of pending replicas (skip already completed)
+    pending_replicas = []
+    for i, input_file in enumerate(replicated_files, 1):
+        run_dir = os.path.dirname(input_file)
+        run_name = os.path.basename(run_dir)
+        input_basename = os.path.basename(input_file)
+
+        if _replica_already_completed(run_dir, input_basename):
+            completed_replicas += 1
+            if verbose:
+                print(f"\n  {run_name}... ✓ (already completed)")
+            elif callable(progress_cb):
+                progress_cb(f"{completed_replicas}/{num_replicas} ...")
+            continue
+        pending_replicas.append(input_file)
+
+    effective_concurrent = min(concurrent_jobs, len(pending_replicas)) if pending_replicas else 1
+
+    if effective_concurrent <= 1:
+        # Serial execution
+        for input_file in pending_replicas:
+            run_name = os.path.basename(os.path.dirname(input_file))
+            if verbose:
+                print(f"\n  {run_name}...", end=" ", flush=True)
+            result_info = _run_single_replica(input_file)
+            _process_replica_result(result_info)
+    else:
+        # Concurrent execution with staggered launches for seed uniqueness
+        if verbose:
+            print(f"\n  Running {len(pending_replicas)} replicas ({effective_concurrent} concurrent, staggered)...")
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _staggered_replica(input_file: str, delay: float) -> Dict[str, Any]:
+            """Launch a replica after a short delay for seed uniqueness."""
+            if delay > 0:
+                time.sleep(delay)
+            return _run_single_replica(input_file)
+
+        with ThreadPoolExecutor(max_workers=effective_concurrent) as executor:
+            # Stagger launches by 2 seconds each to ensure unique time-based seeds
+            futures = {}
+            for idx, input_file in enumerate(pending_replicas):
+                delay = idx * 2.0  # 2-second stagger between launches
+                future = executor.submit(_staggered_replica, input_file, delay)
+                futures[future] = input_file
+
+            for future in as_completed(futures):
+                try:
+                    result_info = future.result()
+                    _process_replica_result(result_info)
+                except Exception as e:
+                    input_file = futures[future]
+                    run_name = os.path.basename(os.path.dirname(input_file))
                     if verbose:
-                        print(f"    {last_error}")
-                failed_runs.append(run_name)
+                        print(f"\n  {run_name}... ✗ (exception: {e})")
+                    failed_runs.append(run_name)
     
     if failed_runs:
         print(f"\n✗ {len(failed_runs)} simulation(s) failed")
@@ -12815,18 +13036,260 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
     
     return processed_count > 0
 
+def _run_single_qm_job(job_info: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Run a single QM calculation job with launch failure retry logic.
+
+    This is the worker function used by both serial and concurrent execution modes.
+    It is self-contained and does not modify shared state.
+
+    Args:
+        job_info: Dictionary with keys:
+            - input_file: relative path to input file
+            - base_dir: base directory for calculations
+            - launcher_content: launcher script content
+            - qm_program: 'orca' or 'gaussian'
+            - max_launch_retries: max retry attempts
+            - launch_failure_threshold: seconds threshold
+            - orca_exe: resolved ORCA executable path
+
+    Returns:
+        Dictionary with: input_file, success, launch_attempts, output_path
+    """
+    input_file = job_info['input_file']
+    base_dir = job_info['base_dir']
+    launcher_content = job_info['launcher_content']
+    qm_program = job_info['qm_program']
+    max_launch_retries = job_info.get('max_launch_retries', 10)
+    launch_failure_threshold = job_info.get('launch_failure_threshold', 5.0)
+    orca_exe = job_info.get('orca_exe', 'orca')
+
+    basename = os.path.splitext(input_file)[0]
+    output_file = basename + ('.out' if qm_program == 'orca' else '.log')
+    output_path = os.path.join(base_dir, output_file)
+
+    # Determine working directory
+    if '/' in input_file or '\\' in input_file:
+        calc_subdir = os.path.dirname(input_file)
+        calc_working_dir = os.path.join(base_dir, calc_subdir)
+        input_file_relative = os.path.basename(input_file)
+        output_file_relative = os.path.basename(output_file)
+        script_basename = os.path.splitext(os.path.basename(input_file))[0]
+    else:
+        calc_working_dir = base_dir
+        input_file_relative = input_file
+        output_file_relative = output_file
+        script_basename = basename
+
+    success = False
+    launch_attempt = 0
+    calculation_started = False
+
+    while launch_attempt < max_launch_retries and not calculation_started:
+        launch_attempt += 1
+
+        # STEP 1: CLEAN OUTPUT FILES
+        for item in os.listdir(calc_working_dir):
+            if item.startswith(script_basename) and not item.endswith(('.inp', '.com', '.gjf')):
+                item_path = os.path.join(calc_working_dir, item)
+                if os.path.isfile(item_path):
+                    try:
+                        os.remove(item_path)
+                    except:
+                        pass
+
+        # STEP 2: RUN CALCULATION
+        temp_script = os.path.join(calc_working_dir, f'_run_{script_basename}.sh')
+        with open(temp_script, 'w') as f:
+            f.write(launcher_content.split('###')[0])
+            f.write("\n\n")
+            if qm_program == 'orca':
+                f.write(f"# Set unique scratch directory for this ORCA process\n")
+                f.write(f"export TMPDIR=\"$(pwd)/.orca_tmp_{script_basename}_$$\"\n")
+                f.write(f"mkdir -p \"$TMPDIR\"\n")
+                f.write(f"trap 'rm -rf \"$TMPDIR\"' EXIT\n\n")
+                f.write(f"{orca_exe} {input_file_relative} > {output_file_relative}\n")
+            elif qm_program == 'gaussian':
+                f.write(f"$GAUSS_ROOT/g16 {input_file_relative}\n")
+
+        os.chmod(temp_script, 0o755)
+        script_name = os.path.basename(temp_script)
+
+        start_time = time.time()
+        subprocess.run(
+            ['bash', script_name],
+            cwd=calc_working_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        elapsed_time = time.time() - start_time
+
+        if elapsed_time > launch_failure_threshold:
+            calculation_started = True
+
+        # Cleanup temp script
+        if os.path.exists(temp_script):
+            os.remove(temp_script)
+        if qm_program == 'orca':
+            for tmp_dir in glob.glob(os.path.join(calc_working_dir, f'.orca_tmp_{script_basename}_*')):
+                try:
+                    shutil.rmtree(tmp_dir)
+                except:
+                    pass
+
+        # STEP 3: CHECK SUCCESS
+        if os.path.exists(output_path):
+            try:
+                if qm_program == 'orca':
+                    normal_term = check_orca_terminated_normally_opi(output_path)
+                else:
+                    with open(output_path, 'r', encoding='utf-8', errors='replace') as f:
+                        output_content = f.read()
+                    normal_term = 'Normal termination of Gaussian' in output_content
+
+                if normal_term:
+                    success = True
+                    break
+            except:
+                pass
+
+        if calculation_started:
+            break
+
+    return {
+        'input_file': input_file,
+        'success': success,
+        'launch_attempts': launch_attempt,
+        'calculation_started': calculation_started,
+        'output_path': output_path,
+    }
+
+
+def _run_qm_calculations_with_concurrency(
+    pending_jobs: List[Dict[str, Any]],
+    concurrent_jobs: int,
+    workflow_concise: bool,
+    context: 'WorkflowContext',
+    initial_completed_count: int,
+    num_inputs: int,
+    completed_list: List[str],
+    all_input_basenames: set,
+    cache_file: str,
+    stage_key_prefix: str = 'calculation',
+) -> Tuple[int, int, List[str]]:
+    """
+    Run QM calculations with the specified concurrency level.
+
+    Args:
+        pending_jobs: List of job_info dicts for _run_single_qm_job
+        concurrent_jobs: Number of concurrent jobs (1 = serial)
+        workflow_concise: Whether to suppress verbose output
+        context: WorkflowContext for progress updates
+        initial_completed_count: Number already completed before this run
+        num_inputs: Total expected input count
+        completed_list: Mutable list of completed file basenames (updated in place)
+        all_input_basenames: Mutable set of all input basenames (updated in place)
+        cache_file: Path to protocol cache file
+        stage_key_prefix: Key prefix for cache updates
+
+    Returns:
+        (num_completed, num_failed, failed_files)
+    """
+    import threading
+
+    num_completed = 0
+    num_failed = 0
+    failed_files: List[str] = []
+    lock = threading.Lock()
+
+    def _process_result(result: Dict[str, Any]):
+        nonlocal num_completed, num_failed
+        input_file = result['input_file']
+        display_name = os.path.basename(input_file)
+
+        if result['success']:
+            with lock:
+                num_completed += 1
+                completed_list.append(input_file)
+                basename_only = os.path.splitext(os.path.basename(input_file))[0]
+                all_input_basenames.add(basename_only)
+                stage_key = getattr(context, 'current_stage_key', stage_key_prefix)
+                update_protocol_cache(stage_key, 'in_progress',
+                                      result={'completed_files': completed_list,
+                                             'total_files': num_inputs,
+                                             'num_completed': num_completed},
+                                      cache_file=cache_file)
+                current_total = initial_completed_count + num_completed
+                progress_cb = context.update_progress
+                if workflow_concise and callable(progress_cb):
+                    progress_cb(f"{current_total}/{num_inputs} ...")
+                else:
+                    if result['launch_attempts'] > 1:
+                        print(f"\r  Running: {display_name}... ✓ (launch attempt {result['launch_attempts']})\033[K")
+                    else:
+                        print(f"\r  Running: {display_name}... ✓\033[K")
+        else:
+            with lock:
+                num_failed += 1
+                failed_files.append(input_file)
+                if not workflow_concise:
+                    if result['calculation_started']:
+                        print(f"\r  Running: {display_name}... ✗ (no normal termination)\033[K")
+                    elif result['launch_attempts'] >= result.get('max_launch_retries', 10):
+                        print(f"\r  Running: {display_name}... ✗ (launch failed after {result['launch_attempts']} attempts)\033[K")
+                    else:
+                        print(f"\r  Running: {display_name}... ✗\033[K")
+
+    if not pending_jobs:
+        return 0, 0, []
+
+    effective_concurrent = min(concurrent_jobs, len(pending_jobs))
+
+    if effective_concurrent <= 1:
+        # Serial execution
+        for job in pending_jobs:
+            display_name = os.path.basename(job['input_file'])
+            if not workflow_concise:
+                print(f"  Running: {display_name}...", end='', flush=True)
+            elif callable(getattr(context, 'update_progress', None)):
+                context.update_progress(f"{initial_completed_count + num_completed}/{num_inputs} ...")
+            result = _run_single_qm_job(job)
+            _process_result(result)
+    else:
+        # Concurrent execution
+        if not workflow_concise:
+            print(f"  Running {len(pending_jobs)} calculations ({effective_concurrent} concurrent)...")
+
+        with ThreadPoolExecutor(max_workers=effective_concurrent) as executor:
+            futures = {executor.submit(_run_single_qm_job, job): job for job in pending_jobs}
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    _process_result(result)
+                except Exception as e:
+                    job = futures[future]
+                    with lock:
+                        num_failed += 1
+                        failed_files.append(job['input_file'])
+                        if not workflow_concise:
+                            print(f"  Error running {os.path.basename(job['input_file'])}: {e}")
+
+    return num_completed, num_failed, failed_files
+
+
 def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int:
     """Execute optimization stage with automatic retry logic."""
     # Store context globally for access in helper functions
     sys._current_workflow_context = context  # type: ignore[attr-defined]
-    
+
     args = stage['args']
     workflow_concise = getattr(context, 'is_workflow', False) and getattr(context, 'workflow_verbose_level', 0) < 1
-    
+
     # Parse flags - defaults for when flags are not explicitly provided
     max_critical = 0      # default: 0% critical structures allowed (strict)
     max_skipped = None    # Not set by default (only --critical is used unless --skipped specified)
     max_stage_redos = 3   # default: 3 stage redos (--redo: redo entire optimization+similarity)
+    concurrent_jobs = 4   # default: 4 concurrent QM jobs for optimization
     # Note: --retry removed; launch failures auto-retry up to 10 times (hardcoded)
     auto_select = 'combined'  # Workflow mode defaults to combining files (like -c flag)
     template_file = None
@@ -12843,6 +13306,8 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             max_skipped = float(arg.split('=')[1])
         elif arg.startswith('--redo='):
             max_stage_redos = int(arg.split('=')[1])
+        elif arg.startswith('--concurrent='):
+            concurrent_jobs = max(1, int(arg.split('=')[1]))
         elif arg.startswith('--auto-select='):
             auto_select = arg.split('=')[1]
         elif arg == '-a':
@@ -13184,6 +13649,12 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                 launcher_inputs = sorted(launcher_inputs, key=natural_sort_key)
 
                 if launcher_inputs:
+                    # Resolve full ORCA path for the launcher
+                    orca_exe_for_launcher = "orca"
+                    if qm_program == 'orca' and launcher_env_setup:
+                        orca_exe_for_launcher = resolve_orca_executable_from_launcher(
+                            launcher_env_setup, getattr(context, 'qm_alias', 'orca'))
+
                     with open(launcher_script, 'w') as lf:
                         if launcher_env_setup:
                             lf.write(launcher_env_setup + "\n\n")
@@ -13191,7 +13662,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                         for i, inp_name in enumerate(launcher_inputs):
                             inp_base = os.path.splitext(inp_name)[0]
                             if qm_program == 'orca':
-                                cmd = f"orca {inp_base}.inp > {inp_base}.out"
+                                cmd = f"{orca_exe_for_launcher} {inp_base}.inp > {inp_base}.out"
                             else:
                                 cmd = f"g16 {inp_base}.com"
                             if i < len(launcher_inputs) - 1:
@@ -13252,207 +13723,65 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             try:
                 # Make script executable (for manual use later)
                 os.chmod(launcher_script, 0o755)
-                
-                # Track completions: resumed count + newly completed
-                num_completed = 0  # Track only newly completed in this run
-                num_failed = 0
-                failed_calculations = []  # Track failed input files
-                # Hardcoded: retry launch failures up to 10 times
+
+                # Resolve ORCA executable path for temp scripts
+                orca_exe = 'orca'
+                if qm_program == 'orca':
+                    orca_exe = resolve_orca_executable_from_launcher(
+                        launcher_content, getattr(context, 'qm_alias', 'orca'))
+
+                # Build list of pending jobs (skip excluded and already completed)
                 max_launch_retries = 10
-                # Time threshold for detecting launch failure (seconds)
-                # If calculation exits within this time, it's considered a launch failure
                 launch_failure_threshold = 5.0
-                
-                for idx, input_file in enumerate(input_files):
-                    # Skip excluded calculations
+                pending_jobs = []
+
+                for input_file in input_files:
                     if match_exclusion(input_file, excluded_numbers):
                         if not workflow_concise:
                             print(f"  Skipping: {input_file} (excluded)")
                         continue
-                    
-                    # Handle both root-level and subdirectory files
+
                     basename = os.path.splitext(input_file)[0]
                     output_file = basename + ('.out' if qm_program == 'orca' else '.log')
-                    input_path = os.path.join(optimization_dir_path, input_file)
                     output_path = os.path.join(optimization_dir_path, output_file)
-                    
+
                     # Skip if output already exists AND is successfully completed
-                    # This handles redo scenarios where failed .out files were deleted
                     if os.path.exists(output_path):
                         try:
                             if qm_program == 'orca':
-                                # Use OPI-aware check for ORCA 6.1+ support
                                 is_complete = check_orca_terminated_normally_opi(output_path)
                             else:
                                 with open(output_path, 'r', encoding='utf-8', errors='replace') as f:
                                     output_content = f.read()
                                 is_complete = 'Normal termination of Gaussian' in output_content
-                            
                             if is_complete:
                                 continue
                         except Exception:
-                            # File is corrupted or unreadable, treat as incomplete
                             pass
-                    
-                    # For display, use just the filename
-                    display_name = os.path.basename(input_file)
-                    
-                    progress_cb = context.update_progress
-                    if workflow_concise and callable(progress_cb):
-                        progress_cb(f"{initial_completed_count + num_completed}/{num_inputs} ...")
-                    elif not workflow_concise:
-                        print(f"  Running: {display_name}...", end='', flush=True)
-                    
-                    # ═══════════════════════════════════════════════════════════
-                    # LAUNCH FAILURE RETRY STRATEGY
-                    # ═══════════════════════════════════════════════════════════
-                    # Only retry if the calculation fails to launch (instant crash).
-                    # If the calculation starts normally (runs for a reasonable time),
-                    # we don't retry regardless of exit code - let redo mode handle it.
-                    # ═══════════════════════════════════════════════════════════
-                    
-                    success = False
-                    launch_attempt = 0
-                    calculation_started = False  # True once calculation runs past threshold
-                    
-                    while launch_attempt < max_launch_retries and not calculation_started:
-                        launch_attempt += 1
-                        
-                        # Update display for retries
-                        if launch_attempt > 1 and not workflow_concise:
-                            print(f"\r  Running: {display_name}... ↻ (launch attempt {launch_attempt})\033[K", end='', flush=True)
-                        
-                        # ═══ STEP 1: CLEAN OUTPUT FILES ═══
-                        
-                        # Determine working directory
-                        if '/' in input_file or '\\' in input_file:
-                            # File is in subdirectory (e.g., "opt_conf_1/opt_conf_1.inp")
-                            calc_subdir = os.path.dirname(input_file)
-                            calc_working_dir = os.path.join(optimization_dir_path, calc_subdir)
-                            input_file_relative = os.path.basename(input_file)
-                            output_file_relative = os.path.basename(output_file)
-                            script_basename = os.path.splitext(os.path.basename(input_file))[0]
-                        else:
-                            calc_working_dir = optimization_dir_path
-                            input_file_relative = input_file
-                            output_file_relative = output_file
-                            script_basename = basename
-                        
-                        # Remove ALL auxiliary/output files for clean run (except input files)
-                        for item in os.listdir(calc_working_dir):
-                            if item.startswith(script_basename) and not item.endswith(('.inp', '.com', '.gjf')):
-                                item_path = os.path.join(calc_working_dir, item)
-                                if os.path.isfile(item_path):
-                                    try:
-                                        os.remove(item_path)
-                                    except:
-                                        pass
-                        
-                        # ═══ STEP 2: RUN CALCULATION ═══
-                        
-                        temp_script = os.path.join(calc_working_dir, f'_run_{script_basename}.sh')
-                        with open(temp_script, 'w') as f:
-                            f.write(launcher_content.split('###')[0])  # Environment setup
-                            f.write("\n\n")
-                            if qm_program == 'orca':
-                                f.write(f"# Set unique scratch directory for this ORCA process\n")
-                                f.write(f"export TMPDIR=\"$(pwd)/.orca_tmp_{script_basename}_$$\"\n")
-                                f.write(f"mkdir -p \"$TMPDIR\"\n")
-                                f.write(f"trap 'rm -rf \"$TMPDIR\"' EXIT\n\n")
-                                orca_root_var = extract_orca_root_from_launcher(launcher_content)
-                                if orca_root_var:
-                                    f.write(f"${{{orca_root_var}}}/orca {input_file_relative} > {output_file_relative}\n")
-                                else:
-                                    f.write(f"orca {input_file_relative} > {output_file_relative}\n")
-                            elif qm_program == 'gaussian':
-                                f.write(f"$GAUSS_ROOT/g16 {input_file_relative}\n")
-                        
-                        os.chmod(temp_script, 0o755)
-                        
-                        script_name = os.path.basename(temp_script)
-                        
-                        # Measure execution time to detect launch failures
-                        start_time = time.time()
-                        result = subprocess.run(
-                            ['bash', script_name],
-                            cwd=calc_working_dir,
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL
-                        )
-                        elapsed_time = time.time() - start_time
-                        
-                        # If calculation ran past the threshold, it started normally
-                        # Don't retry even if it failed - redo mode will handle it
-                        if elapsed_time > launch_failure_threshold:
-                            calculation_started = True
-                        
-                        # Cleanup temp script
-                        if os.path.exists(temp_script):
-                            os.remove(temp_script)
-                        if qm_program == 'orca':
-                            for tmp_dir in glob.glob(os.path.join(calc_working_dir, f'.orca_tmp_{script_basename}_*')):
-                                try:
-                                    shutil.rmtree(tmp_dir)
-                                except:
-                                    pass
-                        
-                        # ═══ STEP 3: CHECK SUCCESS ═══
-                        
-                        if os.path.exists(output_path):
-                            try:
-                                if qm_program == 'orca':
-                                    normal_term = check_orca_terminated_normally_opi(output_path)
-                                else:
-                                    with open(output_path, 'r', encoding='utf-8', errors='replace') as f:
-                                        output_content = f.read()
-                                    normal_term = 'Normal termination of Gaussian' in output_content
-                                
-                                if normal_term:
-                                    # SUCCESS!
-                                    num_completed += 1
-                                    progress_cb = context.update_progress
-                                    if workflow_concise and callable(progress_cb):
-                                        progress_cb(f"{initial_completed_count + num_completed}/{num_inputs} ...")
-                                    else:
-                                        if launch_attempt > 1:
-                                            print(f"\r  Running: {display_name}... ✓ (launch attempt {launch_attempt})\033[K")
-                                        else:
-                                            print(f"\r  Running: {display_name}... ✓\033[K")
-                                    success = True
-                                    
-                                    # Update cache
-                                    completed_calcs.append(input_file)
-                                    basename_only = os.path.splitext(os.path.basename(input_file))[0]
-                                    all_input_basenames.add(basename_only)
-                                    stage_key = getattr(context, 'current_stage_key', 'calculation')
-                                    update_protocol_cache(stage_key, 'in_progress',
-                                                        result={'completed_files': completed_calcs,
-                                                               'total_files': num_inputs,
-                                                               'num_completed': num_completed},
-                                                        cache_file=cache_file)
-                                    break  # EXIT RETRY LOOP
-                            except:
-                                pass
-                        
-                        # If calculation started but failed, don't retry - exit loop
-                        # Only continue loop if it was a launch failure
-                        if calculation_started:
-                            break
-                    
-                    # If loop exits without success
-                    if not success:
-                        if not workflow_concise:
-                            if calculation_started:
-                                # Calculation started but didn't complete normally - don't retry
-                                # This will be handled by redo mode if needed
-                                print(f"\r  Running: {display_name}... ✗ (no normal termination)\033[K")
-                            elif launch_attempt >= max_launch_retries:
-                                # Launch failed after all retries
-                                print(f"\r  Running: {display_name}... ✗ (launch failed after {launch_attempt} attempts)\033[K")
-                            else:
-                                print(f"\r  Running: {display_name}... ✗\033[K")
-                        num_failed += 1
-                        failed_calculations.append(input_file)
+
+                    pending_jobs.append({
+                        'input_file': input_file,
+                        'base_dir': optimization_dir_path,
+                        'launcher_content': launcher_content,
+                        'qm_program': qm_program,
+                        'max_launch_retries': max_launch_retries,
+                        'launch_failure_threshold': launch_failure_threshold,
+                        'orca_exe': orca_exe,
+                    })
+
+                # Run calculations with concurrency
+                num_completed, num_failed, failed_calculations = _run_qm_calculations_with_concurrency(
+                    pending_jobs=pending_jobs,
+                    concurrent_jobs=concurrent_jobs,
+                    workflow_concise=workflow_concise,
+                    context=context,
+                    initial_completed_count=initial_completed_count,
+                    num_inputs=num_inputs,
+                    completed_list=completed_calcs,
+                    all_input_basenames=all_input_basenames,
+                    cache_file=cache_file,
+                    stage_key_prefix='calculation',
+                )
                 
                 # Print status (not "results" - that's redundant)
                 # Recalculate num_inputs from the updated set to reflect newly completed calculations
@@ -14036,13 +14365,14 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     max_stage_redos = 3   # --redo: redo entire opt+similarity
     max_critical = 0      # default: 0% critical structures allowed (strict)
     max_skipped = None
+    concurrent_jobs = 1   # default: 1 concurrent job for refinement (serial)
     # Note: --retry removed; launch failures auto-retry up to 10 times (hardcoded)
-    
+
     args = stage.get('args', [])
     workflow_concise = getattr(context, 'is_workflow', False) and getattr(context, 'workflow_verbose_level', 0) < 1
     template_inp = stage.get('template_inp')
     launcher_sh = stage.get('launcher_sh')
-    
+
     for arg in args:
         if arg.startswith('--redo='):
             max_stage_redos = int(arg.split('=')[1])
@@ -14050,6 +14380,8 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             max_critical = float(arg.split('=')[1])
         elif arg.startswith('--skipped='):
             max_skipped = float(arg.split('=')[1])
+        elif arg.startswith('--concurrent='):
+            concurrent_jobs = max(1, int(arg.split('=')[1]))
     
     # Store threshold mode in context for redo logic
     # --critical: only retry structures with imaginary freqs (need_recalculation)
@@ -14400,22 +14732,28 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             if basename_with_ext not in launcher_input_files:
                 launcher_input_files.append(basename_with_ext)
         
+        # Resolve full ORCA path for the launcher
+        orca_exe_for_launcher = "orca"
+        if qm_program == "orca":
+            orca_exe_for_launcher = resolve_orca_executable_from_launcher(
+                launcher_template, qm_alias)
+
         # Create launcher with environment setup and execution commands
         with open(launcher_path, 'w') as f:
             # Write environment setup from template
             f.write(env_setup)
             f.write("\n\n###\n\n")
-            
+
             # Write execution commands for each input file (flat structure)
             for i, inp_file in enumerate(sorted(launcher_input_files, key=natural_sort_key)):
                 basename = os.path.splitext(inp_file)[0]
                 if qm_program == "orca":
-                    # Execute ORCA (launcher sets up PATH with ORCA directory)
-                    f.write(f"orca {basename}.inp > {basename}.out")
+                    # Execute ORCA with full path
+                    f.write(f"{orca_exe_for_launcher} {basename}.inp > {basename}.out")
                 else:
                     # For Gaussian, use g16 or g09
                     f.write(f"g16 {basename}.com")
-                
+
                 # Add continuation for all but last command
                 if i < len(launcher_input_files) - 1:
                     f.write(" ; \\\n")
@@ -14634,22 +14972,21 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         with open(launcher_path, 'r') as f:
             launcher_content = f.read()
         
-        # Run calculations one by one, checking for normal termination with retry
-        num_completed = 0  # Track only newly completed in this run
-        num_failed = 0
-        failed_optimizations = []  # Track failed input files
-        # Hardcoded: retry launch failures up to 10 times
+        # Resolve ORCA executable path
+        orca_exe = 'orca'
+        if qm_program == 'orca':
+            orca_exe = resolve_orca_executable_from_launcher(launcher_content, qm_alias)
+
+        # Build list of pending jobs (skip excluded and already completed)
         max_launch_retries = 10
-        # Time threshold for detecting launch failure (seconds)
         launch_failure_threshold = 5.0
-        
+        pending_jobs = []
+
         for input_file in input_files:
             basename = os.path.splitext(input_file)[0]
-            
+
             # Skip excluded optimizations UNLESS this file is being redone
-            # In redo mode, recalculated_files should be processed even if previously excluded
             if match_exclusion(input_file, excluded_numbers):
-                # Check if this file is in the redo list
                 is_redo_file = (is_redo and hasattr(context, 'recalculated_files') and
                                 context.recalculated_files is not None and
                                 basename in context.recalculated_files)
@@ -14658,34 +14995,25 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                         if not workflow_concise:
                             print(f"  Skipping: {input_file} (excluded)")
                     continue
-            
+
             output_file = basename + ('.out' if qm_program == 'orca' else '.log')
-            input_path = os.path.join(opt_dir, input_file)
             output_path = os.path.join(opt_dir, output_file)
-            
+
             # Skip if output already exists AND is successfully completed
-            # This handles redo scenarios where failed .out files were deleted
             output_exists = False
-            
-            # Check root directory first
             if os.path.exists(output_path):
                 output_exists = True
             else:
-                # Check subdirectory (if files were sorted)
-                # E.g. refinement/motif_01_opt/motif_01_opt.out
                 subdir_path = os.path.join(opt_dir, basename, output_file)
                 if os.path.exists(subdir_path):
                     output_path = subdir_path
                     output_exists = True
                 else:
-                    # Also check shortened basename subdirectory
-                    # E.g. refinement/motif_01/motif_01_opt.out
                     short_basename = basename
                     if '_opt' in basename:
                         short_basename = basename.replace('_opt', '')
                     elif '_calc' in basename:
                         short_basename = basename.replace('_calc', '')
-                    
                     subdir_path = os.path.join(opt_dir, short_basename, output_file)
                     if os.path.exists(subdir_path):
                         output_path = subdir_path
@@ -14693,177 +15021,38 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
 
             if output_exists:
                 if qm_program == 'orca':
-                    # Use OPI-aware check for ORCA 6.1+ support
                     is_complete = check_orca_terminated_normally_opi(output_path)
                 else:
                     with open(output_path, 'r') as f:
                         output_content = f.read()
                     is_complete = 'Normal termination of Gaussian' in output_content
-                
                 if is_complete:
                     continue
-            
-            # Extract display name (basename only) for cleaner output
-            display_name = os.path.basename(input_file)
-            
-            progress_cb = context.update_progress
-            if workflow_concise and callable(progress_cb):
-                progress_cb(f"{initial_completed_count + num_completed}/{num_inputs} ...")
-            elif not workflow_concise:
-                print(f"  Running: {display_name}...", end='', flush=True)
-            
-            # ═══════════════════════════════════════════════════════════
-            # LAUNCH FAILURE RETRY STRATEGY
-            # ═══════════════════════════════════════════════════════════
-            # Only retry if the calculation fails to launch (instant crash).
-            # If the calculation starts normally (runs for a reasonable time),
-            # we don't retry regardless of exit code - let redo mode handle it.
-            # ═══════════════════════════════════════════════════════════
-            
-            success = False
-            launch_attempt = 0
-            calculation_started = False  # True once calculation runs past threshold
-            
-            while launch_attempt < max_launch_retries and not calculation_started:
-                launch_attempt += 1
-                
-                # Update display for retries
-                if launch_attempt > 1 and not workflow_concise:
-                    print(f"\r  Running: {display_name}... ↻ (launch attempt {launch_attempt})\033[K", end='', flush=True)
-                
-                # ═══ STEP 1: CLEAN OUTPUT FILES ═══
-                
-                # Determine working directory
-                if '/' in input_file or '\\' in input_file:
-                    opt_subdir = os.path.dirname(input_file)
-                    opt_working_dir = os.path.join(opt_dir, opt_subdir)
-                    input_file_relative = os.path.basename(input_file)
-                    output_file_relative = os.path.basename(output_file)
-                else:
-                    opt_working_dir = opt_dir
-                    input_file_relative = input_file
-                    output_file_relative = output_file
-                
-                input_filename = os.path.basename(input_file)
-                basename_only = os.path.splitext(input_filename)[0]
-                
-                # Remove ALL auxiliary/output files for clean run (except input files)
-                for item in os.listdir(opt_working_dir):
-                    if item.startswith(basename_only) and not item.endswith(('.inp', '.com', '.gjf')):
-                        item_path = os.path.join(opt_working_dir, item)
-                        if os.path.isfile(item_path):
-                            try:
-                                os.remove(item_path)
-                            except:
-                                pass
-                
-                # ═══ STEP 2: RUN CALCULATION ═══
-                
-                temp_script = os.path.join(opt_working_dir, f'_run_{basename_only}.sh')
-                with open(temp_script, 'w') as f:
-                    f.write(launcher_content.split('###')[0])  # Environment setup
-                    f.write("\n\n")
-                    if qm_program == 'orca':
-                        f.write(f"# Set unique scratch directory for this ORCA process\n")
-                        f.write(f"export TMPDIR=\"$(pwd)/.orca_tmp_{basename_only}_$$\"\n")
-                        f.write(f"mkdir -p \"$TMPDIR\"\n")
-                        f.write(f"trap 'rm -rf \"$TMPDIR\"' EXIT\n\n")
-                        orca_root_var = extract_orca_root_from_launcher(launcher_content)
-                        if orca_root_var:
-                            f.write(f"${{{orca_root_var}}}/orca {input_file_relative} > {output_file_relative}\n")
-                        else:
-                            f.write(f"orca {input_file_relative} > {output_file_relative}\n")
-                    elif qm_program == 'gaussian':
-                        f.write(f"$GAUSS_ROOT/g16 {input_file_relative}\n")
-                
-                os.chmod(temp_script, 0o755)
-                
-                script_name = os.path.basename(temp_script)
-                
-                # Measure execution time to detect launch failures
-                start_time = time.time()
-                result = subprocess.run(
-                    ['bash', script_name],
-                    cwd=opt_working_dir,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-                elapsed_time = time.time() - start_time
-                
-                # If calculation ran past the threshold, it started normally
-                # Don't retry even if it failed - redo mode will handle it
-                if elapsed_time > launch_failure_threshold:
-                    calculation_started = True
-                
-                # Cleanup temp script
-                if os.path.exists(temp_script):
-                    os.remove(temp_script)
-                if qm_program == 'orca':
-                    for tmp_dir in glob.glob(os.path.join(opt_working_dir, f'.orca_tmp_{basename_only}_*')):
-                        try:
-                            shutil.rmtree(tmp_dir)
-                        except:
-                            pass
-                
-                # ═══ STEP 3: CHECK SUCCESS ═══
-                
-                if os.path.exists(output_path):
-                    try:
-                        if qm_program == 'orca':
-                            normal_term = check_orca_terminated_normally_opi(output_path)
-                        else:
-                            with open(output_path, 'r', encoding='utf-8', errors='replace') as f:
-                                output_content = f.read()
-                            normal_term = 'Normal termination of Gaussian' in output_content
-                        
-                        if normal_term:
-                            # SUCCESS!
-                            num_completed += 1
-                            progress_cb = context.update_progress
-                            if workflow_concise and callable(progress_cb):
-                                progress_cb(f"{initial_completed_count + num_completed}/{num_inputs} ...")
-                            else:
-                                if launch_attempt > 1:
-                                    print(f"\r  Running: {display_name}... ✓ (launch attempt {launch_attempt})\033[K")
-                                else:
-                                    print(f"\r  Running: {display_name}... ✓\033[K")
-                            success = True
-                            
-                            # Update cache - avoid duplicates during redo
-                            if input_file not in completed_opts:
-                                completed_opts.append(input_file)
-                            basename_only = os.path.splitext(os.path.basename(input_file))[0]
-                            all_input_basenames.add(basename_only)
-                            stage_key = getattr(context, 'current_stage_key', 'optimization')
-                            update_protocol_cache(stage_key, 'in_progress',
-                                                result={'completed_files': completed_opts,
-                                                       'total_files': num_inputs,
-                                                       'num_completed': num_completed},
-                                                cache_file=cache_file)
-                            break  # EXIT RETRY LOOP
-                    except:
-                        pass
-                
-                # If calculation started but failed, don't retry - exit loop
-                # Only continue loop if it was a launch failure
-                if calculation_started:
-                    break
-            
-            # If loop exits without success
-            if not success:
-                if not workflow_concise:
-                    if calculation_started:
-                        # Calculation started but didn't complete normally - don't retry
-                        # This will be handled by redo mode if needed
-                        print(f"\r  Running: {display_name}... ✗ (no normal termination)\033[K")
-                    elif launch_attempt >= max_launch_retries:
-                        # Launch failed after all retries
-                        print(f"\r  Running: {display_name}... ✗ (launch failed after {launch_attempt} attempts)\033[K")
-                    else:
-                        print(f"\r  Running: {display_name}... ✗\033[K")
-                num_failed += 1
-                failed_optimizations.append(input_file)
-        
+
+            pending_jobs.append({
+                'input_file': input_file,
+                'base_dir': opt_dir,
+                'launcher_content': launcher_content,
+                'qm_program': qm_program,
+                'max_launch_retries': max_launch_retries,
+                'launch_failure_threshold': launch_failure_threshold,
+                'orca_exe': orca_exe,
+            })
+
+        # Run calculations with concurrency
+        num_completed, num_failed, failed_optimizations = _run_qm_calculations_with_concurrency(
+            pending_jobs=pending_jobs,
+            concurrent_jobs=concurrent_jobs,
+            workflow_concise=workflow_concise,
+            context=context,
+            initial_completed_count=initial_completed_count,
+            num_inputs=num_inputs,
+            completed_list=completed_opts,
+            all_input_basenames=all_input_basenames,
+            cache_file=cache_file,
+            stage_key_prefix='optimization',
+        )
+
         # Print status
         # Recalculate num_inputs from the updated set to reflect newly completed optimizations
         num_inputs = len(all_input_basenames)
