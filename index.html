@@ -6355,15 +6355,10 @@ end
                 body.style.opacity = enabled ? '1' : '0.4';
                 body.style.pointerEvents = enabled ? 'auto' : 'none';
             }
-            if (!enabled) {
-                const textarea = document.getElementById('orca-input2');
-                if (textarea) textarea.value = '';
-            }
-            // Disable/enable advanced ref preview card
-            const advPreview = document.getElementById('adv-ref-preview-card');
-            if (advPreview) {
-                advPreview.style.opacity = enabled ? '1' : '0.4';
-                advPreview.style.pointerEvents = enabled ? 'auto' : 'none';
+            // Clear or restore the ref preview textarea
+            const refTextarea = document.getElementById('orca-input2');
+            if (refTextarea) {
+                if (!enabled) refTextarea.value = '';
             }
             // Sync checkbox to advanced mode
             const advCb = document.getElementById('adv-ref-enabled');
@@ -6388,12 +6383,6 @@ end
             if (body) {
                 body.style.opacity = enabled ? '1' : '0.4';
                 body.style.pointerEvents = enabled ? 'auto' : 'none';
-            }
-            // Disable/enable advanced ref preview card
-            const advPreview = document.getElementById('adv-ref-preview-card');
-            if (advPreview) {
-                advPreview.style.opacity = enabled ? '1' : '0.4';
-                advPreview.style.pointerEvents = enabled ? 'auto' : 'none';
             }
             // Sync checkbox to smart mode
             const smartCb = document.getElementById('smart-ref-enabled');
@@ -7819,7 +7808,10 @@ end
         // Update all previews and pipeline
         function updateAllPreviews() {
             updateAdvOrcaInput1();
-            updateAdvOrcaInput2();
+            const refEnabled = document.getElementById('adv-ref-enabled')?.checked !== false
+                && document.getElementById('smart-ref-enabled')?.checked !== false;
+            if (refEnabled) updateAdvOrcaInput2();
+            else { const t = document.getElementById('orca-input2'); if (t) t.value = ''; }
             updatePipelineVisual();
             buildProtocolFromSettings();
             updatePreview();
@@ -7866,6 +7858,9 @@ end
         }
 
         function updateAdvOrcaInput2() {
+            const _refEnabled = document.getElementById('adv-ref-enabled')?.checked !== false
+                && document.getElementById('smart-ref-enabled')?.checked !== false;
+            if (!_refEnabled) { const t = document.getElementById('orca-input2'); if (t) t.value = ''; return; }
                         applyAdvancedRefRescueDefaults();
 
                         const method = getMethodValue('adv-ref');
@@ -9137,8 +9132,10 @@ H   1.981282  0.134064  0.000000`;
             }
 
             // Add ORCA inputs
+            const refIsEnabled = document.getElementById('smart-ref-enabled')?.checked !== false
+                || document.getElementById('adv-ref-enabled')?.checked !== false;
             const orcaInput1 = document.getElementById('orca-input1')?.value || '';
-            const orcaInput2 = document.getElementById('orca-input2')?.value || '';
+            const orcaInput2 = refIsEnabled ? (document.getElementById('orca-input2')?.value || '') : '';
 
             if (orcaInput1) {
                 content += `\n#orca input1\n`;
