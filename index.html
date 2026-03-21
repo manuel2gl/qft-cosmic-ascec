@@ -1122,14 +1122,14 @@
         .smart-box-top-controls {
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 5px;
             margin: 0;
-            padding: 2px;
+            padding: 4px;
             border-radius: 6px;
             border: none;
             background: transparent;
             align-self: start;
-            width: 92px;
+            width: 120px;
             position: absolute;
             top: 10px;
             left: 10px;
@@ -1139,7 +1139,8 @@
 
         .smart-box-top-controls input,
         .smart-box-top-controls select,
-        .smart-box-top-controls label {
+        .smart-box-top-controls label,
+        .smart-box-top-controls button {
             pointer-events: auto;
         }
 
@@ -1148,23 +1149,23 @@
         }
 
         .smart-box-top-controls .form-group label {
-            font-size: 0.78em;
+            font-size: 0.82em;
             color: #506477;
             margin-bottom: 2px;
         }
 
         .smart-box-top-controls .form-group input,
         .smart-box-top-controls .form-group select {
-            height: 20px;
-            padding: 1px 4px;
-            font-size: 9px;
+            height: 24px;
+            padding: 2px 5px;
+            font-size: 11px;
             width: 100%;
         }
 
         .smart-top-inline {
             display: flex;
             align-items: center;
-            gap: 3px;
+            gap: 4px;
             width: 100%;
             justify-content: space-between;
             margin-top: 2px;
@@ -1174,16 +1175,16 @@
             display: inline-flex;
             align-items: center;
             gap: 3px;
-            font-size: 0.7em;
+            font-size: 0.82em;
             color: #3f5468;
         }
 
         .smart-pack-mini input,
         .smart-pack-mini select {
-            width: 42px;
-            height: 20px;
-            padding: 1px 3px;
-            font-size: 9px;
+            width: 50px;
+            height: 24px;
+            padding: 2px 4px;
+            font-size: 11px;
             border: 1px solid #d0dbe4;
             border-radius: 4px;
             background: #ffffff;
@@ -1192,12 +1193,22 @@
         .smart-box-top-controls .auto-box-compact {
             margin-top: 1px;
             margin-left: 0;
-            font-size: 0.62em;
+            font-size: 0.75em;
             color: #3f5468;
             display: inline-flex;
             align-items: center;
-            gap: 2px;
+            gap: 3px;
             white-space: nowrap;
+        }
+
+        /* Hide number spinners in the compact simulation-top packing editor */
+        .smart-pack-mini .custom-inline-editor input[type=number]::-webkit-inner-spin-button,
+        .smart-pack-mini .custom-inline-editor input[type=number]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        .smart-pack-mini .custom-inline-editor input[type=number] {
+            -moz-appearance: textfield;
         }
 
         .smart-box-viewer-shell {
@@ -2003,16 +2014,26 @@
                                     </div>
                                     <div class="smart-top-inline">
                                         <label class="smart-pack-mini" title="Packing percentage">
-                                            <select id="smart-packing-top-input" onchange="applyTopSmartBoxControls('packing')">
-                                                <option value="5">5</option>
-                                                <option value="10" selected>10</option>
-                                                <option value="15">15</option>
-                                                <option value="20">20</option>
-                                                <option value="25">25</option>
-                                                <option value="30">30</option>
-                                                <option value="custom">Custom…</option>
-                                            </select>
-                                            <span>%</span>
+                                            <div class="custom-inline-control" style="width:auto;">
+                                                <select id="smart-packing-top-input" onchange="toggleCustomInput('smart-packing-top-input','smart-packing-top-custom'); applyTopSmartBoxControls('packing')">
+                                                    <option value="5">5</option>
+                                                    <option value="10" selected>10</option>
+                                                    <option value="15">15</option>
+                                                    <option value="20">20</option>
+                                                    <option value="25">25</option>
+                                                    <option value="30">30</option>
+                                                    <option value="35">35</option>
+                                                    <option value="40">40</option>
+                                                    <option value="45">45</option>
+                                                    <option value="50">50</option>
+                                                    <option value="Other">Custom</option>
+                                                </select>
+                                                <div id="smart-packing-top-custom-wrap" class="custom-inline-editor">
+                                                    <input type="number" id="smart-packing-top-custom" min="1" max="99" placeholder="%" oninput="applyTopCustomPacking()">
+                                                    <button type="button" class="custom-inline-reset" title="Back to preset list" onclick="resetCustomControl('smart-packing-top-input','smart-packing-top-custom')">▾</button>
+                                                </div>
+                                            </div>
+                                            <span id="smart-packing-top-pct">%</span>
                                         </label>
                                         <label class="auto-box-compact" title="Automatically compute box from packing" style="margin-top:0;">
                                             <input type="checkbox" id="smart-use-packing-top" checked>
@@ -2230,19 +2251,25 @@
                         </div>
                         <div class="form-group" style="flex:1.2; min-width:100px; margin-bottom:0;">
                             <label>Packing (%)</label>
-                            <select id="smart-packing" onchange="toggleSmartPackingCustom(); updateSmartBoxSize();">
-                                <option value="5">5</option>
-                                <option value="10" selected>10</option>
-                                <option value="15">15</option>
-                                <option value="20">20</option>
-                                <option value="25">25</option>
-                                <option value="30">30</option>
-                                <option value="custom">Custom…</option>
-                            </select>
-                        </div>
-                        <div class="form-group" style="flex:1; min-width:85px; margin-bottom:0; display:none;" id="smart-packing-custom-wrap">
-                            <label>Custom %</label>
-                            <input type="number" id="smart-packing-custom" value="10" min="1" max="99" oninput="updateSmartBoxSize()">
+                            <div class="custom-inline-control">
+                                <select id="smart-packing" onchange="toggleCustomInput('smart-packing','smart-packing-custom'); updateSmartBoxSize(); syncSmartBoxControlsToTop();">
+                                    <option value="5">5</option>
+                                    <option value="10" selected>10</option>
+                                    <option value="15">15</option>
+                                    <option value="20">20</option>
+                                    <option value="25">25</option>
+                                    <option value="30">30</option>
+                                    <option value="35">35</option>
+                                    <option value="40">40</option>
+                                    <option value="45">45</option>
+                                    <option value="50">50</option>
+                                    <option value="Other">Custom…</option>
+                                </select>
+                                <div id="smart-packing-custom-wrap" class="custom-inline-editor">
+                                    <input type="number" id="smart-packing-custom" min="1" max="99" placeholder="%" oninput="updateSmartBoxSize(); syncSmartBoxControlsToTop();">
+                                    <button type="button" class="custom-inline-reset" title="Back to preset list" onclick="resetCustomControl('smart-packing','smart-packing-custom')">▾</button>
+                                </div>
+                            </div>
                         </div>
                         <div class="form-group" style="flex:1; min-width:82px; margin-bottom:0;">
                             <label>Box (Å)</label>
@@ -2703,19 +2730,25 @@
                         </div>
                         <div class="form-group" style="flex:1.1; min-width:110px; margin-bottom:0;">
                             <label>Packing (%)</label>
-                            <select id="adv-packing" onchange="toggleAdvPackingCustom(); updateBoxSize(); updatePreview();">
-                                <option value="5">5</option>
-                                <option value="10" selected>10</option>
-                                <option value="15">15</option>
-                                <option value="20">20</option>
-                                <option value="25">25</option>
-                                <option value="30">30</option>
-                                <option value="custom">Custom...</option>
-                            </select>
-                        </div>
-                        <div class="form-group" style="flex:0.9; min-width:95px; margin-bottom:0; display:none;" id="adv-packing-custom-wrap">
-                            <label>Custom %</label>
-                            <input type="number" id="adv-packing-custom" value="10" min="1" max="99" oninput="updateBoxSize(); updatePreview();">
+                            <div class="custom-inline-control">
+                                <select id="adv-packing" onchange="toggleCustomInput('adv-packing','adv-packing-custom'); updateBoxSize(); updatePreview();">
+                                    <option value="5">5</option>
+                                    <option value="10" selected>10</option>
+                                    <option value="15">15</option>
+                                    <option value="20">20</option>
+                                    <option value="25">25</option>
+                                    <option value="30">30</option>
+                                    <option value="35">35</option>
+                                    <option value="40">40</option>
+                                    <option value="45">45</option>
+                                    <option value="50">50</option>
+                                    <option value="Other">Custom...</option>
+                                </select>
+                                <div id="adv-packing-custom-wrap" class="custom-inline-editor">
+                                    <input type="number" id="adv-packing-custom" min="1" max="99" placeholder="%" oninput="updateBoxSize(); updatePreview();">
+                                    <button type="button" class="custom-inline-reset" title="Back to preset list" onclick="resetCustomControl('adv-packing','adv-packing-custom')">▾</button>
+                                </div>
+                            </div>
                         </div>
                         <div class="form-group" style="flex:1; min-width:110px; margin-bottom:0;">
                             <label style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
@@ -5415,16 +5448,16 @@ H  -0.757000  0.586000  0.000000"></textarea>
         // SMART MODE FUNCTIONS
         // =============================================
 
-        function toggleCustomInput(selectId, inputId) {
+        function toggleCustomInput(selectId, inputId, doFocus = true) {
             const select = document.getElementById(selectId);
             const input = document.getElementById(inputId);
             const wrap = document.getElementById(inputId + '-wrap');
             if (!select || !input || !wrap) return;
             const isOther = select.value === 'Other';
-            select.style.display = isOther ? 'none' : 'block';
+            select.style.display = isOther ? 'none' : '';
             wrap.style.display = isOther ? 'flex' : 'none';
             if (!isOther) input.value = '';
-            if (isOther) input.focus();
+            if (isOther && doFocus) input.focus();
         }
 
         function resetCustomControl(selectId, inputId) {
@@ -5487,7 +5520,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
         function getSmartPackingValue() {
             const packingMode = document.getElementById('smart-packing')?.value || '10';
-            if (packingMode === 'custom') {
+            if (packingMode === 'Other') {
                 return parseFloat(document.getElementById('smart-packing-custom')?.value) || 10;
             }
             return parseFloat(packingMode) || 10;
@@ -5507,9 +5540,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
             Hf: 1.75, Ta: 1.70, W: 1.62, Re: 1.51, Os: 1.44, Ir: 1.41, Pt: 1.36, Au: 1.36, Hg: 1.32,
             Tl: 1.45, Pb: 1.46, Bi: 1.48, Po: 1.40, At: 1.50, Rn: 1.50
         };
-        const ASCEC_OVERLAP_FACTOR = 0.74;
-        const ASCEC_HB_LENGTH = 2.5;
-        const ASCEC_HB_RADIUS = 1.2;
+        const ASCEC_HB_LENGTH = 2.5;          // Å, typical H-bond length
+        const ASCEC_HB_RADIUS = 1.2;          // Å, cylindrical H-bond radius
 
         function normalizeElementSymbol(symbol) {
             const s = String(symbol || '').trim();
@@ -5518,30 +5550,214 @@ H  -0.757000  0.586000  0.000000"></textarea>
             return s[0].toUpperCase() + s.slice(1).toLowerCase();
         }
 
-        function calculateAscecMoleculeEffectiveVolume(mol) {
+        // 3D Convex Hull volume — matches Python scipy.spatial.ConvexHull
+        // Uses incremental algorithm on 26 surface points per atom (same as Python)
+        const ASCEC_SURF_DIRS = (() => {
+            const dirs = [];
+            for (let dx = -1; dx <= 1; dx++)
+                for (let dy = -1; dy <= 1; dy++)
+                    for (let dz = -1; dz <= 1; dz++) {
+                        if (dx === 0 && dy === 0 && dz === 0) continue;
+                        const n = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                        dirs.push([dx/n, dy/n, dz/n]);
+                    }
+            return dirs;
+        })();
+
+        function convexHullVolume3D(pts) {
+            const n = pts.length;
+            if (n < 4) return 0;
+            const sub = (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
+            const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+            const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+            const dist2 = (a, b) => { const d = sub(a,b); return dot(d,d); };
+
+            // Find 4 non-coplanar points for initial tetrahedron
+            let i0 = 0, i1 = -1, i2 = -1, i3 = -1, best;
+
+            // Most distant from i0
+            best = 0;
+            for (let i = 1; i < n; i++) { const d = dist2(pts[i], pts[i0]); if (d > best) { best = d; i1 = i; } }
+            if (i1 < 0) return 0;
+
+            // Farthest from line i0-i1
+            const d01 = sub(pts[i1], pts[i0]);
+            best = 0;
+            for (let i = 0; i < n; i++) {
+                if (i === i0 || i === i1) continue;
+                const v = sub(pts[i], pts[i0]);
+                const t = dot(v, d01) / dot(d01, d01);
+                const perp = sub(v, [d01[0]*t, d01[1]*t, d01[2]*t]);
+                const d = dot(perp, perp);
+                if (d > best) { best = d; i2 = i; }
+            }
+            if (i2 < 0) return 0;
+
+            // Farthest from plane i0-i1-i2
+            const nrm = cross(sub(pts[i1], pts[i0]), sub(pts[i2], pts[i0]));
+            best = 0;
+            for (let i = 0; i < n; i++) {
+                if (i === i0 || i === i1 || i === i2) continue;
+                const d = Math.abs(dot(sub(pts[i], pts[i0]), nrm));
+                if (d > best) { best = d; i3 = i; }
+            }
+            if (i3 < 0) return 0;
+
+            // Orient: ensure i3 is on negative side of face (i0,i1,i2)
+            if (dot(sub(pts[i3], pts[i0]), nrm) > 0) { const tmp = i1; i1 = i2; i2 = tmp; }
+
+            // Initial tetrahedron faces [a,b,c] with outward normals
+            let faces = [[i0,i1,i2],[i0,i3,i1],[i1,i3,i2],[i0,i2,i3]];
+
+            // Verify orientation using centroid
+            const cx = (pts[i0][0]+pts[i1][0]+pts[i2][0]+pts[i3][0])/4;
+            const cy = (pts[i0][1]+pts[i1][1]+pts[i2][1]+pts[i3][1])/4;
+            const cz = (pts[i0][2]+pts[i1][2]+pts[i2][2]+pts[i3][2])/4;
+            for (let fi = 0; fi < faces.length; fi++) {
+                const [a,b,c] = faces[fi];
+                const fn = cross(sub(pts[b],pts[a]), sub(pts[c],pts[a]));
+                if (dot(sub([cx,cy,cz], pts[a]), fn) > 0) faces[fi] = [a,c,b];
+            }
+
+            const inHull = new Set([i0,i1,i2,i3]);
+            for (let i = 0; i < n; i++) {
+                if (inHull.has(i)) continue;
+                const pt = pts[i];
+
+                // Find visible faces
+                const vis = [], notVis = [];
+                for (let fi = 0; fi < faces.length; fi++) {
+                    const [a,b,c] = faces[fi];
+                    const fn = cross(sub(pts[b],pts[a]), sub(pts[c],pts[a]));
+                    (dot(sub(pt, pts[a]), fn) > 1e-10 ? vis : notVis).push(fi);
+                }
+                if (vis.length === 0) continue;
+
+                // Horizon edges: edges of visible faces not shared with another visible face
+                const visSet = new Set(vis);
+                const edgeMap = {};
+                for (const fi of vis) {
+                    const [a,b,c] = faces[fi];
+                    for (const [u,v] of [[a,b],[b,c],[c,a]]) {
+                        const key = Math.min(u,v)+','+Math.max(u,v);
+                        if (!edgeMap[key]) edgeMap[key] = [];
+                        edgeMap[key].push({fi,u,v});
+                    }
+                }
+                const horizon = [];
+                for (const key in edgeMap) {
+                    if (edgeMap[key].length === 1) {
+                        const {u,v} = edgeMap[key][0];
+                        horizon.push([u,v]); // keep edge direction from visible face for correct outward normal
+                    }
+                }
+
+                faces = faces.filter((_,fi) => !visSet.has(fi));
+                for (const [u,v] of horizon) faces.push([u,v,i]);
+            }
+
+            // Volume via divergence theorem
+            let vol = 0;
+            for (const [a,b,c] of faces) {
+                const pa = pts[a], pb = pts[b], pc = pts[c];
+                vol += pa[0]*(pb[1]*pc[2]-pb[2]*pc[1])
+                     - pa[1]*(pb[0]*pc[2]-pb[2]*pc[0])
+                     + pa[2]*(pb[0]*pc[1]-pb[1]*pc[0]);
+            }
+            return Math.abs(vol) / 6;
+        }
+
+        // Molecular volume using convex hull of 26 surface points per atom
+        // Exactly matches Python calculate_molecular_volume(method='coordinate_based')
+        function calculateAscecMolecularVolume(mol) {
             if (!mol || !Array.isArray(mol.atoms) || mol.atoms.length === 0) return 0;
 
-            let atomicVolumeSum = 0;
-            let donors = 0;
-            let acceptors = 0;
+            // If we have coordinates, use convex hull of surface points
+            if (Array.isArray(mol.coords) && mol.coords.length === mol.atoms.length) {
+                const surfPts = [];
+                for (let i = 0; i < mol.atoms.length; i++) {
+                    const el = normalizeElementSymbol(mol.atoms[i]);
+                    const r = ASCEC_COVALENT_RADII[el] || 1.5;
+                    const [x, y, z] = mol.coords[i];
+                    for (const [dx, dy, dz] of ASCEC_SURF_DIRS) {
+                        surfPts.push([x + r*dx, y + r*dy, z + r*dz]);
+                    }
+                }
+                if (surfPts.length >= 4) {
+                    const vol = convexHullVolume3D(surfPts);
+                    if (vol > 0) return vol;
+                }
+                // Fallback: bounding box × 0.52
+                let minX = Infinity, minY = Infinity, minZ = Infinity;
+                let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+                for (let i = 0; i < mol.atoms.length; i++) {
+                    const el = normalizeElementSymbol(mol.atoms[i]);
+                    const r = ASCEC_COVALENT_RADII[el] || 1.5;
+                    const [x, y, z] = mol.coords[i];
+                    if (x-r < minX) minX = x-r; if (y-r < minY) minY = y-r; if (z-r < minZ) minZ = z-r;
+                    if (x+r > maxX) maxX = x+r; if (y+r > maxY) maxY = y+r; if (z+r > maxZ) maxZ = z+r;
+                }
+                return (maxX-minX)*(maxY-minY)*(maxZ-minZ) * 0.52;
+            }
 
-            mol.atoms.forEach((atom) => {
+            // No coords: sum of atomic sphere volumes × overlap factor
+            let vol = 0;
+            mol.atoms.forEach(atom => {
                 const el = normalizeElementSymbol(atom);
-                const radius = ASCEC_COVALENT_RADII[el] || 1.5;
-                atomicVolumeSum += (4.0 / 3.0) * Math.PI * Math.pow(radius, 3);
+                const r = ASCEC_COVALENT_RADII[el] || 1.5;
+                vol += (4.0 / 3.0) * Math.PI * r * r * r;
+            });
+            return vol * 0.74;
+        }
 
+        // H-bond network volume for a molecule
+        function calculateAscecHBondVolume(mol) {
+            if (!mol || !Array.isArray(mol.atoms) || mol.atoms.length === 0) return 0;
+            let donors = 0, acceptors = 0;
+            mol.atoms.forEach(atom => {
+                const el = normalizeElementSymbol(atom);
                 if (el === 'H') donors += 1;
                 else if (el === 'N' || el === 'O' || el === 'F') acceptors += 1;
                 else if (el === 'S') acceptors += 0.5;
                 else if (el === 'Cl') acceptors += 0.3;
             });
-
-            const molecularVolume = atomicVolumeSum * ASCEC_OVERLAP_FACTOR;
             const hbBonds = Math.min(donors, acceptors);
-            const hbVolumePerBond = Math.PI * Math.pow(ASCEC_HB_RADIUS, 2) * ASCEC_HB_LENGTH;
-            const hbNetworkVolume = hbBonds * hbVolumePerBond;
+            return hbBonds * Math.PI * ASCEC_HB_RADIUS * ASCEC_HB_RADIUS * ASCEC_HB_LENGTH;
+        }
 
-            return molecularVolume + hbNetworkVolume;
+        // Molecular extent (max pairwise distance + radii) — matches Python calculate_molecular_extent
+        function calculateAscecMolecularExtent(mol) {
+            if (!mol || !Array.isArray(mol.atoms) || mol.atoms.length === 0) return 0;
+            if (!Array.isArray(mol.coords) || mol.coords.length !== mol.atoms.length) {
+                // No coords: estimate as 2 × largest radius
+                let maxR = 0;
+                mol.atoms.forEach(atom => {
+                    const r = ASCEC_COVALENT_RADII[normalizeElementSymbol(atom)] || 1.5;
+                    if (r > maxR) maxR = r;
+                });
+                return 2 * maxR;
+            }
+            if (mol.atoms.length === 1) {
+                const r = ASCEC_COVALENT_RADII[normalizeElementSymbol(mol.atoms[0])] || 1.5;
+                return 2 * r;
+            }
+            let maxDist = 0;
+            for (let i = 0; i < mol.atoms.length; i++) {
+                const ri = ASCEC_COVALENT_RADII[normalizeElementSymbol(mol.atoms[i])] || 1.5;
+                const [xi, yi, zi] = mol.coords[i];
+                for (let j = i + 1; j < mol.atoms.length; j++) {
+                    const rj = ASCEC_COVALENT_RADII[normalizeElementSymbol(mol.atoms[j])] || 1.5;
+                    const [xj, yj, zj] = mol.coords[j];
+                    const d = Math.sqrt((xi-xj)**2 + (yi-yj)**2 + (zi-zj)**2) + ri + rj;
+                    if (d > maxDist) maxDist = d;
+                }
+            }
+            return maxDist;
+        }
+
+        // Effective volume = molecular volume + H-bond network volume
+        function calculateAscecMoleculeEffectiveVolume(mol) {
+            return calculateAscecMolecularVolume(mol) + calculateAscecHBondVolume(mol);
         }
 
         function calculateAscecTotalEffectiveVolume() {
@@ -5563,8 +5779,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
             if (topAuto) {
                 const topValue = document.getElementById('smart-packing-top-input')?.value || '10';
-                if (topValue === 'custom') {
-                    return getSmartPackingValue();
+                if (topValue === 'Other') {
+                    return parseFloat(document.getElementById('smart-packing-top-custom')?.value) || getSmartPackingValue();
                 }
                 const topNumeric = Number(topValue);
                 if (Number.isFinite(topNumeric) && topNumeric > 0) return topNumeric;
@@ -5583,7 +5799,19 @@ H  -0.757000  0.586000  0.000000"></textarea>
             if (!Number.isFinite(totalEffectiveVolume) || totalEffectiveVolume <= 0) return null;
 
             const requiredBoxVolume = totalEffectiveVolume / packingFraction;
-            return Math.pow(requiredBoxVolume, 1.0 / 3.0);
+            let boxLength = Math.pow(requiredBoxVolume, 1.0 / 3.0);
+
+            // Diagonal floor for small systems (<=3 molecules)
+            if (molecules.length <= 3) {
+                let totalExtent = 0;
+                molecules.forEach(mol => { totalExtent += calculateAscecMolecularExtent(mol); });
+                const diagonalBoxLength = (totalExtent * 1.5) / Math.sqrt(3.0);
+                if (diagonalBoxLength > boxLength) {
+                    boxLength = diagonalBoxLength;
+                }
+            }
+
+            return boxLength;
         }
 
         function applyAscecAutoBoxLength(boxLength) {
@@ -5634,8 +5862,10 @@ H  -0.757000  0.586000  0.000000"></textarea>
             if (smartBox) smartBox.disabled = enabled;
 
             const topPacking = document.getElementById('smart-packing-top-input');
+            const topPackingCustom = document.getElementById('smart-packing-top-custom');
             const topBox = document.getElementById('smart-box-size-top');
             if (topPacking) topPacking.disabled = !enabled;
+            if (topPackingCustom) topPackingCustom.disabled = !enabled;
             if (topBox) {
                 topBox.disabled = enabled;
                 topBox.style.opacity = enabled ? '0.65' : '1';
@@ -5698,11 +5928,22 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
                 if (topBox && mainBox) topBox.value = mainBox.value;
                 if (topAuto && mainAuto) topAuto.checked = mainAuto.checked;
-                if (topPackingInput && mainPacking) topPackingInput.value = mainPacking.value || '10';
+                if (topPackingInput && mainPacking) {
+                    topPackingInput.value = mainPacking.value || '10';
+                    // Sync top custom editor visibility and value without scrolling
+                    const topCustomInput = document.getElementById('smart-packing-top-custom');
+                    if (mainPacking.value === 'Other') {
+                        if (topCustomInput && mainPackingCustom) topCustomInput.value = mainPackingCustom.value;
+                    }
+                    toggleCustomInput('smart-packing-top-input', 'smart-packing-top-custom', false);
+                }
 
                 if (advBox && mainBox) advBox.value = mainBox.value;
-                if (advPacking && mainPacking) advPacking.value = mainPacking.value || '10';
-                if (advPackingCustom && mainPackingCustom) advPackingCustom.value = mainPackingCustom.value || '10';
+                if (advPacking && mainPacking) {
+                    advPacking.value = mainPacking.value || '10';
+                    if (advPackingCustom && mainPackingCustom) advPackingCustom.value = mainPackingCustom.value || '10';
+                    toggleCustomInput('adv-packing', 'adv-packing-custom', false);
+                }
             } finally {
                 isSyncingSmartBoxMirror = false;
             }
@@ -5732,20 +5973,51 @@ H  -0.757000  0.586000  0.000000"></textarea>
             }
 
             if (source === 'packing') {
-                if (mainPacking && topPackingInput) mainPacking.value = topPackingInput.value || '10';
-                if (mainPackingCustom && topPackingInput) mainPackingCustom.value = topPackingInput.value || '10';
+                const topVal = topPackingInput?.value || '10';
+                if (topVal === 'Other') {
+                    // When custom selected from top, sync main to custom mode without scrolling
+                    if (mainPacking) mainPacking.value = 'Other';
+                    toggleCustomInput('smart-packing', 'smart-packing-custom', false);
+                    if (topAuto) topAuto.checked = true;
+                    setAutoBoxFromSource('top');
+                    return;
+                }
+                if (mainPacking) mainPacking.value = topVal;
+                if (mainPackingCustom) mainPackingCustom.value = topVal;
+                toggleCustomInput('smart-packing', 'smart-packing-custom', false);
                 if (topAuto) topAuto.checked = true;
                 setAutoBoxFromSource('top');
+                return;
             }
 
-            if (mainPacking && topPackingInput) mainPacking.value = topPackingInput.value || '10';
-            toggleSmartPackingCustom();
+            if (mainPacking && topPackingInput && topPackingInput.value !== 'Other') {
+                mainPacking.value = topPackingInput.value || '10';
+            }
+            toggleCustomInput('smart-packing', 'smart-packing-custom', false);
             if (document.getElementById('smart-use-packing')?.checked !== false) {
                 updateSmartBoxSize();
             }
             updateBasicBoxViewer();
             syncSmartToAdvanced();
             syncSmartBoxControlsToTop();
+        }
+
+        function toggleTopPackingCustom() {
+            toggleCustomInput('smart-packing-top-input', 'smart-packing-top-custom');
+        }
+
+        function applyTopCustomPacking() {
+            const val = document.getElementById('smart-packing-top-custom')?.value || '10';
+            const mainPacking = document.getElementById('smart-packing');
+            const mainCustom = document.getElementById('smart-packing-custom');
+            if (mainPacking) mainPacking.value = 'Other';
+            if (mainCustom) mainCustom.value = val;
+            toggleCustomInput('smart-packing', 'smart-packing-custom', false);
+            updateSmartBoxSize();
+        }
+
+        function topPackingBackToList() {
+            resetCustomControl('smart-packing-top-input', 'smart-packing-top-custom');
         }
 
         function toggleTopAutoBoxFromSimulation() {
@@ -5784,11 +6056,12 @@ H  -0.757000  0.586000  0.000000"></textarea>
         }
 
         function toggleSmartPackingCustom() {
-            const sel = document.getElementById('smart-packing');
-            const wrap = document.getElementById('smart-packing-custom-wrap');
-            if (!sel || !wrap) return;
-            wrap.style.display = sel.value === 'custom' ? 'block' : 'none';
+            toggleCustomInput('smart-packing', 'smart-packing-custom');
             syncSmartBoxControlsToTop();
+        }
+
+        function smartPackingBackToList() {
+            resetCustomControl('smart-packing', 'smart-packing-custom');
         }
 
         function toggleSmartUsePacking() {
@@ -6402,10 +6675,10 @@ end
                     if (options.includes(mode)) {
                         advPacking.value = mode;
                     } else {
-                        advPacking.value = 'custom';
+                        advPacking.value = 'Other';
                         if (advPackingCustom) advPackingCustom.value = mode;
                     }
-                    toggleAdvPackingCustom();
+                    toggleCustomInput('adv-packing', 'adv-packing-custom', false);
                 }
             }
 
@@ -6772,10 +7045,10 @@ end
                     if (options.includes(mode)) {
                         smartPacking.value = mode;
                     } else {
-                        smartPacking.value = 'custom';
+                        smartPacking.value = 'Other';
                         if (smartPackingCustom) smartPackingCustom.value = mode;
                     }
-                    toggleSmartPackingCustom();
+                    toggleCustomInput('smart-packing', 'smart-packing-custom', false);
                 }
             }
 
@@ -7392,21 +7665,22 @@ end
 
         function getAdvancedPackingValue() {
             const mode = document.getElementById('adv-packing')?.value || '10';
-            if (mode === 'custom') {
+            if (mode === 'Other') {
                 return parseFloat(document.getElementById('adv-packing-custom')?.value) || 10;
             }
             return parseFloat(mode) || 10;
         }
 
         function toggleAdvPackingCustom() {
-            const sel = document.getElementById('adv-packing');
-            const wrap = document.getElementById('adv-packing-custom-wrap');
-            if (!sel || !wrap) return;
-            wrap.style.display = sel.value === 'custom' ? 'block' : 'none';
+            toggleCustomInput('adv-packing', 'adv-packing-custom');
+        }
+
+        function advPackingBackToList() {
+            resetCustomControl('adv-packing', 'adv-packing-custom');
         }
 
         function applyAdvancedPackingPreset() {
-            toggleAdvPackingCustom();
+            toggleCustomInput('adv-packing', 'adv-packing-custom');
             updateBoxSize();
             updatePreview();
         }
