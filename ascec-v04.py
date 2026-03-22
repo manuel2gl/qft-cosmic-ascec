@@ -4168,16 +4168,12 @@ def write_box_analysis_to_file(state: SystemState, output_file_handle):
     recommendations = results['box_length_recommendations']
     system_has_hbonds = results.get('has_primary_hbonds', False)
 
-    # Write to output file
-    rec_5 = recommendations.get('5.0%', {}).get('box_length_A', 0)
-    rec_10 = recommendations.get('10.0%', {}).get('box_length_A', 0)
     rec_15 = recommendations.get('15.0%', {}).get('box_length_A', 0)
-    method_label = "Method A: V_mol + V_HB" if system_has_hbonds else "Method B: L_diag^3"
-    if rec_5 > 0 and rec_10 > 0 and rec_15 > 0:
-        print(f"Box size suggestions ({method_label}):", file=output_file_handle)
-        print(f"  • Isolated clusters: {rec_5:.1f} A (5% packing)", file=output_file_handle)
-        print(f"  • Cluster formation: {rec_10:.1f} A (10% packing)", file=output_file_handle)
-        print(f"  • Network studies:   {rec_15:.1f} A (15% packing)", file=output_file_handle)
+    rec_20 = recommendations.get('20.0%', {}).get('box_length_A', 0)
+    rec_25 = recommendations.get('25.0%', {}).get('box_length_A', 0)
+    method_label = "Method A" if system_has_hbonds else "Method B"
+    if rec_20 > 0:
+        print(f"Box suggestion ({method_label}): {rec_15:.1f} / {rec_20:.1f} / {rec_25:.1f} A (15/20/25%)", file=output_file_handle)
     
     # Store results in state for potential use elsewhere
     state.max_molecular_extent = results['max_molecular_extent_A']
@@ -4197,8 +4193,6 @@ def provide_box_length_advice(state: SystemState):
     _print_verbose("\n" + "="*78, 1, state)
     _print_verbose("Box length analysis", 1, state)
     _print_verbose("="*78, 1, state)
-    _print_verbose(f"Successfully parsed {state.natom} atoms", 1, state)
-    _print_verbose("", 1, state)
 
     # Calculate optimal box lengths using unified volume-based approach
     results = calculate_optimal_box_length(state)
@@ -4210,26 +4204,25 @@ def provide_box_length_advice(state: SystemState):
     system_has_hbonds = results.get('has_primary_hbonds', False)
     num_molecules = results['num_molecules']
 
-    # Display molecular volume analysis
-    _print_verbose("1. Molecular volume analysis:", 1, state)
-    _print_verbose("-" * 50, 1, state)
+    _print_verbose(f"Successfully parsed {state.natom} atoms", 1, state)
+    _print_verbose("", 1, state)
 
+    # Section 1: Molecular volume analysis
     total_molecular_volume = results['total_molecular_volume']
     total_hb_volume = results['total_hb_network_volume']
     total_effective_volume = results['total_effective_volume']
 
+    _print_verbose("1. Molecular volume analysis:", 1, state)
+    _print_verbose("-" * 50, 1, state)
     _print_verbose(f"Number of molecules to place: {num_molecules}", 1, state)
-    _print_verbose(f"  Total molecular hull volume (V_mol): {total_molecular_volume:.2f} Å³", 1, state)
+    _print_verbose(f"  Total molecular hull volume: {total_molecular_volume:.2f} Å³", 1, state)
     if system_has_hbonds:
-        _print_verbose(f"  Method A: HB volume + ghost cylinders", 1, state)
-        _print_verbose(f"  Total H-bond network volume (V_HB): {total_hb_volume:.2f} Å³", 1, state)
-        _print_verbose(f"  V_eff = V_mol + V_HB = {total_effective_volume:.2f} Å³", 1, state)
+        _print_verbose(f"  Total H-bond network volume: {total_hb_volume:.2f} Å³", 1, state)
+        _print_verbose(f"  Effective volume: V_mol + V_HB = {total_effective_volume:.2f} Å³", 1, state)
     else:
-        _print_verbose(f"  Method B: Diagonal with molecular extents", 1, state)
         _print_verbose(f"  Sum of extents (ΣE): {results['diagonal_sum_extents']:.2f} Å", 1, state)
         _print_verbose(f"  L_diag = 1.5 × ΣE / √3 = {results['diagonal_box_length']:.2f} Å", 1, state)
-        _print_verbose(f"  V_eff = L_diag³ = {total_effective_volume:.2f} Å³", 1, state)
-    _print_verbose(f"  Box length: L = (V_eff / φ)^(1/3)", 1, state)
+        _print_verbose(f"  Effective volume: L_diag³ = {total_effective_volume:.2f} Å³", 1, state)
 
     _print_verbose("\nIndividual molecule analysis:", 1, state)
     for i, mol_info in enumerate(results['individual_molecular_volumes']):
@@ -4241,9 +4234,9 @@ def provide_box_length_advice(state: SystemState):
         else:
             _print_verbose(f"  • {mol_info['molecule_label']}: {mol_info['volume_A3']:.2f} Å³", 1, state)
 
-    # Display box length recommendations
+    # Section 2: Box length suggestions table (5% to 50%)
     recommendations = results['box_length_recommendations']
-    _print_verbose(f"\n2. Box length suggestions (5% to 50% packing):", 1, state)
+    _print_verbose(f"\n2. Box length suggestions:", 1, state)
     _print_verbose("-" * 66, 1, state)
     _print_verbose("Packing (%)    Box Length (Å)     Box Volume (Å³)       Free (%)", 1, state)
     _print_verbose("-" * 66, 1, state)
@@ -4254,7 +4247,7 @@ def provide_box_length_advice(state: SystemState):
         free_pct = rec['free_volume_fraction'] * 100
         _print_verbose(f"    {pf*100:4.1f}          {bl:6.2f}             {bv:6.0f}               {free_pct:4.1f}", 1, state)
 
-    # Current box analysis
+    # Section 3: Current box analysis
     if 'current_box_analysis' in results:
         _print_verbose("\n3. Current box analysis:", 1, state)
         _print_verbose("-" * 26, 1, state)
@@ -4280,40 +4273,40 @@ def provide_box_length_advice(state: SystemState):
         else:
             assessment = "Extremely dense - may cause steric clashes"
 
-        _print_verbose(f"  {assessment}", 1, state)
+        _print_verbose(f"\n  {assessment}", 1, state)
 
     # Store results in state
     max_extent = results['max_molecular_extent_A']
     state.max_molecular_extent = max_extent
     state.volume_based_recommendations = recommendations
 
-    # Final recommendation
+    # Section 4: Recommendation (15/20/25)
+    rec_15 = recommendations.get('15.0%', {}).get('box_length_A', 0)
+    rec_20 = recommendations.get('20.0%', {}).get('box_length_A', 0)
+    rec_25 = recommendations.get('25.0%', {}).get('box_length_A', 0)
+
     _print_verbose("\n4. Recommendation:", 1, state)
     _print_verbose("-" * 48, 1, state)
 
-    rec_10 = recommendations.get('10.0%', {}).get('box_length_A', 0)
-    rec_5 = recommendations.get('5.0%', {}).get('box_length_A', 0)
-    rec_15 = recommendations.get('15.0%', {}).get('box_length_A', 0)
-    if rec_10 > 0:
-        _print_verbose(f">>> Default suggestion: {rec_10:.1f} Å (10% packing) <<<", 1, state)
+    if rec_20 > 0:
+        _print_verbose(f">>> Default suggestion: {rec_20:.1f} Å (20% packing) <<<", 1, state)
         _print_verbose("", 1, state)
-    if rec_5 > 0 and rec_15 > 0:
-        _print_verbose(f"  • For isolated clusters: {rec_5:.1f} Å (5% packing)", 1, state)
-        _print_verbose(f"  • For cluster formation: {rec_10:.1f} Å (10% packing)", 1, state)
-        _print_verbose(f"  • For network studies:   {rec_15:.1f} Å (15% packing)", 1, state)
-    if system_has_hbonds:
-        _print_verbose(f"  • Method A: V_eff = V_mol + V_HB", 1, state)
-    else:
-        _print_verbose(f"  • Method B: V_eff = L_diag³ (diagonal-derived)", 1, state)
-    _print_verbose(f"  • Use --box<P> to select a specific packing % (e.g., --box10)", 1, state)
+    if rec_15 > 0 and rec_25 > 0:
+        _print_verbose(f"  • For isolated clusters: {rec_15:.1f} Å (15% packing)", 1, state)
+        _print_verbose(f"  • For cluster formation: {rec_20:.1f} Å (20% packing)", 1, state)
+        _print_verbose(f"  • For network studies:   {rec_25:.1f} Å (25% packing)", 1, state)
+    _print_verbose("", 1, state)
+    _print_verbose(f"  Use --box<P> to use a specific packing %", 1, state)
+    _print_verbose(f"  (e.g., --box10) for a 10%", 1, state)
 
     _print_verbose("\n" + "="*78, 1, state)
-    _print_verbose("L = (V_eff / φ)^(1/3) for both methods.", 1, state)
     if system_has_hbonds:
-        _print_verbose("Method A: V_eff = V_mol + V_HB (hull + H-bond ghost cylinders).", 1, state)
-        _print_verbose("H-bond cylinders: 2.5 Å bond length, 1.2 Å radius.", 1, state)
+        _print_verbose("Note: This analysis accounts for hydrogen bonding networks in molecular clusters.", 1, state)
+        _print_verbose("H-bond volume estimated using 2.5 Å average bond length and 1.2 Å interaction radius.", 1, state)
     else:
-        _print_verbose("Method B: V_eff = L_diag³, L_diag = 1.5 × ΣE / √3.", 1, state)
+        _print_verbose("Note: This analysis uses molecular extents to estimate the box size.", 1, state)
+        _print_verbose("No primary hydrogen bonding detected; diagonal method (Method B) applied.", 1, state)
+    _print_verbose("Run the full simulation to validate these recommendations.", 1, state)
     _print_verbose("="*78, 1, state)
 
 def format_time_difference(seconds: float) -> str:
@@ -6297,39 +6290,39 @@ def merge_xyz_files(xyz_files: List[str], output_filename: str, quiet: bool = Fa
         return False
 
 
-def get_box_size_recommendation(input_file_path: str, packing_percent: float = 10.0) -> Optional[float]:
+def get_box_size_recommendation(input_file_path: str, packing_percent: float = 20.0) -> Optional[float]:
     """
-    Runs box analysis and extracts the recommended box size for specified packing percentage.
-    
+    Runs box analysis and computes the recommended box size for any packing percentage.
+
     Args:
         input_file_path (str): Path to the input file
-        packing_percent (float): Desired packing percentage (default: 10.0)
-    
+        packing_percent (float): Desired packing percentage (default: 20.0)
+
     Returns:
         Optional[float]: Recommended box size in Angstroms, or None if analysis failed
     """
-    # Create a temporary state object for box analysis
     state = SystemState()
     state.verbosity_level = 0  # Suppress verbose output
-    
+
     try:
-        # Read input file
         input_file_path_full = os.path.abspath(input_file_path)
-        
-        # Parse the input file using existing function
         read_input_file(state, input_file_path_full)
-        
-        # Perform box analysis (this populates state.volume_based_recommendations)
-        provide_box_length_advice(state)
-        
-        # Extract recommendation for specified packing percentage
-        if hasattr(state, 'volume_based_recommendations'):
-            key = f"{packing_percent:.1f}%"
-            if key in state.volume_based_recommendations:
-                return state.volume_based_recommendations[key].get('box_length_A')
-        
+
+        # Calculate directly for the requested packing fraction
+        packing_fraction = packing_percent / 100.0
+        if packing_fraction <= 0 or packing_fraction > 1:
+            return None
+
+        results = calculate_optimal_box_length(state, target_packing_fractions=[packing_fraction])
+        if 'error' in results:
+            return None
+
+        key = f"{packing_fraction:.1%}"
+        if key in results['box_length_recommendations']:
+            return results['box_length_recommendations'][key].get('box_length_A')
+
         return None
-        
+
     except Exception as e:
         print(f"Warning: Could not determine box size recommendation: {e}")
         return None
@@ -8874,7 +8867,8 @@ def execute_box_analysis(input_file: str):
         
         # Parse the input file
         read_input_file(state, input_file)
-        
+        state._input_file_path = input_file
+
         # Provide box length analysis using the existing function
         provide_box_length_advice(state)
         
