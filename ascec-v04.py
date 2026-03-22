@@ -4008,13 +4008,15 @@ def calculate_hydrogen_bond_potential(mol_def) -> Dict:
 
 def calculate_optimal_box_length(state: SystemState, target_packing_fractions: Optional[List[float]] = None) -> Dict:
     """
-    Calculates optimal box lengths based on molecular volumes and target packing densities.
+    Calculates optimal box lengths based on packing fraction.
 
-    Uses a unified approach:
-    - V_eff = V_mol_total + V_HB_total (H-bond volume is 0 if no H-bonds detected)
-    - Box lengths are computed for each target packing fraction
-    - The diagonal (sum of extents × 1.5 / sqrt(3)) serves as a minimum floor
-      for systems with 3 or fewer molecules
+    Two methods (both use L = (V_eff / phi)^(1/3)):
+      Method A (HB systems):  V_eff = V_mol + V_HB  (hull volumes + H-bond ghost cylinders)
+      Method B (non-HB):      V_eff = L_diag³        (diagonal-derived volume from extents)
+                               where L_diag = 2.0 × sum_of_extents / sqrt(3)
+
+    Method A is preferred when the system has primary hydrogen bond potential.
+    Method B is used otherwise.
 
     Args:
         state: SystemState object containing molecule definitions
@@ -4038,7 +4040,7 @@ def calculate_optimal_box_length(state: SystemState, target_packing_fractions: O
         'num_molecules': state.num_molecules,
         'box_length_recommendations': {},
         'packing_analysis': {},
-        'method': 'unified_volume_packing'
+        'method': 'A_hb_volume' if system_has_hbonds else 'B_diagonal_extent'
     }
 
     # Calculate volume, extent, and hydrogen bond potential for each molecule
@@ -4077,43 +4079,37 @@ def calculate_optimal_box_length(state: SystemState, target_packing_fractions: O
             total_hb_network_volume += unique_hb_analyses[mol_def_idx]['total_hb_volume']
             total_extent_sum += unique_extents[mol_def_idx]
 
-    # Unified approach: V_eff always includes both molecular and H-bond volumes
-    # (if no H-bonds detected, total_hb_network_volume is simply 0)
-    total_effective_volume = total_molecular_volume + total_hb_network_volume
-
     results['total_molecular_volume'] = total_molecular_volume
     results['total_hb_network_volume'] = total_hb_network_volume
-    results['total_effective_volume'] = total_effective_volume
     results['has_primary_hbonds'] = system_has_hbonds
 
-    # Diagonal-based box length (always computed as reference / floor)
-    diagonal = total_extent_sum * 1.5
+    # Diagonal-based reference length (sum of extents × 2.0 / √3)
+    diagonal = total_extent_sum * 2.0
     diagonal_box_length = diagonal / math.sqrt(3.0)
+    diagonal_derived_volume = diagonal_box_length ** 3
     results['diagonal_sum_extents'] = total_extent_sum
     results['diagonal_value'] = diagonal
     results['diagonal_box_length'] = diagonal_box_length
+    results['diagonal_derived_volume'] = diagonal_derived_volume
 
-    # For small systems (<=3 molecules), diagonal serves as minimum floor
-    num_molecules = state.num_molecules
-    if num_molecules <= 3:
-        results['small_system_floor'] = diagonal_box_length
+    # Select effective volume based on method
+    if system_has_hbonds:
+        # Method A: hull volumes + H-bond ghost cylinders
+        total_effective_volume = total_molecular_volume + total_hb_network_volume
     else:
-        results['small_system_floor'] = None
+        # Method B: diagonal-derived volume from molecular extents
+        total_effective_volume = diagonal_derived_volume
+
+    results['total_effective_volume'] = total_effective_volume
 
     if total_effective_volume <= 0:
         return {'error': 'Total effective volume is zero or negative'}
 
-    # Calculate box lengths for different packing fractions
+    # Calculate box lengths for different packing fractions (same formula for both cases;
+    # V_eff = V_mol + V_HB when HB present, V_eff = V_mol when no HB)
     for packing_fraction in target_packing_fractions:
         required_box_volume = total_effective_volume / packing_fraction
         box_length = required_box_volume ** (1.0/3.0)
-
-        # Apply diagonal floor for small systems (<=3 molecules)
-        floor_applied = False
-        if num_molecules <= 3 and box_length < diagonal_box_length:
-            box_length = diagonal_box_length
-            required_box_volume = box_length ** 3
-            floor_applied = True
 
         results['box_length_recommendations'][f'{packing_fraction:.1%}'] = {
             'packing_fraction': packing_fraction,
@@ -4123,7 +4119,6 @@ def calculate_optimal_box_length(state: SystemState, target_packing_fractions: O
             'free_volume_fraction': 1.0 - (total_effective_volume / required_box_volume),
             'molecular_volume_fraction': total_molecular_volume / required_box_volume,
             'hb_network_volume_fraction': total_hb_network_volume / required_box_volume,
-            'floor_applied': floor_applied
         }
 
     # Current box analysis
@@ -4163,16 +4158,18 @@ def write_box_analysis_to_file(state: SystemState, output_file_handle):
     
     # Get recommendations for output file
     recommendations = results['box_length_recommendations']
+    system_has_hbonds = results.get('has_primary_hbonds', False)
+
+    # Write to output file
     rec_5 = recommendations.get('5.0%', {}).get('box_length_A', 0)
     rec_10 = recommendations.get('10.0%', {}).get('box_length_A', 0)
     rec_15 = recommendations.get('15.0%', {}).get('box_length_A', 0)
-    
-    # Write to output file
+    method_label = "Method A: V_mol + V_HB" if system_has_hbonds else "Method B: L_diag^3"
     if rec_5 > 0 and rec_10 > 0 and rec_15 > 0:
-        print(f"H-bond aware suggestions:", file=output_file_handle)
-        print(f"  • Isolated clusters: {rec_5:.1f} A (5% effective packing)", file=output_file_handle)
-        print(f"  • Cluster formation: {rec_10:.1f} A (10% effective packing)", file=output_file_handle)
-        print(f"  • Network studies: {rec_15:.1f} A (15% effective packing)", file=output_file_handle)
+        print(f"Box size suggestions ({method_label}):", file=output_file_handle)
+        print(f"  • Isolated clusters: {rec_5:.1f} A (5% packing)", file=output_file_handle)
+        print(f"  • Cluster formation: {rec_10:.1f} A (10% packing)", file=output_file_handle)
+        print(f"  • Network studies:   {rec_15:.1f} A (15% packing)", file=output_file_handle)
     
     # Store results in state for potential use elsewhere
     state.max_molecular_extent = results['max_molecular_extent_A']
@@ -4180,17 +4177,17 @@ def write_box_analysis_to_file(state: SystemState, output_file_handle):
 
 def provide_box_length_advice(state: SystemState):
     """
-    Provides comprehensive advice on appropriate box lengths based on molecular volumes
-    and target packing densities using a unified volume-packing approach.
-    V_eff = V_mol + V_HB (where V_HB may be 0 if no H-bonds detected).
-    For systems with <=3 molecules, the diagonal box length serves as a minimum floor.
+    Provides comprehensive advice on appropriate box lengths.
+    Both methods use L = (V_eff / phi)^(1/3):
+      Method A (HB):     V_eff = V_mol + V_HB
+      Method B (non-HB): V_eff = L_diag³, where L_diag = 2.0 × sum_of_extents / sqrt(3)
     """
     if not state.all_molecule_definitions:
         _print_verbose("Cannot provide box length advice: No molecule definitions found.", 0, state)
         return
 
     _print_verbose("\n" + "="*78, 1, state)
-    _print_verbose("Box length analysis (unified volume-packing approach)", 1, state)
+    _print_verbose("Box length analysis", 1, state)
     _print_verbose("="*78, 1, state)
     _print_verbose(f"Successfully parsed {state.natom} atoms", 1, state)
     _print_verbose("", 1, state)
@@ -4204,7 +4201,6 @@ def provide_box_length_advice(state: SystemState):
 
     system_has_hbonds = results.get('has_primary_hbonds', False)
     num_molecules = results['num_molecules']
-    small_system_floor = results.get('small_system_floor')
 
     # Display molecular volume analysis
     _print_verbose("1. Molecular volume analysis:", 1, state)
@@ -4215,20 +4211,17 @@ def provide_box_length_advice(state: SystemState):
     total_effective_volume = results['total_effective_volume']
 
     _print_verbose(f"Number of molecules to place: {num_molecules}", 1, state)
-    _print_verbose(f"  Total molecular volume (V_mol): {total_molecular_volume:.2f} Å³", 1, state)
-    _print_verbose(f"  Total H-bond network volume (V_HB): {total_hb_volume:.2f} Å³"
-                  f"{' (no primary H-bond donors/acceptors detected)' if not system_has_hbonds else ''}", 1, state)
-    _print_verbose(f"  Total effective volume (V_eff = V_mol + V_HB): {total_effective_volume:.2f} Å³", 1, state)
-
-    # Diagonal reference info
-    _print_verbose(f"\n  Diagonal reference:", 1, state)
-    _print_verbose(f"    Sum of molecular extents: {results['diagonal_sum_extents']:.2f} Å", 1, state)
-    _print_verbose(f"    Box diagonal (extents × 1.5): {results['diagonal_value']:.2f} Å", 1, state)
-    _print_verbose(f"    Diagonal box length (diagonal / √3): {results['diagonal_box_length']:.2f} Å", 1, state)
-    if small_system_floor is not None:
-        _print_verbose(f"    ** Minimum floor for ≤3 molecules: {small_system_floor:.2f} Å **", 1, state)
+    _print_verbose(f"  Total molecular hull volume (V_mol): {total_molecular_volume:.2f} Å³", 1, state)
+    if system_has_hbonds:
+        _print_verbose(f"  Method A: HB volume + ghost cylinders", 1, state)
+        _print_verbose(f"  Total H-bond network volume (V_HB): {total_hb_volume:.2f} Å³", 1, state)
+        _print_verbose(f"  V_eff = V_mol + V_HB = {total_effective_volume:.2f} Å³", 1, state)
     else:
-        _print_verbose(f"    (Not used as floor: system has >{3} molecules)", 1, state)
+        _print_verbose(f"  Method B: Diagonal with molecular extents", 1, state)
+        _print_verbose(f"  Sum of extents (ΣE): {results['diagonal_sum_extents']:.2f} Å", 1, state)
+        _print_verbose(f"  L_diag = 2.0 × ΣE / √3 = {results['diagonal_box_length']:.2f} Å", 1, state)
+        _print_verbose(f"  V_eff = L_diag³ = {total_effective_volume:.2f} Å³", 1, state)
+    _print_verbose(f"  Box length: L = (V_eff / φ)^(1/3)", 1, state)
 
     _print_verbose("\nIndividual molecule analysis:", 1, state)
     for i, mol_info in enumerate(results['individual_molecular_volumes']):
@@ -4241,25 +4234,17 @@ def provide_box_length_advice(state: SystemState):
             _print_verbose(f"  • {mol_info['molecule_label']}: {mol_info['volume_A3']:.2f} Å³", 1, state)
 
     # Display box length recommendations
-    _print_verbose(f"\n2. Box length suggestions (5% to 50% packing):", 1, state)
-    _print_verbose("-" * 78, 1, state)
-
     recommendations = results['box_length_recommendations']
-    _print_verbose("Packing (%)    Box Length (Å)     Box Volume (Å³)       Free (%)   Floor?", 1, state)
-    _print_verbose("-" * 78, 1, state)
-
+    _print_verbose(f"\n2. Box length suggestions (5% to 50% packing):", 1, state)
+    _print_verbose("-" * 66, 1, state)
+    _print_verbose("Packing (%)    Box Length (Å)     Box Volume (Å³)       Free (%)", 1, state)
+    _print_verbose("-" * 66, 1, state)
     for key, rec in recommendations.items():
         pf = rec['packing_fraction']
         bl = rec['box_length_A']
         bv = rec['box_volume_A3']
         free_pct = rec['free_volume_fraction'] * 100
-        floor_mark = "  *" if rec.get('floor_applied', False) else ""
-        _print_verbose(f"    {pf*100:4.1f}          {bl:6.2f}             {bv:6.0f}               {free_pct:4.1f}     {floor_mark}", 1, state)
-
-    if small_system_floor is not None:
-        has_floor = any(rec.get('floor_applied', False) for rec in recommendations.values())
-        if has_floor:
-            _print_verbose(f"  * Diagonal floor ({small_system_floor:.2f} Å) applied (system has ≤3 molecules)", 1, state)
+        _print_verbose(f"    {pf*100:4.1f}          {bl:6.2f}             {bv:6.0f}               {free_pct:4.1f}", 1, state)
 
     # Current box analysis
     if 'current_box_analysis' in results:
@@ -4294,14 +4279,13 @@ def provide_box_length_advice(state: SystemState):
     state.max_molecular_extent = max_extent
     state.volume_based_recommendations = recommendations
 
-    # Final recommendations (unified)
+    # Final recommendation
     _print_verbose("\n4. Recommendation:", 1, state)
     _print_verbose("-" * 48, 1, state)
 
     rec_10 = recommendations.get('10.0%', {}).get('box_length_A', 0)
     rec_5 = recommendations.get('5.0%', {}).get('box_length_A', 0)
     rec_15 = recommendations.get('15.0%', {}).get('box_length_A', 0)
-
     if rec_10 > 0:
         _print_verbose(f">>> Default suggestion: {rec_10:.1f} Å (10% packing) <<<", 1, state)
         _print_verbose("", 1, state)
@@ -4310,21 +4294,18 @@ def provide_box_length_advice(state: SystemState):
         _print_verbose(f"  • For cluster formation: {rec_10:.1f} Å (10% packing)", 1, state)
         _print_verbose(f"  • For network studies:   {rec_15:.1f} Å (15% packing)", 1, state)
     if system_has_hbonds:
-        _print_verbose(f"  • V_eff includes H-bond network volume (avg. bond length: 2.5 Å)", 1, state)
+        _print_verbose(f"  • Method A: V_eff = V_mol + V_HB", 1, state)
     else:
-        _print_verbose(f"  • No H-bonds detected; V_eff = V_mol (V_HB = 0)", 1, state)
+        _print_verbose(f"  • Method B: V_eff = L_diag³ (diagonal-derived)", 1, state)
     _print_verbose(f"  • Use --box<P> to select a specific packing % (e.g., --box10)", 1, state)
 
-    if small_system_floor is not None:
-        _print_verbose(f"  • Note: diagonal floor ({small_system_floor:.2f} Å) was applied where the", 1, state)
-        _print_verbose(f"    volume-based box was smaller (system has ≤3 molecules)", 1, state)
-
     _print_verbose("\n" + "="*78, 1, state)
-    _print_verbose("Unified volume-packing method: V_eff = V_mol + V_HB.", 1, state)
+    _print_verbose("L = (V_eff / φ)^(1/3) for both methods.", 1, state)
     if system_has_hbonds:
-        _print_verbose("H-bond volume estimated using 2.5 Å avg. bond length and 1.2 Å radius.", 1, state)
-    _print_verbose("Molecular volumes computed using coordinate-based convex hull.", 1, state)
-    _print_verbose(f"Diagonal reference: sum of extents × 1.5 / √3 = {results['diagonal_box_length']:.2f} Å.", 1, state)
+        _print_verbose("Method A: V_eff = V_mol + V_HB (hull + H-bond ghost cylinders).", 1, state)
+        _print_verbose("H-bond cylinders: 2.5 Å bond length, 1.2 Å radius.", 1, state)
+    else:
+        _print_verbose("Method B: V_eff = L_diag³, L_diag = 2.0 × ΣE / √3.", 1, state)
     _print_verbose("="*78, 1, state)
 
 def format_time_difference(seconds: float) -> str:
