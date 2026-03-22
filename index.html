@@ -5030,6 +5030,11 @@ H  -0.757000  0.586000  0.000000"></textarea>
                     throw new Error('Could not parse structure');
                 }
 
+                // Extract CID from SDF (overrides name-based lookup so SMILES input like "C" gets
+                // the right compound, e.g. methane CID 297, not carbon element CID 5462310)
+                const sdfCidMatch = sdfData.match(/>\s*<PUBCHEM_COMPOUND_CID>\s*[\r\n]+(\d+)/);
+                if (sdfCidMatch) foundCID = parseInt(sdfCidMatch[1]);
+
                 // Get CID if we don't have it (for property lookup)
                 if (!foundCID) {
                     try {
@@ -8706,8 +8711,13 @@ end
                 currentMolData = parseSdfToMolData(sdfData);
                 currentMolData.rawSdf = sdfData;
                 currentMolData.is3D = !pubChem3DFailed;
-                
+
                 if (currentMolData.atoms.length === 0) throw new Error('Could not parse structure');
+
+                // Extract CID from SDF (overrides name-based lookup so SMILES input like "C" gets
+                // the right compound, e.g. methane CID 297, not carbon element CID 5462310)
+                const sdfCidMatchAdv = sdfData.match(/>\s*<PUBCHEM_COMPOUND_CID>\s*[\r\n]+(\d+)/);
+                if (sdfCidMatchAdv) foundCID = parseInt(sdfCidMatchAdv[1]);
 
                 // Get CID if we don't have it (for property lookup)
                 if (!foundCID) {
