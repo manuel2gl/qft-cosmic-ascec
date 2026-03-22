@@ -10878,7 +10878,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     max_redos = 3  # Default: 3 redo attempts for critical structures
                     max_critical = 0  # Default: 0% critical structures allowed (retry all)
                     max_skipped = None   # Not set by default
-                    
+                    concurrent_jobs = 1  # Default: serial (web UI sets stage-specific defaults)
+
                     for arg in optimization_args:
                         if arg.startswith('--redo='):
                             max_redos = int(arg.split('=')[1])
@@ -10886,6 +10887,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             max_critical = float(arg.split('=')[1])
                         elif arg.startswith('--skipped='):
                             max_skipped = float(arg.split('=')[1])
+                        elif arg.startswith('--concurrent='):
+                            try:
+                                concurrent_jobs = max(1, int(arg.split('=')[1]))
+                            except ValueError:
+                                pass
                     
                     # Determine which threshold is active
                     if max_critical is not None and max_skipped is not None:
@@ -11360,7 +11366,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     max_redos = 3  # Default: 3 redo attempts for critical structures
                     max_critical = 0  # Default: 0% critical structures allowed (retry all)
                     max_skipped = None
-                    
+                    concurrent_jobs = 1  # Default concurrent jobs for refinement
+
                     for arg in opt_args:
                         if arg.startswith('--redo='):
                             max_redos = int(arg.split('=')[1])
@@ -11368,6 +11375,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             max_critical = float(arg.split('=')[1])
                         elif arg.startswith('--skipped='):
                             max_skipped = float(arg.split('=')[1])
+                        elif arg.startswith('--concurrent='):
+                            try:
+                                concurrent_jobs = max(1, int(arg.split('=')[1]))
+                            except ValueError:
+                                pass
                     
                     # Determine which threshold is active
                     if max_critical is not None and max_skipped is not None:
