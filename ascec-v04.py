@@ -4013,7 +4013,7 @@ def calculate_optimal_box_length(state: SystemState, target_packing_fractions: O
     Two methods (both use L = (V_eff / phi)^(1/3)):
       Method A (HB systems):  V_eff = V_mol + V_HB  (hull volumes + H-bond ghost cylinders)
       Method B (non-HB):      V_eff = L_diag³        (diagonal-derived volume from extents)
-                               where L_diag = 2.0 × sum_of_extents / sqrt(3)
+                               where L_diag = 1.5 × sum_of_extents / sqrt(3)
 
     Method A is preferred when the system has primary hydrogen bond potential.
     Method B is used otherwise.
@@ -4083,8 +4083,8 @@ def calculate_optimal_box_length(state: SystemState, target_packing_fractions: O
     results['total_hb_network_volume'] = total_hb_network_volume
     results['has_primary_hbonds'] = system_has_hbonds
 
-    # Diagonal-based reference length (sum of extents × 2.0 / √3)
-    diagonal = total_extent_sum * 2.0
+    # Diagonal-based reference length (sum of extents × 1.5 / √3)
+    diagonal = total_extent_sum * 1.5
     diagonal_box_length = diagonal / math.sqrt(3.0)
     diagonal_derived_volume = diagonal_box_length ** 3
     results['diagonal_sum_extents'] = total_extent_sum
@@ -4180,7 +4180,7 @@ def provide_box_length_advice(state: SystemState):
     Provides comprehensive advice on appropriate box lengths.
     Both methods use L = (V_eff / phi)^(1/3):
       Method A (HB):     V_eff = V_mol + V_HB
-      Method B (non-HB): V_eff = L_diag³, where L_diag = 2.0 × sum_of_extents / sqrt(3)
+      Method B (non-HB): V_eff = L_diag³, where L_diag = 1.5 × sum_of_extents / sqrt(3)
     """
     if not state.all_molecule_definitions:
         _print_verbose("Cannot provide box length advice: No molecule definitions found.", 0, state)
@@ -4219,7 +4219,7 @@ def provide_box_length_advice(state: SystemState):
     else:
         _print_verbose(f"  Method B: Diagonal with molecular extents", 1, state)
         _print_verbose(f"  Sum of extents (ΣE): {results['diagonal_sum_extents']:.2f} Å", 1, state)
-        _print_verbose(f"  L_diag = 2.0 × ΣE / √3 = {results['diagonal_box_length']:.2f} Å", 1, state)
+        _print_verbose(f"  L_diag = 1.5 × ΣE / √3 = {results['diagonal_box_length']:.2f} Å", 1, state)
         _print_verbose(f"  V_eff = L_diag³ = {total_effective_volume:.2f} Å³", 1, state)
     _print_verbose(f"  Box length: L = (V_eff / φ)^(1/3)", 1, state)
 
@@ -4305,7 +4305,7 @@ def provide_box_length_advice(state: SystemState):
         _print_verbose("Method A: V_eff = V_mol + V_HB (hull + H-bond ghost cylinders).", 1, state)
         _print_verbose("H-bond cylinders: 2.5 Å bond length, 1.2 Å radius.", 1, state)
     else:
-        _print_verbose("Method B: V_eff = L_diag³, L_diag = 2.0 × ΣE / √3.", 1, state)
+        _print_verbose("Method B: V_eff = L_diag³, L_diag = 1.5 × ΣE / √3.", 1, state)
     _print_verbose("="*78, 1, state)
 
 def format_time_difference(seconds: float) -> str:
@@ -16336,6 +16336,30 @@ MORE INFORMATION:
 
         # Set output directory to the directory containing the input file
         state.output_dir = run_dir
+
+        # Parse --box flag for single simulation mode (override box length from .asc file)
+        box_packing_override = None
+        box_candidates = []
+        if unknown_args:
+            box_candidates.extend(unknown_args)
+        box_candidates.extend(sys.argv[1:])
+        for candidate in box_candidates:
+            try:
+                if isinstance(candidate, str) and candidate.lower().startswith('--box'):
+                    packing_str = candidate.lower().replace('--box', '')
+                    if packing_str:
+                        packing_percent = float(packing_str)
+                        recommended_box = get_box_size_recommendation(input_file, packing_percent)
+                        if recommended_box is not None:
+                            state.cube_length = recommended_box
+                            state.xbox = recommended_box
+                            box_packing_override = packing_percent
+                            _print_verbose(f"Using recommended box size: {recommended_box:.1f} Å ({packing_percent}% effective packing)", 0, state)
+                        else:
+                            _print_verbose(f"Warning: Could not determine box size for {packing_percent}% packing. Using original box size.", 0, state)
+                        break
+            except ValueError:
+                pass
 
         # Call for Box Length Advice (only for simulation mode, not box analysis)
         provide_box_length_advice(state) # This will print to stderr
