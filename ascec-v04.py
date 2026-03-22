@@ -3848,17 +3848,21 @@ def calculate_molecular_volume(mol_def, method='coordinate_based') -> float:
     try:
         from scipy.spatial import ConvexHull
 
-        # Generate surface points on each atomic sphere using 26 deterministic directions
-        all_surface_points = []
+        # Generate surface points on each atomic sphere using Fibonacci sphere (50 points)
+        # Fibonacci sphere produces nearly uniform distribution with no coplanar clusters,
+        # reducing algorithm sensitivity between scipy Qhull and JS incremental hull
+        N_SURF = 50
+        golden_ratio = (1.0 + math.sqrt(5.0)) / 2.0
         directions = []
-        for dx in [-1, 0, 1]:
-            for dy in [-1, 0, 1]:
-                for dz in [-1, 0, 1]:
-                    if dx == 0 and dy == 0 and dz == 0:
-                        continue
-                    norm = math.sqrt(dx*dx + dy*dy + dz*dz)
-                    directions.append((dx/norm, dy/norm, dz/norm))
+        for i in range(N_SURF):
+            theta = math.acos(1.0 - 2.0 * (i + 0.5) / N_SURF)
+            phi = 2.0 * math.pi * i / golden_ratio
+            dx = math.sin(theta) * math.cos(phi)
+            dy = math.sin(theta) * math.sin(phi)
+            dz = math.cos(theta)
+            directions.append((dx, dy, dz))
 
+        all_surface_points = []
         for atomic_num, x, y, z in mol_def.atoms_coords:
             radius = r_atom.get(atomic_num, 1.5)
             for ddx, ddy, ddz in directions:
@@ -3930,7 +3934,7 @@ def has_primary_hydrogen_bonds(mol_defs) -> bool:
     """
     Detect whether the system has significant primary hydrogen bond donors/acceptors.
     A system has primary H-bonds if at least one molecule has both H-bond donors
-    (H bonded to N, O, or F) and acceptors (N, O, F atoms).
+    (H atoms) and acceptors (N, O, F with weight 1; S with weight 0.5; Cl with weight 0.3).
 
     Args:
         mol_defs: List of MoleculeData objects
@@ -3947,6 +3951,10 @@ def has_primary_hydrogen_bonds(mol_defs) -> bool:
                 total_donors += 1
             elif element in ['N', 'O', 'F']:
                 total_acceptors += 1
+            elif element == 'S':
+                total_acceptors += 0.5
+            elif element == 'Cl':
+                total_acceptors += 0.3
     # Need at least 1 donor AND 1 acceptor for primary H-bonds
     return total_donors >= 1 and total_acceptors >= 1
 
