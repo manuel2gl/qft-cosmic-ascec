@@ -244,7 +244,7 @@
         }
 
         .custom-inline-reset {
-            flex: 0 0 34px;
+            flex: 0 0 26px;
             padding: 0;
             border: 1px solid #ddd;
             border-left: 1px solid #d5dbe0;
@@ -253,7 +253,7 @@
             border-top-right-radius: 4px;
             border-bottom-right-radius: 4px;
             cursor: pointer;
-            font-size: 14px;
+            font-size: 12px;
             transition: background 0.2s, color 0.2s;
         }
 
@@ -1129,7 +1129,7 @@
             border: none;
             background: transparent;
             align-self: start;
-            width: 120px;
+            width: 140px;
             position: absolute;
             top: 10px;
             left: 10px;
@@ -1149,16 +1149,16 @@
         }
 
         .smart-box-top-controls .form-group label {
-            font-size: 0.82em;
+            font-size: 0.85em;
             color: #506477;
             margin-bottom: 2px;
         }
 
         .smart-box-top-controls .form-group input,
         .smart-box-top-controls .form-group select {
-            height: 24px;
-            padding: 2px 5px;
-            font-size: 11px;
+            height: 26px;
+            padding: 2px 6px;
+            font-size: 12px;
             width: 100%;
         }
 
@@ -1175,16 +1175,16 @@
             display: inline-flex;
             align-items: center;
             gap: 3px;
-            font-size: 0.82em;
+            font-size: 0.85em;
             color: #3f5468;
         }
 
         .smart-pack-mini input,
         .smart-pack-mini select {
-            width: 50px;
-            height: 24px;
+            width: 54px;
+            height: 26px;
             padding: 2px 4px;
-            font-size: 11px;
+            font-size: 12px;
             border: 1px solid #d0dbe4;
             border-radius: 4px;
             background: #ffffff;
@@ -1193,12 +1193,20 @@
         .smart-box-top-controls .auto-box-compact {
             margin-top: 1px;
             margin-left: 0;
-            font-size: 0.75em;
+            font-size: 0.8em;
             color: #3f5468;
             display: inline-flex;
             align-items: center;
             gap: 3px;
             white-space: nowrap;
+        }
+
+        .smart-packing-assessment {
+            font-size: 0.72em;
+            color: #5a7a8a;
+            margin-top: 1px;
+            line-height: 1.2;
+            pointer-events: none;
         }
 
         /* Hide number spinners in the compact simulation-top packing editor */
@@ -1241,7 +1249,7 @@
             width: 176px;
             position: absolute;
             top: 8px;
-            right: 0;
+            right: 8px;
             z-index: 6;
         }
 
@@ -2026,9 +2034,9 @@
                                             <div class="custom-inline-control" style="width:auto;">
                                                 <select id="smart-packing-top-input" onchange="toggleCustomInput('smart-packing-top-input','smart-packing-top-custom'); applyTopSmartBoxControls('packing')">
                                                     <option value="5">5</option>
-                                                    <option value="10" selected>10</option>
+                                                    <option value="10">10</option>
                                                     <option value="15">15</option>
-                                                    <option value="20">20</option>
+                                                    <option value="20" selected>20</option>
                                                     <option value="25">25</option>
                                                     <option value="30">30</option>
                                                     <option value="35">35</option>
@@ -2049,6 +2057,7 @@
                                             auto
                                         </label>
                                     </div>
+                                    <div id="smart-packing-assessment" class="smart-packing-assessment"></div>
                                 </div>
 
                                 <div id="basic-box-viewer" class="viewer-3d"></div>
@@ -2269,9 +2278,9 @@
                             <div class="custom-inline-control">
                                 <select id="smart-packing" onchange="toggleCustomInput('smart-packing','smart-packing-custom'); updateSmartBoxSize(); syncSmartBoxControlsToTop();">
                                     <option value="5">5</option>
-                                    <option value="10" selected>10</option>
+                                    <option value="10">10</option>
                                     <option value="15">15</option>
-                                    <option value="20">20</option>
+                                    <option value="20" selected>20</option>
                                     <option value="25">25</option>
                                     <option value="30">30</option>
                                     <option value="35">35</option>
@@ -2760,9 +2769,9 @@
                             <div class="custom-inline-control">
                                 <select id="adv-packing" onchange="toggleCustomInput('adv-packing','adv-packing-custom'); updateBoxSize(); updatePreview();">
                                     <option value="5">5</option>
-                                    <option value="10" selected>10</option>
+                                    <option value="10">10</option>
                                     <option value="15">15</option>
-                                    <option value="20">20</option>
+                                    <option value="20" selected>20</option>
                                     <option value="25">25</option>
                                     <option value="30">30</option>
                                     <option value="35">35</option>
@@ -3798,6 +3807,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
             resetAdvRefRescueToSuggested();
             toggleAdvancedConformationalSearch();
             
+            updatePackingAssessment();
+
             // Add drag-drop support to molecule viewer
             setupMolViewerDropZone();
 
@@ -4943,79 +4954,65 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 let foundCID = null;
                 let pubChem3DFailed = false;
 
-                // Strategy 1: Try as SMILES with 3D conformer
-                btn.textContent = '⏳ Trying SMILES (3D)...';
-                let response = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${encodeURIComponent(input)}/SDF?record_type=3d`);
-                if (response.ok) {
-                    const text = await response.text();
-                    if (text.includes('V2000') || text.includes('V3000')) {
-                        if (isPubChem3DDisallowed(text)) {
-                            pubChem3DFailed = true;
-                        } else {
+                const enc = encodeURIComponent(input);
+
+                // Fire SMILES 3D + name 3D + CID lookup in parallel
+                btn.textContent = '⏳ Searching...';
+                const [smilesRes, nameRes, cidRes] = await Promise.allSettled([
+                    fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${enc}/SDF?record_type=3d`),
+                    fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${enc}/SDF?record_type=3d`),
+                    fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${enc}/cids/JSON`)
+                ]);
+
+                // Helper to extract valid SDF text
+                const extractSdf = async (res) => {
+                    if (res.status !== 'fulfilled' || !res.value.ok) return null;
+                    const text = await res.value.text();
+                    if (!text.includes('V2000') && !text.includes('V3000')) return null;
+                    if (isPubChem3DDisallowed(text)) { pubChem3DFailed = true; return null; }
+                    return text;
+                };
+
+                // Strategy 1: SMILES 3D
+                sdfData = await extractSdf(smilesRes);
+
+                // Strategy 2: Name 3D
+                if (!sdfData && !pubChem3DFailed) sdfData = await extractSdf(nameRes);
+
+                // Extract CID from parallel lookup
+                if (cidRes.status === 'fulfilled' && cidRes.value.ok) {
+                    try {
+                        const cidData = await cidRes.value.json();
+                        if (cidData.IdentifierList?.CID?.[0]) foundCID = cidData.IdentifierList.CID[0];
+                    } catch(e) {}
+                }
+
+                // Strategy 3: CID-based 3D (if we got a CID but no SDF yet)
+                if (!sdfData && !pubChem3DFailed && foundCID) {
+                    btn.textContent = `⏳ CID ${foundCID}, getting 3D...`;
+                    const resp = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${foundCID}/SDF?record_type=3d`);
+                    if (resp.ok) {
+                        const text = await resp.text();
+                        if ((text.includes('V2000') || text.includes('V3000')) && !isPubChem3DDisallowed(text)) {
                             sdfData = text;
+                        } else if (isPubChem3DDisallowed(text)) {
+                            pubChem3DFailed = true;
                         }
                     }
                 }
 
-                // Strategy 2: Try as name with 3D conformer
-                if (!sdfData && !pubChem3DFailed) {
-                    btn.textContent = '⏳ Trying name (3D)...';
-                    response = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(input)}/SDF?record_type=3d`);
-                    if (response.ok) {
-                        const text = await response.text();
-                        if (text.includes('V2000') || text.includes('V3000')) {
-                            if (isPubChem3DDisallowed(text)) {
-                                pubChem3DFailed = true;
-                            } else {
-                                sdfData = text;
-                            }
-                        }
-                    }
-                }
-
-                // Strategy 3: Get CID and try 3D from CID (handles synonyms like Taxol)
-                if (!sdfData && !pubChem3DFailed) {
-                    btn.textContent = '⏳ Searching synonyms...';
-                    response = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(input)}/cids/JSON`);
-                    if (response.ok) {
-                        const cidData = await response.json();
-                        if (cidData.IdentifierList?.CID?.[0]) {
-                            foundCID = cidData.IdentifierList.CID[0];
-                            btn.textContent = `⏳ CID ${foundCID}, getting 3D...`;
-                            response = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${foundCID}/SDF?record_type=3d`);
-                            if (response.ok) {
-                                const text = await response.text();
-                                if (text.includes('V2000') || text.includes('V3000')) {
-                                    if (isPubChem3DDisallowed(text)) {
-                                        pubChem3DFailed = true;
-                                    } else {
-                                        sdfData = text;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Strategy 4: 2D fallback from name
+                // Strategy 4+5: 2D fallbacks (name then SMILES) in parallel
                 if (!sdfData) {
                     btn.textContent = '⏳ Trying 2D...';
-                    response = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(input)}/SDF`);
-                    if (response.ok) {
-                        const text = await response.text();
-                        if (text.includes('V2000') || text.includes('V3000')) {
-                            sdfData = text;
-                        }
-                    }
-                }
-
-                // Strategy 5: 2D fallback from SMILES
-                if (!sdfData) {
-                    response = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${encodeURIComponent(input)}/SDF`);
-                    if (response.ok) {
-                        const text = await response.text();
-                        if (text.includes('V2000') || text.includes('V3000')) {
-                            sdfData = text;
+                    const [name2d, smiles2d] = await Promise.allSettled([
+                        fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${enc}/SDF`),
+                        fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${enc}/SDF`)
+                    ]);
+                    for (const res of [name2d, smiles2d]) {
+                        if (sdfData) break;
+                        if (res.status === 'fulfilled' && res.value.ok) {
+                            const text = await res.value.text();
+                            if (text.includes('V2000') || text.includes('V3000')) sdfData = text;
                         }
                     }
                 }
@@ -5035,24 +5032,13 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
                 // Get CID if we don't have it (for property lookup)
                 if (!foundCID) {
-                    // Try SMILES lookup first
                     try {
-                        response = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${encodeURIComponent(input)}/cids/JSON`);
-                        if (response.ok) {
-                            const data = await response.json();
+                        const resp = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${enc}/cids/JSON`);
+                        if (resp.ok) {
+                            const data = await resp.json();
                             if (data.IdentifierList?.CID?.[0]) foundCID = data.IdentifierList.CID[0];
                         }
                     } catch(e) {}
-                    // If SMILES failed, try name lookup
-                    if (!foundCID) {
-                        try {
-                            response = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(input)}/cids/JSON`);
-                            if (response.ok) {
-                                const data = await response.json();
-                                if (data.IdentifierList?.CID?.[0]) foundCID = data.IdentifierList.CID[0];
-                            }
-                        } catch(e) {}
-                    }
                 }
 
                 // Get compound properties (name and SMILES)
@@ -5554,11 +5540,11 @@ H  -0.757000  0.586000  0.000000"></textarea>
         }
 
         function getSmartPackingValue() {
-            const packingMode = document.getElementById('smart-packing')?.value || '10';
+            const packingMode = document.getElementById('smart-packing')?.value || '20';
             if (packingMode === 'Other') {
-                return parseFloat(document.getElementById('smart-packing-custom')?.value) || 10;
+                return parseFloat(document.getElementById('smart-packing-custom')?.value) || 20;
             }
-            return parseFloat(packingMode) || 10;
+            return parseFloat(packingMode) || 20;
         }
 
         let isSyncingSmartBoxMirror = false;
@@ -5799,6 +5785,23 @@ H  -0.757000  0.586000  0.000000"></textarea>
             return molecules.reduce((sum, mol) => sum + calculateAscecMoleculeEffectiveVolume(mol), 0);
         }
 
+        // Detect whether the system has primary hydrogen bond potential
+        // (at least one donor AND one acceptor across all molecules)
+        function ascecSystemHasPrimaryHBonds() {
+            let totalDonors = 0, totalAcceptors = 0;
+            molecules.forEach(mol => {
+                if (!mol || !Array.isArray(mol.atoms)) return;
+                mol.atoms.forEach(atom => {
+                    const el = normalizeElementSymbol(atom);
+                    if (el === 'H') totalDonors += 1;
+                    else if (el === 'N' || el === 'O' || el === 'F') totalAcceptors += 1;
+                    else if (el === 'S') totalAcceptors += 0.5;
+                    else if (el === 'Cl') totalAcceptors += 0.3;
+                });
+            });
+            return totalDonors > 0 && totalAcceptors > 0;
+        }
+
         function getActiveAutoPackingPercent() {
             const smartAuto = document.getElementById('smart-use-packing')?.checked !== false;
             const advAuto = document.getElementById('adv-use-packing')?.checked !== false;
@@ -5813,7 +5816,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             }
 
             if (topAuto) {
-                const topValue = document.getElementById('smart-packing-top-input')?.value || '10';
+                const topValue = document.getElementById('smart-packing-top-input')?.value || '20';
                 if (topValue === 'Other') {
                     return parseFloat(document.getElementById('smart-packing-top-custom')?.value) || getSmartPackingValue();
                 }
@@ -5830,23 +5833,23 @@ H  -0.757000  0.586000  0.000000"></textarea>
             const packingFraction = Number(packingPercent) / 100;
             if (!Number.isFinite(packingFraction) || packingFraction <= 0) return null;
 
-            const totalEffectiveVolume = calculateAscecTotalEffectiveVolume();
+            let totalEffectiveVolume;
+
+            if (ascecSystemHasPrimaryHBonds()) {
+                // Method A: V_eff = V_mol + V_HB (hull + H-bond ghost cylinders)
+                totalEffectiveVolume = calculateAscecTotalEffectiveVolume();
+            } else {
+                // Method B: V_eff = L_diag³ (diagonal-derived volume from extents)
+                let totalExtent = 0;
+                molecules.forEach(mol => { totalExtent += calculateAscecMolecularExtent(mol); });
+                const Ldiag = (totalExtent * 2.0) / Math.sqrt(3.0);
+                totalEffectiveVolume = Ldiag * Ldiag * Ldiag;
+            }
+
             if (!Number.isFinite(totalEffectiveVolume) || totalEffectiveVolume <= 0) return null;
 
             const requiredBoxVolume = totalEffectiveVolume / packingFraction;
-            let boxLength = Math.pow(requiredBoxVolume, 1.0 / 3.0);
-
-            // Diagonal floor for small systems (<=3 molecules)
-            if (molecules.length <= 3) {
-                let totalExtent = 0;
-                molecules.forEach(mol => { totalExtent += calculateAscecMolecularExtent(mol); });
-                const diagonalBoxLength = (totalExtent * 1.5) / Math.sqrt(3.0);
-                if (diagonalBoxLength > boxLength) {
-                    boxLength = diagonalBoxLength;
-                }
-            }
-
-            return boxLength;
+            return Math.pow(requiredBoxVolume, 1.0 / 3.0);
         }
 
         function applyAscecAutoBoxLength(boxLength) {
@@ -5865,7 +5868,24 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
             updateBasicBoxViewer();
             updateBoxViewer();
+            updatePackingAssessment();
             syncSmartBoxControlsToTop();
+        }
+
+        function updatePackingAssessment() {
+            const el = document.getElementById('smart-packing-assessment');
+            if (!el) return;
+            const packing = getActiveAutoPackingPercent();
+            if (packing === null) { el.textContent = ''; return; }
+            const pf = packing / 100;
+            let text;
+            if (pf < 0.05)       text = 'Very dilute';
+            else if (pf < 0.15)  text = 'Dilute';
+            else if (pf < 0.25)  text = 'Moderate';
+            else if (pf < 0.35)  text = 'Dense';
+            else if (pf < 0.45)  text = 'Very dense';
+            else                 text = 'Extremely dense';
+            el.textContent = text;
         }
 
         function recomputeAscecAutoBoxFromPackingPercent(packingPercent) {
@@ -5964,7 +5984,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 if (topBox && mainBox) topBox.value = mainBox.value;
                 if (topAuto && mainAuto) topAuto.checked = mainAuto.checked;
                 if (topPackingInput && mainPacking) {
-                    topPackingInput.value = mainPacking.value || '10';
+                    topPackingInput.value = mainPacking.value || '20';
                     // Sync top custom editor visibility and value without scrolling
                     const topCustomInput = document.getElementById('smart-packing-top-custom');
                     if (mainPacking.value === 'Other') {
@@ -5975,8 +5995,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
                 if (advBox && mainBox) advBox.value = mainBox.value;
                 if (advPacking && mainPacking) {
-                    advPacking.value = mainPacking.value || '10';
-                    if (advPackingCustom && mainPackingCustom) advPackingCustom.value = mainPackingCustom.value || '10';
+                    advPacking.value = mainPacking.value || '20';
+                    if (advPackingCustom && mainPackingCustom) advPackingCustom.value = mainPackingCustom.value || '20';
                     toggleCustomInput('adv-packing', 'adv-packing-custom', false);
                 }
             } finally {
@@ -6008,13 +6028,14 @@ H  -0.757000  0.586000  0.000000"></textarea>
             }
 
             if (source === 'packing') {
-                const topVal = topPackingInput?.value || '10';
+                const topVal = topPackingInput?.value || '20';
                 if (topVal === 'Other') {
                     // When custom selected from top, sync main to custom mode without scrolling
                     if (mainPacking) mainPacking.value = 'Other';
                     toggleCustomInput('smart-packing', 'smart-packing-custom', false);
                     if (topAuto) topAuto.checked = true;
                     setAutoBoxFromSource('top');
+                    updatePackingAssessment();
                     return;
                 }
                 if (mainPacking) mainPacking.value = topVal;
@@ -6022,11 +6043,12 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 toggleCustomInput('smart-packing', 'smart-packing-custom', false);
                 if (topAuto) topAuto.checked = true;
                 setAutoBoxFromSource('top');
+                updatePackingAssessment();
                 return;
             }
 
             if (mainPacking && topPackingInput && topPackingInput.value !== 'Other') {
-                mainPacking.value = topPackingInput.value || '10';
+                mainPacking.value = topPackingInput.value || '20';
             }
             toggleCustomInput('smart-packing', 'smart-packing-custom', false);
             if (document.getElementById('smart-use-packing')?.checked !== false) {
@@ -6042,13 +6064,14 @@ H  -0.757000  0.586000  0.000000"></textarea>
         }
 
         function applyTopCustomPacking() {
-            const val = document.getElementById('smart-packing-top-custom')?.value || '10';
+            const val = document.getElementById('smart-packing-top-custom')?.value || '20';
             const mainPacking = document.getElementById('smart-packing');
             const mainCustom = document.getElementById('smart-packing-custom');
             if (mainPacking) mainPacking.value = 'Other';
             if (mainCustom) mainCustom.value = val;
             toggleCustomInput('smart-packing', 'smart-packing-custom', false);
             updateSmartBoxSize();
+            updatePackingAssessment();
         }
 
         function topPackingBackToList() {
@@ -7718,11 +7741,11 @@ end
         }
 
         function getAdvancedPackingValue() {
-            const mode = document.getElementById('adv-packing')?.value || '10';
+            const mode = document.getElementById('adv-packing')?.value || '20';
             if (mode === 'Other') {
-                return parseFloat(document.getElementById('adv-packing-custom')?.value) || 10;
+                return parseFloat(document.getElementById('adv-packing-custom')?.value) || 20;
             }
-            return parseFloat(mode) || 10;
+            return parseFloat(mode) || 20;
         }
 
         function toggleAdvPackingCustom() {
@@ -8415,18 +8438,11 @@ end
             if (!listEl) return;
 
             if (molecules.length === 0) {
-                listEl.style.setProperty('--type-chip-width', '20ch');
-                listEl.innerHTML = `
-                    <div class="smart-type-item smart-type-item-empty" title="No molecules yet">
-                        <div class="smart-type-main">
-                            <div class="smart-type-name">No molecules</div>
-                            <div class="smart-type-count-inline">(0)</div>
-                        </div>
-                        <span class="btn-type-remove btn-type-remove-ghost">X</span>
-                    </div>
-                `;
+                listEl.innerHTML = '';
+                listEl.style.display = 'none';
                 return;
             }
+            listEl.style.display = '';
 
             const summary = getMoleculeTypeSummary();
             const labels = Object.entries(summary).map(([name, info]) => `${name} (${info.count})`);
