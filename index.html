@@ -5842,7 +5842,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 // Method B: V_eff = L_diag³ (diagonal-derived volume from extents)
                 let totalExtent = 0;
                 molecules.forEach(mol => { totalExtent += calculateAscecMolecularExtent(mol); });
-                const Ldiag = (totalExtent * 2.0) / Math.sqrt(3.0);
+                const Ldiag = (totalExtent * 1.5) / Math.sqrt(3.0);
                 totalEffectiveVolume = Ldiag * Ldiag * Ldiag;
             }
 
