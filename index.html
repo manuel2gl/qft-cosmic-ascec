@@ -5573,15 +5573,17 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
         // 3D Convex Hull volume — matches Python scipy.spatial.ConvexHull
         // Uses incremental algorithm on 26 surface points per atom (same as Python)
+        // Fibonacci sphere: 50 nearly uniform directions (matches Python exactly)
+        // Avoids coplanar clusters that cause hull algorithm sensitivity
         const ASCEC_SURF_DIRS = (() => {
+            const N_SURF = 50;
+            const golden = (1.0 + Math.sqrt(5.0)) / 2.0;
             const dirs = [];
-            for (let dx = -1; dx <= 1; dx++)
-                for (let dy = -1; dy <= 1; dy++)
-                    for (let dz = -1; dz <= 1; dz++) {
-                        if (dx === 0 && dy === 0 && dz === 0) continue;
-                        const n = Math.sqrt(dx*dx + dy*dy + dz*dz);
-                        dirs.push([dx/n, dy/n, dz/n]);
-                    }
+            for (let i = 0; i < N_SURF; i++) {
+                const theta = Math.acos(1.0 - 2.0 * (i + 0.5) / N_SURF);
+                const phi = 2.0 * Math.PI * i / golden;
+                dirs.push([Math.sin(theta)*Math.cos(phi), Math.sin(theta)*Math.sin(phi), Math.cos(theta)]);
+            }
             return dirs;
         })();
 
@@ -5788,6 +5790,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
         // Detect whether the system has primary hydrogen bond potential
         // (at least one donor AND one acceptor across all molecules)
         function ascecSystemHasPrimaryHBonds() {
+            // Primary H-bond detection: N,O,F=1; S=0.5; Cl=0.3 (matches Python)
             let totalDonors = 0, totalAcceptors = 0;
             molecules.forEach(mol => {
                 if (!mol || !Array.isArray(mol.atoms)) return;
