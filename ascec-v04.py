@@ -10367,30 +10367,42 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             if mol_candidates:
                 source_mol = mol_candidates[-1]
 
+        # Choose output naming based on whether the dataset had frequency calculations.
+        # Opt-only → possible_final_ensemble (no true minima can be assured).
+        # Freq mode → final_ensemble (original behaviour).
+        opt_only = getattr(context, 'similarity_opt_only', False)
+        if opt_only:
+            ensemble_name = 'possible_final_ensemble'
+        else:
+            ensemble_name = 'final_ensemble'
+
         copied_any = False
         copied_xyz = False
         copied_mol = False
         if source_xyz and os.path.exists(source_xyz):
-            shutil.copy2(source_xyz, os.path.join(input_root, 'final_ensemble.xyz'))
+            shutil.copy2(source_xyz, os.path.join(input_root, f'{ensemble_name}.xyz'))
             copied_any = True
             copied_xyz = True
         if source_mol and os.path.exists(source_mol):
-            shutil.copy2(source_mol, os.path.join(input_root, 'final_ensemble.mol'))
+            shutil.copy2(source_mol, os.path.join(input_root, f'{ensemble_name}.mol'))
             copied_any = True
             copied_mol = True
 
         if copied_any:
+            if opt_only:
+                print("Warning: No true minima can be assured without frequency calculations in the final ensemble.")
             if context.workflow_verbose_level >= 1:
                 if copied_xyz:
-                    print(f"Final ensemble copied to: {os.path.join(input_root, 'final_ensemble.xyz')}")
+                    print(f"{ensemble_name.replace('_', ' ').capitalize()} copied to: {os.path.join(input_root, f'{ensemble_name}.xyz')}")
                 if copied_mol:
-                    print(f"Final ensemble copied to: {os.path.join(input_root, 'final_ensemble.mol')}")
+                    print(f"{ensemble_name.replace('_', ' ').capitalize()} copied to: {os.path.join(input_root, f'{ensemble_name}.mol')}")
         else:
             print(f"Warning: No final combined ensemble files found in {source_dir}.")
 
     context = WorkflowContext(input_file=input_file)
     context.is_workflow = True  # We're in workflow mode
     context.workflow_verbose_level = parse_verbosity_level(sys.argv)
+    context.similarity_opt_only = False  # Set to True if similarity detects opt-only dataset
     
     # Read configuration from input file
     # - Line 9: QM program index and alias (e.g., "2 orca")
@@ -10977,7 +10989,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         if result != 0:
                             print(f"\nError: Similarity failed with code {result}")
                             return result
-                        
+
+                        # In opt-only mode, no true minima / no critical structures → skip redo.
+                        if getattr(context, 'similarity_opt_only', False):
+                            break
+
                         # Parse similarity results from clustering_summary.txt
                         summary_file = os.path.join(context.similarity_dir, "clustering_summary.txt")
                         if os.path.exists(summary_file):
@@ -11481,7 +11497,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         if result != 0:
                             print(f"\nError: Similarity failed with code {result}")
                             return result
-                        
+
+                        # In opt-only mode, no true minima / no critical structures → skip redo.
+                        if getattr(context, 'similarity_opt_only', False):
+                            break
+
                         # Parse similarity results from clustering_summary.txt
                         summary_file = os.path.join(context.similarity_dir, "clustering_summary.txt")
                         if os.path.exists(summary_file):
@@ -14254,7 +14274,8 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             'Only .out files found',
             'Processing ',
             'folder(s) for files matching',
-            'Created motifs dendrogram'
+            'Created motifs dendrogram',
+            'SIMILARITY_OPT_ONLY_MODE'
         ]
         
         # Lines that should have blank line BEFORE them
@@ -14291,8 +14312,11 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                     if match:
                         folder_name = match.group(1)
                         context.sim_folder = f"{similarity_base}/{folder_name}"
-                
-                
+
+                # Detect opt-only mode (no frequency calculations in dataset)
+                if 'SIMILARITY_OPT_ONLY_MODE' in line:
+                    context.similarity_opt_only = True
+
                 # Skip printing in non-verbose mode (but still collect lines)
                 if not verbose:
                     continue
