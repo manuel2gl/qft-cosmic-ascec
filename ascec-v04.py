@@ -2561,8 +2561,14 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                             f.write(f"    Inputs from:      {xyz_source}\n")
                         if 'completed' in result and 'total' in result:
                             f.write(f"    Completed:        {result['completed']}/{result['total']} calculations\n")
-                        # Calculate and show mean execution time
-                        if wall_time and 'completed' in result and result['completed'] > 0:
+                        if 'concurrent_jobs' in result:
+                            f.write(f"    Concurrent:       {result['concurrent_jobs']} jobs\n")
+                        # Mean exec time: prefer total_cpu_time/completed (accurate with concurrency)
+                        _total_cpu = result.get('total_cpu_time')
+                        if _total_cpu and 'completed' in result and result['completed'] > 0:
+                            mean_time = _total_cpu / result['completed']
+                            f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
+                        elif wall_time and 'completed' in result and result['completed'] > 0:
                             mean_time = wall_time / result['completed']
                             f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
                         if 'similarity_folder' in result and result['similarity_folder']:
@@ -2596,72 +2602,76 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                             motif_label = "Unique Motifs" if ('output_dir' in result and 'umotif' in str(result.get('output_dir', ''))) else "Motifs"
                             label_col = f"    {motif_label}:"
                             f.write(f"{label_col:<22}{motifs_created} representatives\n")
-                        
-                        # Get threshold info for validation output
-                        threshold_met = result.get('threshold_met', True)
-                        threshold_type = result.get('threshold_type', 'critical')
-                        threshold_value = result.get('threshold_value')
-                        attempts = result.get('attempts', 0)
-                        
-                        # Check if there were redo attempts (initial values differ from final)
-                        has_redo = 'initial_critical' in result or 'initial_skipped' in result
-                        
-                        if has_redo and attempts > 0:
-                            # Show Initial validation
-                            f.write("\n    Initial validation\n")
-                            if 'initial_critical' in result:
-                                init_crit = result['initial_critical']
-                                init_crit_count = result.get('initial_critical_count', 0)
-                                f.write(f"    Critical:         {init_crit}% ({init_crit_count} structures)\n")
-                            if 'initial_skipped' in result:
-                                init_skip = result['initial_skipped']
-                                init_skip_count = result.get('initial_skipped_count', 0)
-                                f.write(f"    Skipped:          {init_skip}% ({init_skip_count} structures)\n")
-                            
-                            if threshold_value is not None:
-                                actual_init = result.get(f'initial_{threshold_type}', 'N/A')
-                                f.write(f"\n    Target: {threshold_type} ≤ {threshold_value}% | Actual: {actual_init}%\n")
-                            
-                            # Show Final validation
-                            f.write(f"\n    Final validation ({attempts} Redo Attempts)\n")
-                            crit_pct = live_critical_pct if live_critical_pct is not None else result.get('critical_pct')
-                            crit_count = live_critical_count if live_critical_count is not None else result.get('critical_count', 0)
-                            if crit_pct is not None:
-                                f.write(f"    Critical:         {crit_pct}% ({crit_count} structures)\n")
-                            skip_pct = live_skipped_pct if live_skipped_pct is not None else result.get('skipped_pct')
-                            skip_count = live_skipped_count if live_skipped_count is not None else result.get('skipped_count', 0)
-                            if skip_pct is not None:
-                                f.write(f"    Skipped:          {skip_pct}% ({skip_count} structures)\n")
-                            
-                            if threshold_value is not None:
-                                actual_final = result.get(f'{threshold_type}_pct', 'N/A')
-                                f.write(f"\n    Target: {threshold_type} ≤ {threshold_value}% | Actual: {actual_final}%\n")
-                            
-                            if threshold_met:
-                                f.write(f"\n    Validation: Step [{step_num-1}] passed ✓\n")
-                            else:
-                                f.write(f"\n    Max redo attempts ({attempts}) reached\n")
-                        else:
-                            # No redo - show single validation
-                            f.write("\n")
-                            crit_pct = live_critical_pct if live_critical_pct is not None else result.get('critical_pct')
-                            crit_count = live_critical_count if live_critical_count is not None else result.get('critical_count', 0)
-                            if crit_pct is not None:
-                                f.write(f"    Critical:         {crit_pct}% ({crit_count} structures)\n")
-                            skip_pct = live_skipped_pct if live_skipped_pct is not None else result.get('skipped_pct')
-                            skip_count = live_skipped_count if live_skipped_count is not None else result.get('skipped_count', 0)
-                            if skip_pct is not None:
-                                f.write(f"    Skipped:          {skip_pct}% ({skip_count} structures)\n")
-                            
-                            # Threshold validation
-                            if threshold_value is not None:
-                                actual = result.get(f'{threshold_type}_pct', 'N/A')
+
+                        # In opt-only mode there are no true minima, so critical/skipped/validation
+                        # metrics are not meaningful and must be suppressed.
+                        _sim_opt_only = result.get('opt_only', False)
+                        if not _sim_opt_only:
+                            # Get threshold info for validation output
+                            threshold_met = result.get('threshold_met', True)
+                            threshold_type = result.get('threshold_type', 'critical')
+                            threshold_value = result.get('threshold_value')
+                            attempts = result.get('attempts', 0)
+
+                            # Check if there were redo attempts (initial values differ from final)
+                            has_redo = 'initial_critical' in result or 'initial_skipped' in result
+
+                            if has_redo and attempts > 0:
+                                # Show Initial validation
+                                f.write("\n    Initial validation\n")
+                                if 'initial_critical' in result:
+                                    init_crit = result['initial_critical']
+                                    init_crit_count = result.get('initial_critical_count', 0)
+                                    f.write(f"    Critical:         {init_crit}% ({init_crit_count} structures)\n")
+                                if 'initial_skipped' in result:
+                                    init_skip = result['initial_skipped']
+                                    init_skip_count = result.get('initial_skipped_count', 0)
+                                    f.write(f"    Skipped:          {init_skip}% ({init_skip_count} structures)\n")
+
+                                if threshold_value is not None:
+                                    actual_init = result.get(f'initial_{threshold_type}', 'N/A')
+                                    f.write(f"\n    Target: {threshold_type} ≤ {threshold_value}% | Actual: {actual_init}%\n")
+
+                                # Show Final validation
+                                f.write(f"\n    Final validation ({attempts} Redo Attempts)\n")
+                                crit_pct = live_critical_pct if live_critical_pct is not None else result.get('critical_pct')
+                                crit_count = live_critical_count if live_critical_count is not None else result.get('critical_count', 0)
+                                if crit_pct is not None:
+                                    f.write(f"    Critical:         {crit_pct}% ({crit_count} structures)\n")
+                                skip_pct = live_skipped_pct if live_skipped_pct is not None else result.get('skipped_pct')
+                                skip_count = live_skipped_count if live_skipped_count is not None else result.get('skipped_count', 0)
+                                if skip_pct is not None:
+                                    f.write(f"    Skipped:          {skip_pct}% ({skip_count} structures)\n")
+
+                                if threshold_value is not None:
+                                    actual_final = result.get(f'{threshold_type}_pct', 'N/A')
+                                    f.write(f"\n    Target: {threshold_type} ≤ {threshold_value}% | Actual: {actual_final}%\n")
+
                                 if threshold_met:
                                     f.write(f"\n    Validation: Step [{step_num-1}] passed ✓\n")
-                                    f.write(f"    {threshold_type.capitalize()} ≤ {threshold_value}%\n")
                                 else:
-                                    f.write(f"\n    Validation: Step [{step_num-1}] threshold exceeded!\n")
-                                    f.write(f"    Target: {threshold_type} ≤ {threshold_value}% | Actual: {actual}%\n")
+                                    f.write(f"\n    Max redo attempts ({attempts}) reached\n")
+                            else:
+                                # No redo - show single validation
+                                f.write("\n")
+                                crit_pct = live_critical_pct if live_critical_pct is not None else result.get('critical_pct')
+                                crit_count = live_critical_count if live_critical_count is not None else result.get('critical_count', 0)
+                                if crit_pct is not None:
+                                    f.write(f"    Critical:         {crit_pct}% ({crit_count} structures)\n")
+                                skip_pct = live_skipped_pct if live_skipped_pct is not None else result.get('skipped_pct')
+                                skip_count = live_skipped_count if live_skipped_count is not None else result.get('skipped_count', 0)
+                                if skip_pct is not None:
+                                    f.write(f"    Skipped:          {skip_pct}% ({skip_count} structures)\n")
+
+                                # Threshold validation
+                                if threshold_value is not None:
+                                    actual = result.get(f'{threshold_type}_pct', 'N/A')
+                                    if threshold_met:
+                                        f.write(f"\n    Validation: Step [{step_num-1}] passed ✓\n")
+                                        f.write(f"    {threshold_type.capitalize()} ≤ {threshold_value}%\n")
+                                    else:
+                                        f.write(f"\n    Validation: Step [{step_num-1}] threshold exceeded!\n")
+                                        f.write(f"    Target: {threshold_type} ≤ {threshold_value}% | Actual: {actual}%\n")
                     
                     elif stage_type == 'Optimization':
                         if 'xyz_source' in result and result['xyz_source']:
@@ -2669,8 +2679,14 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                             f.write(f"    Inputs from:      {xyz_source}\n")
                         if 'completed' in result and 'total' in result:
                             f.write(f"    Completed:        {result['completed']}/{result['total']} optimizations\n")
-                        # Calculate and show mean execution time
-                        if wall_time and 'completed' in result and result['completed'] > 0:
+                        if 'concurrent_jobs' in result:
+                            f.write(f"    Concurrent:       {result['concurrent_jobs']} jobs\n")
+                        # Mean exec time: prefer total_cpu_time/completed (accurate with concurrency)
+                        _total_cpu = result.get('total_cpu_time')
+                        if _total_cpu and 'completed' in result and result['completed'] > 0:
+                            mean_time = _total_cpu / result['completed']
+                            f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
+                        elif wall_time and 'completed' in result and result['completed'] > 0:
                             mean_time = wall_time / result['completed']
                             f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
                         if 'similarity_folder' in result and result['similarity_folder']:
@@ -2681,8 +2697,14 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                             f.write(f"    Inputs from:      {format_concise_path(result['motifs_source'])}\n")
                         if 'completed' in result and 'total' in result:
                             f.write(f"    Completed:        {result['completed']}/{result['total']} refinements\n")
-                        # Calculate and show mean execution time
-                        if wall_time and 'completed' in result and result['completed'] > 0:
+                        if 'concurrent_jobs' in result:
+                            f.write(f"    Concurrent:       {result['concurrent_jobs']} jobs\n")
+                        # Mean exec time: prefer total_cpu_time/completed (accurate with concurrency)
+                        _total_cpu = result.get('total_cpu_time')
+                        if _total_cpu and 'completed' in result and result['completed'] > 0:
+                            mean_time = _total_cpu / result['completed']
+                            f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
+                        elif wall_time and 'completed' in result and result['completed'] > 0:
                             mean_time = wall_time / result['completed']
                             f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
                         if 'similarity_folder' in result and result['similarity_folder']:
@@ -7951,7 +7973,7 @@ def format_wall_time(seconds):
     # Return only the first two parts (most significant)
     return ", ".join(time_parts[:2])
 
-def summarize_calculations(directory=".", file_types=None):
+def summarize_calculations(directory=".", file_types=None, actual_wall_time=None):
     """Create summary of calculations for ORCA (.out) and/or Gaussian (.log) files."""
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -8052,7 +8074,8 @@ def summarize_calculations(directory=".", file_types=None):
                 outfile.write(f"  Mean execution time: {format_mean_time(all_results['total_time'] / all_results['job_count'])}\n")
                 outfile.write(f"  Shortest execution time: {format_time_summary(all_results['min_time'], include_days=False)}\n")
                 outfile.write(f"  Longest execution time: {format_time_summary(all_results['max_time'], include_days=False)}\n")
-                outfile.write(f"  Total wall time: {format_wall_time(all_results['total_time'])}\n")
+                if actual_wall_time is not None:
+                    outfile.write(f"  Total wall time: {format_wall_time(actual_wall_time)}\n")
             outfile.write("-" * 40 + "\n")
             if all_results['cycles_count'] > 0:
                 outfile.write(f"  Mean cycles: {all_results['total_cycles'] // all_results['cycles_count']}\n")
@@ -8341,7 +8364,7 @@ def group_files_by_base_with_tracking(directory='.'):
     return tracking
 
 
-def create_summary_with_tracking(directory, file_types_override: Optional[List[str]] = None):
+def create_summary_with_tracking(directory, file_types_override: Optional[List[str]] = None, actual_wall_time=None):
     """Create summaries and return list of created files."""
     created_files = []
     
@@ -8369,8 +8392,8 @@ def create_summary_with_tracking(directory, file_types_override: Optional[List[s
         
         # Create summaries for found file types
         if file_types_to_process:
-            num_summaries = summarize_calculations(directory, file_types_to_process)
-            
+            num_summaries = summarize_calculations(directory, file_types_to_process, actual_wall_time=actual_wall_time)
+
             # Check which summary files were created
             if 'orca' in file_types_to_process and os.path.exists("orca_summary.txt"):
                 created_files.append("orca_summary.txt")
@@ -8378,7 +8401,7 @@ def create_summary_with_tracking(directory, file_types_override: Optional[List[s
                 created_files.append("gaussian_summary.txt")
     except Exception:
         pass
-    
+
     return created_files
 
 
@@ -10873,7 +10896,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     max_redos = 3  # Default: 3 redo attempts for critical structures
                     max_critical = 0  # Default: 0% critical structures allowed (retry all)
                     max_skipped = None   # Not set by default
-                    concurrent_jobs = 1  # Default: serial (web UI sets stage-specific defaults)
+                    concurrent_jobs = 4  # Default: 4 concurrent QM jobs (must match execute_optimization_stage)
 
                     for arg in optimization_args:
                         if arg.startswith('--redo='):
@@ -11095,16 +11118,21 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             calc_result['completed'] = context.optimization_completed
                         if hasattr(context, 'optimization_total'):
                             calc_result['total'] = context.optimization_total
-                        
+
+                        # Add concurrent jobs count and total CPU time for protocol summary
+                        calc_result['concurrent_jobs'] = concurrent_jobs
+                        if hasattr(context, 'optimization_total_cpu_time'):
+                            calc_result['total_cpu_time'] = context.optimization_total_cpu_time
+
                         # Add similarity folder info if available
                         if hasattr(context, 'optimization_sim_folder'):
                             calc_result['similarity_folder'] = context.optimization_sim_folder
-                        
-                        update_protocol_cache(calc_key, 'completed', 
+
+                        update_protocol_cache(calc_key, 'completed',
                                             result=calc_result, cache_file=cache_file)
-                        
+
                         sim_result = {}
-                        
+
                         # Store directories for stage memory
                         sim_dir = context.similarity_dir if context.similarity_dir else "similarity"
                         optimization_dir_path = context.optimization_stage_dir if context.optimization_stage_dir else "calculation"
@@ -11160,10 +11188,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             sim_result['threshold_type'] = 'skipped'
                             sim_result['threshold_value'] = max_skipped
                             sim_result['threshold_met'] = (final_skipped is not None and final_skipped <= max_skipped)
-                        
-                        update_protocol_cache(sim_key, 'completed', 
+
+                        # Flag opt-only mode so protocol summary suppresses critical/skipped display
+                        if getattr(context, 'similarity_opt_only', False):
+                            sim_result['opt_only'] = True
+
+                        update_protocol_cache(sim_key, 'completed',
                                             result=sim_result, cache_file=cache_file)
-                    
+
                     # Check if workflow should pause after optimization stage
                     if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
                         return 0  # Paused after optimization
@@ -11341,15 +11373,19 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             threshold_val = float(arg.split('=')[1])
                             sim_result['threshold'] = threshold_val
                             break
-                    
-                    update_protocol_cache(sim_key, 'completed', 
+
+                    # Flag opt-only mode so protocol summary suppresses critical/skipped display
+                    if getattr(context, 'similarity_opt_only', False):
+                        sim_result['opt_only'] = True
+
+                    update_protocol_cache(sim_key, 'completed',
                                         result=sim_result, cache_file=cache_file)
-                
+
                 # Check if workflow should pause after this stage
                 if result == 0:
                     if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
                         return 0  # Paused successfully
-                
+
                 stage_idx += 1
                 completed_stage_count = stage_num
                 context.completed_stage_count = completed_stage_count
@@ -11600,11 +11636,16 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             opt_result['completed'] = context.refinement_completed
                         if hasattr(context, 'refinement_total') and context.refinement_total is not None:
                             opt_result['total'] = context.refinement_total
-                        
+
+                        # Add concurrent jobs count and total CPU time for protocol summary
+                        opt_result['concurrent_jobs'] = concurrent_jobs
+                        if hasattr(context, 'refinement_total_cpu_time'):
+                            opt_result['total_cpu_time'] = context.refinement_total_cpu_time
+
                         # Add similarity folder info if available
                         if hasattr(context, 'refinement_sim_folder') and context.refinement_sim_folder:
                             opt_result['similarity_folder'] = context.refinement_sim_folder
-                        
+
                         update_protocol_cache(opt_key, 'completed', result=opt_result, cache_file=cache_file)
                         
                         sim_result = {}
@@ -11668,9 +11709,13 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             sim_result['threshold_type'] = 'skipped'
                             sim_result['threshold_value'] = max_skipped
                             sim_result['threshold_met'] = (final_skipped is not None and final_skipped <= max_skipped)
-                        
+
+                        # Flag opt-only mode so protocol summary suppresses critical/skipped display
+                        if getattr(context, 'similarity_opt_only', False):
+                            sim_result['opt_only'] = True
+
                         update_protocol_cache(sim_key, 'completed', result=sim_result, cache_file=cache_file)
-                    
+
                     # Check if workflow should pause after refinement stage
                     if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
                         return 0  # Paused after refinement
@@ -13886,6 +13931,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                     })
 
                 # Run calculations with concurrency
+                _opt_wall_start = time.time()
                 num_completed, num_failed, failed_calculations = _run_qm_calculations_with_concurrency(
                     pending_jobs=pending_jobs,
                     concurrent_jobs=concurrent_jobs,
@@ -13898,6 +13944,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                     cache_file=cache_file,
                     stage_key_prefix='calculation',
                 )
+                context.optimization_job_wall_time = time.time() - _opt_wall_start
                 
                 # Print status (not "results" - that's redundant)
                 # Recalculate num_inputs from the updated set to reflect newly completed calculations
@@ -13968,11 +14015,12 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                             import io
                             import contextlib
                             f = io.StringIO()
+                            _actual_wall = getattr(context, 'optimization_job_wall_time', None)
                             with contextlib.redirect_stdout(f):
                                 group_files_by_base_with_tracking(".")
                                 combine_xyz_files()
                                 create_combined_mol()
-                                create_summary_with_tracking(".")
+                                create_summary_with_tracking(".", actual_wall_time=_actual_wall)
                                 
                                 # Reuse stage folder for redo/resume and write into fixed target folder.
                                 is_redo = hasattr(context, 'recalculated_files') and bool(context.recalculated_files)
@@ -14015,6 +14063,21 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                         print(f"⚠ Warning: Could not organize files: {e}")
                     finally:
                         os.chdir(saved_cwd)
+
+                    # Parse total CPU time from orca_summary.txt for protocol summary mean exec time
+                    _orca_sum_path = os.path.join(optimization_dir_path, "orca_summary.txt")
+                    if os.path.exists(_orca_sum_path):
+                        try:
+                            with open(_orca_sum_path, 'r') as _sf:
+                                _sc = _sf.read()
+                            _tm = re.search(r'Total execution time:\s+(\d+):(\d+):(\d+\.\d+)', _sc)
+                            if _tm:
+                                context.optimization_total_cpu_time = (
+                                    int(_tm.group(1)) * 3600 + int(_tm.group(2)) * 60 + float(_tm.group(3))
+                                )
+                        except Exception:
+                            pass
+
             except Exception as e:
                 print(f"✗ Error running calculations: {e}")
                 return 1
@@ -15160,6 +15223,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             })
 
         # Run calculations with concurrency
+        _ref_wall_start = time.time()
         num_completed, num_failed, failed_optimizations = _run_qm_calculations_with_concurrency(
             pending_jobs=pending_jobs,
             concurrent_jobs=concurrent_jobs,
@@ -15172,6 +15236,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             cache_file=cache_file,
             stage_key_prefix='optimization',
         )
+        context.refinement_job_wall_time = time.time() - _ref_wall_start
 
         # Print status
         # Recalculate num_inputs from the updated set to reflect newly completed optimizations
@@ -15255,12 +15320,13 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                 import io
                 import contextlib
                 f = io.StringIO()
+                _ref_actual_wall = getattr(context, 'refinement_job_wall_time', None)
                 with contextlib.redirect_stdout(f):
                     group_files_by_base_with_tracking(".")
                     combine_xyz_files()
                     create_combined_mol()
-                    create_summary_with_tracking(".")
-                    
+                    create_summary_with_tracking(".", actual_wall_time=_ref_actual_wall)
+
                     # Collect output files - reuse existing similarity folder in redo mode
                     # But first, we need to temporarily filter excluded files
                     # Save original find_out_files function
@@ -15351,13 +15417,28 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                 print(f"⚠ Warning: Could not organize files: {e}")
             finally:
                     os.chdir(saved_cwd)
+
+            # Parse total CPU time from orca_summary.txt for protocol summary mean exec time
+            _ref_sum_path = os.path.join(opt_dir, "orca_summary.txt")
+            if os.path.exists(_ref_sum_path):
+                try:
+                    with open(_ref_sum_path, 'r') as _sf:
+                        _sc = _sf.read()
+                    _tm = re.search(r'Total execution time:\s+(\d+):(\d+):(\d+\.\d+)', _sc)
+                    if _tm:
+                        context.refinement_total_cpu_time = (
+                            int(_tm.group(1)) * 3600 + int(_tm.group(2)) * 60 + float(_tm.group(3))
+                        )
+                except Exception:
+                    pass
+
         else:
             print("✗ No output files found")
             return 1
     else:
         print(f"Warning: No launcher script found in {opt_dir}/")
         return 1
-    
+
     return 0
 
 def main_ascec_integrated():
