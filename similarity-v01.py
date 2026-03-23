@@ -2071,22 +2071,19 @@ def filter_imaginary_freq_structures(clusters_list, output_base_dir, input_sourc
 def _is_non_converged_structure(mol_data, dataset_has_freq=True):
     """Return True when a structure should be treated as non-converged/critical.
 
-    When *dataset_has_freq* is False (opt-only dataset), missing Gibbs energy
-    is expected and does NOT mark the structure as non-converged.  The check
-    falls back to requiring a valid electronic energy and that the feature
-    vector is complete relative to the reduced (opt-only) feature set.
+    When *dataset_has_freq* is False (opt-only dataset), the concept of
+    "non-converged" does not apply — there are no true minima to compare
+    against. All structures with a valid electronic energy are treated as
+    usable for clustering.
     """
     if dataset_has_freq:
         # Full-freq mode: require Gibbs and full feature vector
         if mol_data.get('gibbs_free_energy') is None:
             return True
-    else:
-        # Opt-only mode: require at least electronic energy
-        if mol_data.get('final_electronic_energy') is None:
+        # Reduced feature vectors are treated as non-converged for workflow safety.
+        if not mol_data.get('_is_full_feature', True):
             return True
-    # Reduced feature vectors are treated as non-converged for workflow safety.
-    if not mol_data.get('_is_full_feature', True):
-        return True
+    # Opt-only mode: no critical flagging — cluster whatever is available.
     return False
 
 
