@@ -86,6 +86,27 @@ def print_version_banner():
 # Global variables
 VERBOSE = False  # Control verbosity of output
 _CPU_COUNT_CACHE = None  # Cache CPU count to avoid repeated calls
+_DATASET_HAS_FREQ = True  # Set by perform_clustering_and_analysis; True = freq mode (original), False = opt-only
+
+
+def _sorting_energy(mol_data):
+    """Return the energy value to use for sorting/selection of representatives.
+
+    In freq mode (_DATASET_HAS_FREQ=True): uses Gibbs free energy (original behaviour).
+    In opt-only mode (_DATASET_HAS_FREQ=False): uses electronic energy.
+    Returns float('inf') when no valid energy is found so the structure sorts last.
+    """
+    if _DATASET_HAS_FREQ:
+        g = mol_data.get('gibbs_free_energy')
+        if g is not None:
+            return g
+        return float('inf')
+    else:
+        e = mol_data.get('final_electronic_energy')
+        if e is not None:
+            return e
+        return float('inf')
+
 
 def hartree_to_kcal_mol(energy_hartree):
     """Convert energy from Hartree to kcal/mol"""
@@ -1630,7 +1651,7 @@ def post_process_clusters_with_rmsd(initial_clusters, rmsd_validation_threshold)
         # Select the lowest energy configuration as the representative for this property cluster
 
         representative_conf = min(current_property_cluster,
-                                  key=lambda x: (x.get('gibbs_free_energy') if x.get('gibbs_free_energy') is not None else float('inf'), x['filename']))
+                                  key=lambda x: (_sorting_energy(x), x['filename']))
 
         current_validated_sub_cluster = [representative_conf] # Start new validated cluster with representative
         processed_members_filenames = {representative_conf['filename']}
@@ -2047,17 +2068,29 @@ def filter_imaginary_freq_structures(clusters_list, output_base_dir, input_sourc
     return filtered_clusters, skipped_info
 
 
-def _is_non_converged_structure(mol_data):
-    """Return True when a structure should be treated as non-converged/critical."""
-    if mol_data.get('gibbs_free_energy') is None:
-        return True
+def _is_non_converged_structure(mol_data, dataset_has_freq=True):
+    """Return True when a structure should be treated as non-converged/critical.
+
+    When *dataset_has_freq* is False (opt-only dataset), missing Gibbs energy
+    is expected and does NOT mark the structure as non-converged.  The check
+    falls back to requiring a valid electronic energy and that the feature
+    vector is complete relative to the reduced (opt-only) feature set.
+    """
+    if dataset_has_freq:
+        # Full-freq mode: require Gibbs and full feature vector
+        if mol_data.get('gibbs_free_energy') is None:
+            return True
+    else:
+        # Opt-only mode: require at least electronic energy
+        if mol_data.get('final_electronic_energy') is None:
+            return True
     # Reduced feature vectors are treated as non-converged for workflow safety.
     if not mol_data.get('_is_full_feature', True):
         return True
     return False
 
 
-def filter_non_converged_structures(clusters_list):
+def filter_non_converged_structures(clusters_list, dataset_has_freq=True):
     """
     Remove non-converged structures from cluster candidates.
 
@@ -2071,8 +2104,8 @@ def filter_non_converged_structures(clusters_list):
         if not cluster:
             continue
 
-        non_converged = [m for m in cluster if _is_non_converged_structure(m)]
-        converged = [m for m in cluster if not _is_non_converged_structure(m)]
+        non_converged = [m for m in cluster if _is_non_converged_structure(m, dataset_has_freq)]
+        converged = [m for m in cluster if not _is_non_converged_structure(m, dataset_has_freq)]
 
         if non_converged:
             critical_non_converged.extend(non_converged)
@@ -2223,7 +2256,7 @@ def perform_second_rmsd_clustering(cluster_members_to_refine, rmsd_threshold):
         if not sub_cluster_members: continue
 
         sub_cluster_rep = min(sub_cluster_members,
-                              key=lambda x: (x.get('gibbs_free_energy') if x.get('gibbs_free_energy') is not None else float('inf'), x['filename']))
+                              key=lambda x: (_sorting_energy(x), x['filename']))
         
         sub_cluster_rmsd_listing = []
         if sub_cluster_rep.get('final_geometry_coords') is not None and sub_cluster_rep.get('final_geometry_atomnos') is not None:
@@ -2604,20 +2637,26 @@ def write_cluster_dat_file(dat_file_prefix, cluster_members_data, output_base_di
 
 def write_xyz_file(mol_data, filename):
     """
-    Writes atomic coordinates to an XYZ file, including Gibbs Free Energy in the comment line.
+    Writes atomic coordinates to an XYZ file with energy in the comment line.
+    Freq mode: Gibbs free energy (original).  Opt-only mode: electronic energy.
     """
     atomnos = mol_data.get('final_geometry_atomnos')
     atomcoords = mol_data.get('final_geometry_coords')
-    gibbs_free_energy = mol_data.get('gibbs_free_energy')
-    
+
     if atomnos is None or atomcoords is None or len(atomnos) == 0:
         print(f"  WARNING: Cannot write XYZ for {os.path.basename(filename)}: Missing geometry data.")
         return
 
     base_name = os.path.splitext(os.path.basename(mol_data['filename']))[0]
-    
-    gibbs_str = f"{gibbs_free_energy:.6f} Hartree ({hartree_to_kcal_mol(gibbs_free_energy):.2f} kcal/mol, {hartree_to_ev(gibbs_free_energy):.2f} eV)" if gibbs_free_energy is not None else "N/A"
-    comment_line = f"{base_name} (G = {gibbs_str})" # Updated comment format
+
+    if _DATASET_HAS_FREQ:
+        gibbs_free_energy = mol_data.get('gibbs_free_energy')
+        gibbs_str = f"{gibbs_free_energy:.6f} Hartree ({hartree_to_kcal_mol(gibbs_free_energy):.2f} kcal/mol, {hartree_to_ev(gibbs_free_energy):.2f} eV)" if gibbs_free_energy is not None else "N/A"
+        comment_line = f"{base_name} (G = {gibbs_str})"
+    else:
+        electronic_energy = mol_data.get('final_electronic_energy')
+        elec_str = f"{electronic_energy:.6f} Hartree ({hartree_to_kcal_mol(electronic_energy):.2f} kcal/mol, {hartree_to_ev(electronic_energy):.2f} eV)" if electronic_energy is not None else "N/A"
+        comment_line = f"{base_name} (E = {elec_str})"
 
     symbols = [atomic_number_to_symbol(n) for n in atomnos]
 
@@ -2627,7 +2666,7 @@ def write_xyz_file(mol_data, filename):
         for i in range(len(atomnos)):
             f.write(f"{symbols[i]:<2} {atomcoords[i][0]:10.6f} {atomcoords[i][1]:10.6f} {atomcoords[i][2]:10.6f}\n")
 
-def create_unique_motifs_folder(all_clusters_data, output_base_dir, openbabel_alias="obabel", cluster_id_mapping=None, output_prefix='motif', folder_prefix='motifs', boltzmann_data=None):
+def create_unique_motifs_folder(all_clusters_data, output_base_dir, openbabel_alias="obabel", cluster_id_mapping=None, output_prefix='motif', folder_prefix='motifs', boltzmann_data=None, dataset_has_freq=True):
     """
     Creates a motifs/umotifs folder containing the lowest energy representative structure from each cluster.
     Also creates a combined XYZ file with all representatives and attempts to convert to MOL format.
@@ -2670,12 +2709,21 @@ def create_unique_motifs_folder(all_clusters_data, output_base_dir, openbabel_al
             continue
         
         # CRITICAL: No motif can have imaginary frequencies or non-converged data.
-        valid_members = [
-            m for m in cluster_members
-            if not m.get('_has_imaginary_freqs', False)
-            and m.get('gibbs_free_energy') is not None
-            and m.get('_is_full_feature', True)
-        ]
+        if dataset_has_freq:
+            valid_members = [
+                m for m in cluster_members
+                if not m.get('_has_imaginary_freqs', False)
+                and m.get('gibbs_free_energy') is not None
+                and m.get('_is_full_feature', True)
+            ]
+        else:
+            # Opt-only mode: require electronic energy and full (reduced) feature vector
+            valid_members = [
+                m for m in cluster_members
+                if not m.get('_has_imaginary_freqs', False)
+                and m.get('final_electronic_energy') is not None
+                and m.get('_is_full_feature', True)
+            ]
         
         if not valid_members:
             # All members are invalid for representative selection.
@@ -2684,7 +2732,7 @@ def create_unique_motifs_folder(all_clusters_data, output_base_dir, openbabel_al
             
         # Find the lowest energy representative from valid (non-imaginary) members only
         representative = min(valid_members,
-                           key=lambda x: (x.get('gibbs_free_energy') if x.get('gibbs_free_energy') is not None else float('inf'), x['filename']))
+                           key=lambda x: (_sorting_energy(x), x['filename']))
         
         # Get the cluster ID for this representative
         cluster_id = cluster_id_mapping[cluster_idx] if cluster_id_mapping else cluster_idx + 1
@@ -2713,10 +2761,10 @@ def create_unique_motifs_folder(all_clusters_data, output_base_dir, openbabel_al
             key=lambda x: (-get_population_for_rep(x), x[0]['filename'])  # Negative for descending
         )
     else:
-        # Fallback: sort by Gibbs free energy (lowest = motif_01)
+        # Fallback: sort by electronic energy (lowest = motif_01)
         sorted_representatives_with_ids = sorted(
             representatives_with_ids,
-            key=lambda x: (x[0].get('gibbs_free_energy') if x[0].get('gibbs_free_energy') is not None else float('inf'), x[0]['filename'])
+            key=lambda x: (_sorting_energy(x[0]), x[0]['filename'])
         )
     
 
@@ -2750,9 +2798,13 @@ def create_unique_motifs_folder(all_clusters_data, output_base_dir, openbabel_al
         
         write_xyz_file(representative, motif_path)
         
-        gibbs_str = f"{representative['gibbs_free_energy']:.6f}" if representative['gibbs_free_energy'] is not None else "N/A"
         display_prefix = output_prefix.upper() if output_prefix == 'umotif' else 'Motif'
-        vprint(f"  {display_prefix} {motif_idx:02d}: {base_name} (Gibbs Energy: {gibbs_str} Hartree, Cluster ID: {cluster_id})")
+        if dataset_has_freq:
+            gibbs_str = f"{representative['gibbs_free_energy']:.6f}" if representative.get('gibbs_free_energy') is not None else "N/A"
+            vprint(f"  {display_prefix} {motif_idx:02d}: {base_name} (Gibbs Energy: {gibbs_str} Hartree, Cluster ID: {cluster_id})")
+        else:
+            elec_str = f"{representative['final_electronic_energy']:.6f}" if representative.get('final_electronic_energy') is not None else "N/A"
+            vprint(f"  {display_prefix} {motif_idx:02d}: {base_name} (Electronic Energy: {elec_str} Hartree, Cluster ID: {cluster_id})")
     
 
     # Use appropriate filename based on prefix
@@ -2763,22 +2815,28 @@ def create_unique_motifs_folder(all_clusters_data, output_base_dir, openbabel_al
         for motif_idx, (rep_data, cluster_id) in enumerate(sorted_representatives_with_ids, 1):
             atomnos = rep_data.get('final_geometry_atomnos')
             atomcoords = rep_data.get('final_geometry_coords')
-            gibbs_free_energy = rep_data.get('gibbs_free_energy')
-            
+
             if atomnos is None or atomcoords is None or len(atomnos) == 0:
                 print(f"    WARNING: Skipping representative {rep_data['filename']} due to missing geometry data.")
                 continue
-            
+
             base_name = os.path.splitext(rep_data['filename'])[0]
-            gibbs_str = f"{gibbs_free_energy:.6f} Hartree ({hartree_to_kcal_mol(gibbs_free_energy):.2f} kcal/mol, {hartree_to_ev(gibbs_free_energy):.2f} eV)" if gibbs_free_energy is not None else "N/A"
+            if dataset_has_freq:
+                gibbs_free_energy = rep_data.get('gibbs_free_energy')
+                gibbs_str = f"{gibbs_free_energy:.6f} Hartree ({hartree_to_kcal_mol(gibbs_free_energy):.2f} kcal/mol, {hartree_to_ev(gibbs_free_energy):.2f} eV)" if gibbs_free_energy is not None else "N/A"
+                energy_comment = f"G = {gibbs_str}"
+            else:
+                electronic_energy = rep_data.get('final_electronic_energy')
+                elec_str = f"{electronic_energy:.6f} Hartree ({hartree_to_kcal_mol(electronic_energy):.2f} kcal/mol, {hartree_to_ev(electronic_energy):.2f} eV)" if electronic_energy is not None else "N/A"
+                energy_comment = f"E = {elec_str}"
             # Use the output_prefix for naming, include source info for umotif
             if output_prefix == 'umotif':
                 # For umotifs, include the source motif name in the comment for traceability
                 motif_name = f"{output_prefix}_{motif_idx:02d}"
-                comment_line = f"{motif_name} (from {base_name}, G = {gibbs_str})"
+                comment_line = f"{motif_name} (from {base_name}, {energy_comment})"
             else:
                 motif_name = f"{output_prefix}_{motif_idx:02d}_{base_name}"
-                comment_line = f"{motif_name} (G = {gibbs_str})"
+                comment_line = f"{motif_name} ({energy_comment})"
             
             outfile.write(f"{len(atomnos)}\n")
             outfile.write(f"{comment_line}\n")
@@ -2824,13 +2882,15 @@ def create_unique_motifs_folder(all_clusters_data, output_base_dir, openbabel_al
             # Get representatives data for clustering using complete feature set (same as main clustering)
             representatives_data = []
             motif_labels = []
-            
-            all_potential_numerical_features = [
+
+            _freq_dep = {'gibbs_free_energy', 'first_vib_freq', 'last_vib_freq'}
+            _all_num_features = [
                 'electronic_energy', 'gibbs_free_energy', 'homo_energy', 'lumo_energy',
                 'radius_of_gyration', 'dipole_moment', 'homo_lumo_gap',
-                'first_vib_freq', 'last_vib_freq', 'average_hbond_distance', 
+                'first_vib_freq', 'last_vib_freq', 'average_hbond_distance',
                 'average_hbond_angle'
             ]
+            all_potential_numerical_features = _all_num_features if dataset_has_freq else [f for f in _all_num_features if f not in _freq_dep]
             rotational_constant_subfeatures = ROTATIONAL_CONSTANT_SUBFEATURES
             
             # Check which features are globally available across all representatives
@@ -2954,14 +3014,14 @@ def combine_xyz_files(cluster_members_data, input_dir, output_base_name=None, op
             paired_data = list(zip(cluster_members_data, motif_numbers))
             sorted_pairs = sorted(
                 paired_data,
-                key=lambda x: (x[0].get('gibbs_free_energy') if x[0].get('gibbs_free_energy') is not None else float('inf'), x[0]['filename'])
+                key=lambda x: (_sorting_energy(x[0]), x[0]['filename'])
             )
             sorted_members_data = [pair[0] for pair in sorted_pairs]
             sorted_motif_numbers = [pair[1] for pair in sorted_pairs]
         else:
             sorted_members_data = sorted(
                 cluster_members_data,
-                key=lambda x: (x.get('gibbs_free_energy') if x.get('gibbs_free_energy') is not None else float('inf'), x['filename'])
+                key=lambda x: (_sorting_energy(x), x['filename'])
             )
             sorted_motif_numbers = None
 
@@ -2969,23 +3029,28 @@ def combine_xyz_files(cluster_members_data, input_dir, output_base_name=None, op
             for frame_idx, mol_data in enumerate(sorted_members_data, 1): # Iterate over sorted data
                 atomnos = mol_data.get('final_geometry_atomnos')
                 atomcoords = mol_data.get('final_geometry_coords')
-                gibbs_free_energy = mol_data.get('gibbs_free_energy')
-
                 if atomnos is None or atomcoords is None or len(atomnos) == 0:
                     print(f"    WARNING: Skipping {mol_data['filename']} in combined XYZ due to missing geometry data.")
                     continue
-                
+
                 base_name_for_frame = os.path.splitext(mol_data['filename'])[0]
-                gibbs_str = f"{gibbs_free_energy:.6f} Hartree ({hartree_to_kcal_mol(gibbs_free_energy):.2f} kcal/mol, {hartree_to_ev(gibbs_free_energy):.2f} eV)" if gibbs_free_energy is not None else "N/A"
-                
+                if _DATASET_HAS_FREQ:
+                    gibbs_free_energy = mol_data.get('gibbs_free_energy')
+                    gibbs_str = f"{gibbs_free_energy:.6f} Hartree ({hartree_to_kcal_mol(gibbs_free_energy):.2f} kcal/mol, {hartree_to_ev(gibbs_free_energy):.2f} eV)" if gibbs_free_energy is not None else "N/A"
+                    energy_comment = f"G = {gibbs_str}"
+                else:
+                    electronic_energy = mol_data.get('final_electronic_energy')
+                    elec_str = f"{electronic_energy:.6f} Hartree ({hartree_to_kcal_mol(electronic_energy):.2f} kcal/mol, {hartree_to_ev(electronic_energy):.2f} eV)" if electronic_energy is not None else "N/A"
+                    energy_comment = f"E = {elec_str}"
+
                 # Apply prefix template with actual motif number if provided
                 if prefix_template and sorted_motif_numbers:
                     motif_num = sorted_motif_numbers[frame_idx - 1]  # frame_idx starts at 1
-                    comment_line = f"{prefix_template.format(motif_num)}{base_name_for_frame} (G = {gibbs_str})"
+                    comment_line = f"{prefix_template.format(motif_num)}{base_name_for_frame} ({energy_comment})"
                 elif prefix_template:
-                    comment_line = f"{prefix_template.format(frame_idx)}{base_name_for_frame} (G = {gibbs_str})"
+                    comment_line = f"{prefix_template.format(frame_idx)}{base_name_for_frame} ({energy_comment})"
                 else:
-                    comment_line = f"{base_name_for_frame} (G = {gibbs_str})"
+                    comment_line = f"{base_name_for_frame} ({energy_comment})"
 
                 outfile.write(f"{len(atomnos)}\n")
                 outfile.write(f"{comment_line}\n")
@@ -3607,7 +3672,7 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
         # For comparison, we will treat them as a single group for dendrogram generation
         # and then force them into one output cluster.
         group_data_for_clustering = sorted(clean_data_for_clustering,
-                                           key=lambda x: (x.get('gibbs_free_energy') if x.get('gibbs_free_energy') is not None else float('inf'), x['filename']))
+                                           key=lambda x: (_sorting_energy(x), x['filename']))
         
         # This will be the only "hbond group" processed in comparison mode, effectively.
         hbond_groups = {0: group_data_for_clustering} # Use 0 as a dummy hbond count
@@ -3722,12 +3787,35 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
     all_skipped_need_recalc = []
     all_non_converged_critical = []
 
+    # --- Detect whether the dataset has frequency calculations ---
+    # If ANY structure has gibbs_free_energy, we consider the dataset as having freq data.
+    # Otherwise, we operate in "opt-only" mode with a reduced feature vector.
+    _dataset_has_freq = any(
+        is_valid_scalar(_mol.get('gibbs_free_energy'))
+        for _mol in clean_data_for_clustering
+    )
+
+    # Set module-level flag so helper functions (_sorting_energy, write_xyz_file, etc.)
+    # automatically use the correct mode without needing explicit parameters.
+    global _DATASET_HAS_FREQ
+    _DATASET_HAS_FREQ = _dataset_has_freq
+
+    # Features that require frequency calculations
+    _freq_dependent_features = {'gibbs_free_energy', 'first_vib_freq', 'last_vib_freq'}
+
     # --- Feature completeness summary (printed once, before clustering output) ---
-    _scalar_features = [
+    _all_scalar_features = [
         'electronic_energy', 'gibbs_free_energy', 'homo_energy', 'lumo_energy',
         'radius_of_gyration', 'dipole_moment', 'homo_lumo_gap',
         'first_vib_freq', 'last_vib_freq', 'average_hbond_distance', 'average_hbond_angle'
     ]
+    # In opt-only mode, the effective feature set excludes freq-dependent features
+    if _dataset_has_freq:
+        _scalar_features = _all_scalar_features
+    else:
+        _scalar_features = [f for f in _all_scalar_features if f not in _freq_dependent_features]
+        vprint("Opt-only dataset detected: using reduced feature vector (no freq-dependent features)")
+
     _vector_size_hist = {}
     _total_feature_dims = len(_scalar_features) + 3
     for _mol in clean_data_for_clustering:
@@ -3767,20 +3855,16 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
                 pseudo_global_cluster_id_counter += 1
         else:
             filenames_base = [os.path.splitext(item['filename'])[0] for item in group_data]
-            
-            all_potential_numerical_features = [
-                'electronic_energy', 'gibbs_free_energy', 'homo_energy', 'lumo_energy',
-                'radius_of_gyration', 'dipole_moment', 'homo_lumo_gap',
-                'first_vib_freq', 'last_vib_freq', 'average_hbond_distance', 
-                'average_hbond_angle'
-            ]
+
+            # Use the effective scalar features based on freq availability
+            all_potential_numerical_features = list(_scalar_features)
             active_numerical_features_for_group, dropped_scalar_features = select_complete_group_scalar_features(group_data, all_potential_numerical_features)
             use_rotational_constants = all(has_valid_rotational_constants(molecule_data) for molecule_data in group_data)
             if dropped_scalar_features:
                 vprint(f"  H-bond group {hbond_count}: reduced scalar feature set due to missing values in some structures: {', '.join(dropped_scalar_features)}")
             if not use_rotational_constants:
                 vprint(f"  H-bond group {hbond_count}: reduced vector excludes rotational constants because they are not available for all structures")
-            
+
             features_for_scaling_raw = []
             ordered_feature_names_for_scaling = []
 
@@ -3849,7 +3933,7 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
             # Sort these initial clusters by their lowest energy representative
             initial_clusters_list_sorted_by_energy = sorted(
                 initial_clusters_list_unsorted,
-                key=lambda cluster: (min(m.get('gibbs_free_energy') if m.get('gibbs_free_energy') is not None else float('inf') for m in cluster), 
+                key=lambda cluster: (min(_sorting_energy(m) for m in cluster), 
                                      min(m['filename'] for m in cluster)) 
             )
 
@@ -3865,15 +3949,15 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
     global_min_rep_filename = "N/A"
     global_min_cluster_id = "N/A"
 
-    if all_initial_property_clusters:
+    if _dataset_has_freq and all_initial_property_clusters:
         # Find the global minimum Gibbs energy among all representatives
         # Also store the filename and cluster ID of this global minimum representative
         valid_reps_for_emin = []
         for initial_prop_cluster in all_initial_property_clusters:
             # Select the lowest energy member as the representative for this initial property cluster
             rep_conf = min(initial_prop_cluster,
-                           key=lambda x: (x.get('gibbs_free_energy') if x.get('gibbs_free_energy') is not None else float('inf'), x['filename']))
-            
+                           key=lambda x: (_sorting_energy(x), x['filename']))
+
             if rep_conf.get('gibbs_free_energy') is not None:
                 valid_reps_for_emin.append({
                     'energy': rep_conf['gibbs_free_energy'],
@@ -3891,8 +3975,8 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
 
             for initial_prop_cluster in all_initial_property_clusters:
                 rep_conf = min(initial_prop_cluster,
-                               key=lambda x: (x.get('gibbs_free_energy') if x.get('gibbs_free_energy') is not None else float('inf'), x['filename']))
-                
+                               key=lambda x: (_sorting_energy(x), x['filename']))
+
                 if rep_conf.get('gibbs_free_energy') is None:
                     continue
 
@@ -3954,13 +4038,9 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
 
         else: # Proceed with actual clustering for normal mode or if more than 2 files in a group
             filenames_base = [os.path.splitext(item['filename'])[0] for item in group_data]
-            
-            all_potential_numerical_features = [
-                'electronic_energy', 'gibbs_free_energy', 'homo_energy', 'lumo_energy',
-                'radius_of_gyration', 'dipole_moment', 'homo_lumo_gap',
-                'first_vib_freq', 'last_vib_freq', 'average_hbond_distance', 
-                'average_hbond_angle'
-            ]
+
+            # Use the effective scalar features based on freq availability
+            all_potential_numerical_features = list(_scalar_features)
             active_numerical_features_for_group, dropped_scalar_features = select_complete_group_scalar_features(group_data, all_potential_numerical_features)
             use_rotational_constants = all(has_valid_rotational_constants(molecule_data) for molecule_data in group_data)
 
@@ -4136,7 +4216,7 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
 
                 initial_clusters_list_sorted_by_energy = sorted(
                     initial_clusters_list_unsorted,
-                    key=lambda cluster: (min(m.get('gibbs_free_energy') if m.get('gibbs_free_energy') is not None else float('inf') for m in cluster), 
+                    key=lambda cluster: (min(_sorting_energy(m) for m in cluster), 
                                          min(m['filename'] for m in cluster)) 
                 )
 
@@ -4185,7 +4265,7 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
                             member['_rmsd_pass_origin'] = 'first_pass_validated'
                     current_hbond_group_clusters_for_final_output.extend(initial_clusters_list_sorted_by_energy)
 
-        current_hbond_group_clusters_for_final_output.sort(key=lambda cluster: (min(m.get('gibbs_free_energy') if m.get('gibbs_free_energy') is not None else float('inf') for m in cluster),
+        current_hbond_group_clusters_for_final_output.sort(key=lambda cluster: (min(_sorting_energy(m) for m in cluster),
                                                                                   min(m['filename'] for m in cluster))) 
 
         # Filter out structures with imaginary frequencies AFTER clustering
@@ -4200,7 +4280,7 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
         # Remove non-converged structures from clusters after imaginary filtering.
         # These are always critical and must never become representatives.
         current_hbond_group_clusters_for_final_output, hbond_non_converged = filter_non_converged_structures(
-            current_hbond_group_clusters_for_final_output
+            current_hbond_group_clusters_for_final_output, dataset_has_freq=_dataset_has_freq
         )
         
         # Track and accumulate skipped structures
@@ -4392,37 +4472,39 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
 
     # --- RE-COMPUTE Boltzmann using FINAL cluster IDs ---
     # This ensures traceability: cluster IDs in Boltzmann match cluster IDs in summary
+    # Boltzmann distribution is only meaningful with Gibbs free energy (freq mode).
     boltzmann_final_data = {}
     final_global_min_energy = None
     final_global_min_filename = "N/A"
     final_global_min_cluster_id = "N/A"
-    
+
     # First pass: find representatives and global minimum
     final_representatives = []
-    for cluster_members in all_final_clusters:
-        if not cluster_members:
-            continue
-        
-        # Get the final cluster ID
-        final_cluster_id = cluster_members[0].get('_cluster_global_id')
-        if final_cluster_id is None:
-            continue
-        
-        # Find lowest energy representative in this cluster (excluding imaginary freq structures)
-        valid_members = [m for m in cluster_members if not m.get('_has_imaginary_freqs', False)]
-        if not valid_members:
-            valid_members = cluster_members  # Use all if none are valid
-        
-        rep = min(valid_members, 
-                  key=lambda x: (x.get('gibbs_free_energy') if x.get('gibbs_free_energy') is not None else float('inf'), x['filename']))
-        
-        if rep.get('gibbs_free_energy') is not None:
-            final_representatives.append({
-                'cluster_id': final_cluster_id,
-                'filename': rep['filename'],
-                'energy': rep['gibbs_free_energy'],
-                'cluster_size': len(cluster_members)
-            })
+    if _dataset_has_freq:
+        for cluster_members in all_final_clusters:
+            if not cluster_members:
+                continue
+
+            # Get the final cluster ID
+            final_cluster_id = cluster_members[0].get('_cluster_global_id')
+            if final_cluster_id is None:
+                continue
+
+            # Find lowest energy representative in this cluster (excluding imaginary freq structures)
+            valid_members = [m for m in cluster_members if not m.get('_has_imaginary_freqs', False)]
+            if not valid_members:
+                valid_members = cluster_members  # Use all if none are valid
+
+            rep = min(valid_members,
+                      key=lambda x: (_sorting_energy(x), x['filename']))
+
+            if rep.get('gibbs_free_energy') is not None:
+                final_representatives.append({
+                    'cluster_id': final_cluster_id,
+                    'filename': rep['filename'],
+                    'energy': rep['gibbs_free_energy'],
+                    'cluster_size': len(cluster_members)
+                })
     
     # Find global minimum
     if final_representatives:
@@ -4466,11 +4548,12 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
 
     # Create motifs folder with representative structures from each cluster
     # Pass boltzmann_final_data to sort motifs by population (highest population = motif_01)
-    motif_to_cluster_mapping = create_unique_motifs_folder(all_final_clusters, output_base_dir, 
+    motif_to_cluster_mapping = create_unique_motifs_folder(all_final_clusters, output_base_dir,
                                                           cluster_id_mapping=cluster_id_mapping,
                                                           output_prefix=output_prefix,
                                                           folder_prefix=folder_prefix,
-                                                          boltzmann_data=boltzmann_final_data)
+                                                          boltzmann_data=boltzmann_final_data,
+                                                          dataset_has_freq=_dataset_has_freq)
 
     # --- Create separate Boltzmann Distribution Analysis file ---
     boltzmann_file_content_lines = []
@@ -4562,6 +4645,10 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
     print()
     print_step(f"Clustering summary saved to '{os.path.basename(summary_file)}'")
     vprint(f"   Full path: {output_base_dir}")
+
+    # Emit marker for workflow detection: opt-only mode means no true minima.
+    if not _dataset_has_freq:
+        print("SIMILARITY_OPT_ONLY_MODE")
 
 # Main execution block
 if __name__ == "__main__":
