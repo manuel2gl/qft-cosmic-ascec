@@ -2387,46 +2387,62 @@ def write_cluster_dat_file(dat_file_prefix, cluster_members_data, output_base_di
 
         # 5. Deviation Analysis (ONLY for clusters with >1 configuration)
         if num_configurations > 1:
+            # Features excluded from the vector
+            _freq_excluded = {'gibbs_free_energy', 'first_vib_freq', 'last_vib_freq'}
+            # Features with weight=0.0 are also excluded from the vector
+            _zero_weight = {k for k, v in (weights or {}).items() if v == 0.0}
+            _all_excluded = (_freq_excluded if not _DATASET_HAS_FREQ else set()) | _zero_weight
+
+            # --- Deviation lines ---
+            # All deviation entries: (display_name, data_extractor, feature_key_for_filter)
+            _deviation_entries = [
+                ("Electronic Energy (Hartree)", lambda d: d.get('final_electronic_energy'), "electronic_energy"),
+                ("Gibbs Free Energy (Hartree)", lambda d: d.get('gibbs_free_energy'), "gibbs_free_energy"),
+                ("HOMO Energy (eV)", lambda d: d.get('homo_energy'), "homo_energy"),
+                ("LUMO Energy (eV)", lambda d: d.get('lumo_energy'), "lumo_energy"),
+                ("HOMO-LUMO Gap (eV)", lambda d: d.get('homo_lumo_gap'), "homo_lumo_gap"),
+                ("Dipole Moment (Debye)", lambda d: d.get('dipole_moment'), "dipole_moment"),
+                ("Radius of Gyration (Å)", lambda d: d.get('radius_of_gyration'), "radius_of_gyration"),
+                ("Rotational Constant A (GHz)", lambda d: d['rotational_constants'][0] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_A"),
+                ("Rotational Constant B (GHz)", lambda d: d['rotational_constants'][1] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_B"),
+                ("Rotational Constant C (GHz)", lambda d: d['rotational_constants'][2] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_C"),
+                ("First Vibrational Frequency (cm^-1)", lambda d: d.get('first_vib_freq'), "first_vib_freq"),
+                ("Last Vibrational Frequency (cm^-1)", lambda d: d.get('last_vib_freq'), "last_vib_freq"),
+                ("Average H-Bond Distance (Å)", lambda d: d.get('average_hbond_distance'), "average_hbond_distance"),
+                ("Average H-Bond Angle (°)", lambda d: d.get('average_hbond_angle'), "average_hbond_angle"),
+            ]
+
+            # Build excluded features message
+            _excluded_names = []
+            if not _DATASET_HAS_FREQ:
+                _excluded_names.append("Gibbs Free Energy, First Vibrational Frequency, Last Vibrational Frequency")
+            if _zero_weight:
+                _zw_display = {
+                    'dipole_moment': 'Dipole Moment', 'lumo_energy': 'LUMO Energy',
+                    'rotational_constants_A': 'Rotational Constant A',
+                    'rotational_constants_B': 'Rotational Constant B',
+                    'rotational_constants_C': 'Rotational Constant C',
+                    'average_hbond_distance': 'Average H-Bond Distance',
+                    'average_hbond_angle': 'Average H-Bond Angle',
+                    'electronic_energy': 'Electronic Energy', 'homo_energy': 'HOMO Energy',
+                    'homo_lumo_gap': 'HOMO-LUMO Gap', 'radius_of_gyration': 'Radius of Gyration',
+                }
+                _excluded_names.append(', '.join(_zw_display.get(k, k) for k in sorted(_zero_weight)))
+
+            if not _DATASET_HAS_FREQ or _zero_weight:
+                _mode_label = "Reduced feature vector"
+                if not _DATASET_HAS_FREQ:
+                    _mode_label += " (opt-only mode)"
+                f.write(f"\n{_mode_label}.\n")
+                f.write(f"Features not used: {'; '.join(_excluded_names)}\n")
+
             f.write("\nDeviation Analysis (Max-Min / |Mean|):\n")
-            write_deviation_line(f, "Electronic Energy (Hartree)", [d.get('final_electronic_energy') for d in cluster_members_data])
-            write_deviation_line(f, "Gibbs Free Energy (Hartree)", [d.get('gibbs_free_energy') for d in cluster_members_data])
-            write_deviation_line(f, "HOMO Energy (eV)", [d.get('homo_energy') for d in cluster_members_data])
-            write_deviation_line(f, "LUMO Energy (eV)", [d.get('lumo_energy') for d in cluster_members_data])
-            write_deviation_line(f, "HOMO-LUMO Gap (eV)", [d.get('homo_lumo_gap') for d in cluster_members_data])
-            write_deviation_line(f, "Dipole Moment (Debye)", [d.get('dipole_moment') for d in cluster_members_data])
-            write_deviation_line(f, "Radius of Gyration (Å)", [d.get('radius_of_gyration') for d in cluster_members_data])
-            write_deviation_line(
-                f,
-                "Rotational Constant A (GHz)",
-                [
-                    d['rotational_constants'][0] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None
-                    for d in cluster_members_data
-                ]
-            )
-            write_deviation_line(
-                f,
-                "Rotational Constant B (GHz)",
-                [
-                    d['rotational_constants'][1] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None
-                    for d in cluster_members_data
-                ]
-            )
-            write_deviation_line(
-                f,
-                "Rotational Constant C (GHz)",
-                [
-                    d['rotational_constants'][2] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None
-                    for d in cluster_members_data
-                ]
-            )
-            write_deviation_line(f, "First Vibrational Frequency (cm^-1)", [d.get('first_vib_freq') for d in cluster_members_data])
-            write_deviation_line(f, "Last Vibrational Frequency (cm^-1)", [d.get('last_vib_freq') for d in cluster_members_data])
-            write_deviation_line(f, "Average H-Bond Distance (Å)", [d.get('average_hbond_distance') for d in cluster_members_data])
-            write_deviation_line(f, "Average H-Bond Angle (°)", [d.get('average_hbond_angle') for d in cluster_members_data])
-            
-            # Print clustering weights applied
-            f.write("\nClustering Weights Applied:\n")
-            # Create a list of features with their weights, maintaining display order
+            for display_name, extractor, feat_key in _deviation_entries:
+                if feat_key in _all_excluded:
+                    continue
+                write_deviation_line(f, display_name, [extractor(d) for d in cluster_members_data])
+
+            # --- Weights and tolerances display order ---
             weight_display_order = [
                 ("electronic_energy", "Electronic Energy", "final_electronic_energy"),
                 ("gibbs_free_energy", "Gibbs Free Energy", "gibbs_free_energy"),
@@ -2443,13 +2459,17 @@ def write_cluster_dat_file(dat_file_prefix, cluster_members_data, output_base_di
                 ("average_hbond_distance", "Average H-Bond Distance", "average_hbond_distance"),
                 ("average_hbond_angle", "Average H-Bond Angle", "average_hbond_angle")
             ]
-            
+            # Filter out all excluded features (freq-dependent + zero-weight)
+            weight_display_order = [(k, dn, dk) for k, dn, dk in weight_display_order if k not in _all_excluded]
+
+            # Print clustering weights applied
+            f.write("\nClustering Weights Applied:\n")
             for feature_key, feature_display_name, data_key in weight_display_order:
                 weight_value = weights.get(feature_key, 1.0)
                 f.write(f"  {feature_display_name}: {weight_value:.2f}\n")
-            
+
             f.write("\n")
-            
+
             # Print clustering tolerances applied (if any non-default tolerances exist)
             has_custom_tolerances = any(tolerances.get(key, 0.0) != 0.0 for key, _, _ in weight_display_order)
             if has_custom_tolerances:
@@ -2468,7 +2488,7 @@ def write_cluster_dat_file(dat_file_prefix, cluster_members_data, output_base_di
                             tol_str = f"{tol_value:.4f}".rstrip('0').rstrip('.')
                         f.write(f"  {feature_display_name}: {tol_str}\n")
                         tolerances_printed = True
-                
+
                 if not tolerances_printed:
                     f.write("  None\n")
                 f.write("\n")
@@ -3280,22 +3300,36 @@ def extract_homo_lumo_from_orca_text(lines):
 
 def preprocess_j_argument(argv):
     """
-    Preprocesses command line arguments to handle -j8 format (no space) by converting it to -j 8.
-    This allows both '-j 8' and '-j8' formats to work.
+    Preprocesses command line arguments:
+    - Handle -j8 format (no space) by converting it to -j 8.
+    - Extract boolean flags (--loose, --verbose, etc.) that appear after --compare
+      so they are not consumed as file arguments by nargs='+'.
     """
-    processed_argv = []
+    # First pass: extract standalone boolean flags that could be trapped by --compare nargs='+'
+    _bool_flags = {'--loose', '-v', '--verbose', '-r', '--reprocess-files', '-V', '--version'}
+    extracted_flags = []
+    remaining = []
     for arg in argv:
+        if arg in _bool_flags:
+            extracted_flags.append(arg)
+        else:
+            remaining.append(arg)
+
+    # Second pass: handle -j8 → -j 8
+    processed_argv = []
+    for arg in remaining:
         if arg.startswith('-j') and len(arg) > 2 and arg[2:].isdigit():
-            # Convert -j8 to -j 8
             processed_argv.extend(['-j', arg[2:]])
         else:
             processed_argv.append(arg)
-    return processed_argv
+
+    # Put boolean flags at the front so they are parsed before --compare
+    return extracted_flags + processed_argv
 
 
 
 # Modified to accept rmsd_threshold and output_base_dir
-def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, motif_threshold=1.0, num_cores=None, temperature_k=298.15):
+def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, motif_threshold=1.0, num_cores=None, temperature_k=298.15, loose=False):
     """
     Performs hierarchical clustering and comprehensive analysis on molecular structures.
     This is the main analysis function that orchestrates the entire clustering workflow.
@@ -3353,6 +3387,9 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
         'average_hbond_angle': 1.0,        # Average hydrogen bond angle
     }
     
+    # Track which features the user explicitly set via --weights
+    _user_explicit_weights = set(weights.keys()) if weights else set()
+
     if weights is None:
         weights = default_weights.copy() # Use default weights if none provided
     else:
@@ -3660,6 +3697,52 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
         print(f"No complete data entries to cluster after filtering. Exiting clustering step.")
         return
 
+    # --- Detect whether the dataset has frequency calculations ---
+    # If ANY structure has gibbs_free_energy, we consider the dataset as having freq data.
+    # Otherwise, we operate in "opt-only" mode with a reduced feature vector.
+    _dataset_has_freq = any(
+        is_valid_scalar(_mol.get('gibbs_free_energy'))
+        for _mol in clean_data_for_clustering
+    )
+
+    # Set module-level flag so helper functions (_sorting_energy, write_xyz_file, etc.)
+    # automatically use the correct mode without needing explicit parameters.
+    global _DATASET_HAS_FREQ
+    _DATASET_HAS_FREQ = _dataset_has_freq
+
+    # --- Loose mode: relax weights for geometry-sensitive features (opt-only) ---
+    # Loose optimizations produce noisy geometry-dependent properties (dipole,
+    # rotational constants, LUMO, H-bond geometry).  Reducing their weights lets
+    # clustering focus on the more robust descriptors (electronic energy, HOMO,
+    # gap, radius of gyration).  Only applies in opt-only mode.
+    if loose and not _dataset_has_freq:
+        # Loose optimizations produce noisy geometry-dependent properties.
+        # Setting weight=0.0 fully excludes them from the feature vector,
+        # keeping only the three most robust descriptors: electronic energy,
+        # HOMO-LUMO gap, and radius of gyration.
+        _loose_excluded = [
+            'homo_energy',
+            'lumo_energy',
+            'dipole_moment',
+            'rotational_constants_A',
+            'rotational_constants_B',
+            'rotational_constants_C',
+            'average_hbond_distance',
+            'average_hbond_angle',
+        ]
+        # Apply loose defaults only for features the user didn't explicitly set via --weights
+        for feat in _loose_excluded:
+            if feat not in _user_explicit_weights:
+                weights[feat] = 0.0
+        _kept = [f for f in _loose_excluded if weights.get(f, 0.0) != 0.0]
+        print("Loose opt-only mode: clustering with minimal robust feature set")
+        print("  Active:   electronic_energy, homo_lumo_gap, radius_of_gyration")
+        print("  Excluded: homo, lumo, dipole, rotational_constants, hbond_distance, hbond_angle")
+        if _kept:
+            print(f"  User override kept: {', '.join(_kept)}")
+    elif loose and _dataset_has_freq:
+        print("NOTE: --loose flag ignored (dataset has frequency data, loose mode only applies to opt-only)")
+
     hbond_groups = {}
     
     # NEW: Handle comparison mode's clustering logic
@@ -3672,8 +3755,19 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
         
         # This will be the only "hbond group" processed in comparison mode, effectively.
         hbond_groups = {0: group_data_for_clustering} # Use 0 as a dummy hbond count
+    elif not _dataset_has_freq:
+        # Opt-only mode: skip H-bond pre-grouping entirely.
+        # H-bond detection is sensitive to small geometric changes — two nearly
+        # identical structures can differ by 1-2 H-bonds.  In freq mode the full
+        # feature vector + Boltzmann filtering compensates, but in opt-only mode
+        # the reduced vector makes this rigid split too aggressive.  Instead, put
+        # all structures in a single pool and let property-based clustering decide.
+        # H-bond count is still recorded per structure for informational output.
+        hbond_groups = {0: sorted(clean_data_for_clustering,
+                                  key=lambda x: (_sorting_energy(x), x['filename']))}
+        vprint(f"Opt-only mode: H-bond pre-grouping disabled, clustering all {len(clean_data_for_clustering)} structures together")
     else:
-        # Original logic for non-comparison mode
+        # Freq mode: original logic — group by exact H-bond count
         for item in clean_data_for_clustering:
             hbond_groups.setdefault(item['num_hydrogen_bonds'], []).append(item)
 
@@ -3782,19 +3876,6 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
     all_skipped_clustered_with_normal = []
     all_skipped_need_recalc = []
     all_non_converged_critical = []
-
-    # --- Detect whether the dataset has frequency calculations ---
-    # If ANY structure has gibbs_free_energy, we consider the dataset as having freq data.
-    # Otherwise, we operate in "opt-only" mode with a reduced feature vector.
-    _dataset_has_freq = any(
-        is_valid_scalar(_mol.get('gibbs_free_energy'))
-        for _mol in clean_data_for_clustering
-    )
-
-    # Set module-level flag so helper functions (_sorting_energy, write_xyz_file, etc.)
-    # automatically use the correct mode without needing explicit parameters.
-    global _DATASET_HAS_FREQ
-    _DATASET_HAS_FREQ = _dataset_has_freq
 
     # Features that require frequency calculations
     _freq_dependent_features = {'gibbs_free_energy', 'first_vib_freq', 'last_vib_freq'}
@@ -4020,7 +4101,11 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
         if previous_hbond_group_processed:
             hbond_group_summary_lines.append("\n" + "-" * 75 + "\n") 
         
-        hbond_group_summary_lines.append(f"Hydrogen bonds: {hbond_count}\n")
+        if not _DATASET_HAS_FREQ and hbond_count == 0:
+            # Opt-only mode: all structures in one pool, no H-bond pre-grouping
+            hbond_group_summary_lines.append(f"All configurations (H-bond pre-grouping disabled)\n")
+        else:
+            hbond_group_summary_lines.append(f"Hydrogen bonds: {hbond_count}\n")
         hbond_group_summary_lines.append(f"Configurations: {len(group_data)}")
 
         current_hbond_group_clusters_for_final_output = [] 
@@ -4142,7 +4227,12 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
 
             dendrogram(linkage_matrix, labels=conf_labels, leaf_rotation=90, leaf_font_size=8)
             
-            dendrogram_title_suffix = "Comparison" if is_compare_mode else f"H-bonds = {hbond_count}"
+            if is_compare_mode:
+                dendrogram_title_suffix = "Comparison"
+            elif not _DATASET_HAS_FREQ and hbond_count == 0:
+                dendrogram_title_suffix = "All configurations"
+            else:
+                dendrogram_title_suffix = f"H-bonds = {hbond_count}"
             plt.title(f"Hierarchical Clustering Dendrogram ({dendrogram_title_suffix})")
             
             plt.xlabel("Configuration")
@@ -4321,11 +4411,16 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
             hbond_group_summary_lines.append(summary_line_prefix + ":")
             hbond_group_summary_lines.append("Files:")
             for m_data in members_data:
-                if m_data['gibbs_free_energy'] is not None:
-                    gibbs_str = f"{m_data['gibbs_free_energy']:.6f} Hartree ({hartree_to_kcal_mol(m_data['gibbs_free_energy']):.2f} kcal/mol, {hartree_to_ev(m_data['gibbs_free_energy']):.2f} eV)"
+                if _DATASET_HAS_FREQ:
+                    if m_data['gibbs_free_energy'] is not None:
+                        gibbs_str = f"{m_data['gibbs_free_energy']:.6f} Hartree ({hartree_to_kcal_mol(m_data['gibbs_free_energy']):.2f} kcal/mol, {hartree_to_ev(m_data['gibbs_free_energy']):.2f} eV)"
+                    else:
+                        gibbs_str = "N/A"
+                    hbond_group_summary_lines.append(f"  - {m_data['filename']} (Gibbs Energy: {gibbs_str})")
                 else:
-                    gibbs_str = "N/A"
-                hbond_group_summary_lines.append(f"  - {m_data['filename']} (Gibbs Energy: {gibbs_str})")
+                    elec = m_data.get('final_electronic_energy')
+                    elec_str = f"{elec:.6f} Hartree" if elec is not None else "N/A"
+                    hbond_group_summary_lines.append(f"  - {m_data['filename']} (Electronic Energy: {elec_str})")
             hbond_group_summary_lines.append("\n")
             
             # Add newline after cluster info
@@ -4807,8 +4902,11 @@ MORE INFORMATION:
     parser.add_argument("-V", "--version", action="store_true",
                         help="display version and exit")
     
+    parser.add_argument("--loose", action="store_true",
+                        help="use relaxed weights for geometry-sensitive features (for loose optimizations in opt-only mode)")
+
     # Hidden/advanced options
-    parser.add_argument("--min-std-threshold", type=float, default=1e-6, 
+    parser.add_argument("--min-std-threshold", type=float, default=1e-6,
                         help=argparse.SUPPRESS)
     parser.add_argument("--abs-tolerance", type=str, default="",
                         help=argparse.SUPPRESS)
@@ -4906,7 +5004,8 @@ MORE INFORMATION:
             abs_tolerances=abs_tolerances_dict,
             motif_threshold=motif_threshold,
             num_cores=num_cores,
-            temperature_k=temperature_k
+            temperature_k=temperature_k,
+            loose=args.loose
         )
         print(f"\n--- Finished comparing {len(compare_files)} files: {', '.join(file_names)} ---\n")
 
@@ -5019,7 +5118,7 @@ MORE INFORMATION:
                 display_name = "./"
             print(f"\nProcessing folder: {display_name}\n")
 
-            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, motif_threshold=motif_threshold, num_cores=num_cores, temperature_k=temperature_k)
+            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, motif_threshold=motif_threshold, num_cores=num_cores, temperature_k=temperature_k, loose=args.loose)
 
             print(f"\nFinished processing folder: {display_name}\n")
 
