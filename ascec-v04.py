@@ -2331,9 +2331,9 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
             return raw
 
         concise_parts = parts[-2:] if len(parts) >= 2 else parts
-        concise = '/' + '/'.join(concise_parts)
-        if raw.endswith('/') and not concise.endswith('/'):
-            concise += '/'
+        concise = os.sep + os.sep.join(concise_parts)
+        if raw.endswith(os.sep) and not concise.endswith(os.sep):
+            concise += os.sep
         return concise
     
     def _extract_time_from_orca_summary(summary_file: str) -> Optional[float]:
@@ -4388,65 +4388,76 @@ def write_tvse_file(tvse_filepath: str, entry: Dict, state: SystemState):
         _print_verbose(f"Error writing energy evolution history to '{tvse_filepath}': {e}", 0, state)
 
 
-def create_launcher_script(replicated_files: List[str], input_dir: str, script_name: str = "launcher_ascec.sh") -> str:
+def create_launcher_script(replicated_files: List[str], input_dir: str, script_name: str = None) -> str:
     """
-    Creates a bash launcher script for sequential execution of replicated runs.
-    
+    Creates a launcher script for sequential execution of replicated runs.
+    Generates a .sh bash script on Linux/macOS and a .bat script on Windows.
+
     Args:
         replicated_files (List[str]): List of paths to the replicated input files
         input_dir (str): Directory where the launcher script should be created
-        script_name (str): Name of the launcher script
-    
+        script_name (str): Name of the launcher script (auto-detected from OS if None)
+
     Returns:
         str: Path to the created launcher script
     """
+    is_windows = sys.platform == 'win32'
+    if script_name is None:
+        script_name = "launcher_ascec.bat" if is_windows else "launcher_ascec.sh"
+
     launcher_path = os.path.join(input_dir, script_name)
-    
+
     # Get the directory where ascec-v04.py is located
     ascec_script_path = os.path.abspath(__file__)
     ascec_directory = os.path.dirname(ascec_script_path)
-    
+
     try:
         with open(launcher_path, 'w') as f:
-            f.write("#!/bin/bash\n\n")
-            
-            # Configuration for ASCEC v04
-            f.write("# Configuration for ASCEC v04\n")
-            f.write("# Set ASCEC_ROOT to the directory containing ascec-v04.py\n")
-            f.write(f'export ASCEC_ROOT="{ascec_directory}"\n\n')
-            
-            f.write("# Save original environment paths\n")
-            f.write('_SYSTEM_PATH="$PATH"\n\n')
-            
-            f.write("# Add the ASCEC directory to the system PATH for direct execution\n")
-            f.write('export PATH="$ASCEC_ROOT:$_SYSTEM_PATH"\n\n')
-            
-            f.write('echo "ASCEC v04 environment is now active via direct script setup."\n')
-            f.write('echo "ASCEC_ROOT set to: $ASCEC_ROOT"\n\n')
-            
-            f.write("# Run ASCEC using the full path\n")
-            
-            commands = []
-            for i, replicated_file in enumerate(replicated_files):
-                rel_path = os.path.relpath(replicated_file, input_dir)
-                output_name = os.path.splitext(rel_path)[0] + ".out"
-                
-                # Add separator before each calculation (except the first one)
-                if i > 0:
-                    commands.append('echo "=================================================================="')
-                
-                commands.append(f"python {ascec_script_path} {rel_path} > {output_name}")
-            
-            # Join commands with " ; \\\n" for sequential execution
-            f.write(" ; \\\n".join(commands))
-            f.write("\n")
-        
-        # Make the script executable
-        os.chmod(launcher_path, 0o755)
-        
+            if is_windows:
+                f.write("@echo off\r\n\r\n")
+                f.write("rem Configuration for ASCEC v04\r\n")
+                f.write("rem Set ASCEC_ROOT to the directory containing ascec-v04.py\r\n")
+                f.write(f'set ASCEC_ROOT={ascec_directory}\r\n\r\n')
+                f.write("rem Add the ASCEC directory to the system PATH for direct execution\r\n")
+                f.write('set PATH=%ASCEC_ROOT%;%PATH%\r\n\r\n')
+                f.write('echo ASCEC v04 environment is now active via direct script setup.\r\n')
+                f.write('echo ASCEC_ROOT set to: %ASCEC_ROOT%\r\n\r\n')
+                f.write("rem Run ASCEC using the full path\r\n")
+                for i, replicated_file in enumerate(replicated_files):
+                    rel_path = os.path.relpath(replicated_file, input_dir)
+                    output_name = os.path.splitext(rel_path)[0] + ".out"
+                    if i > 0:
+                        f.write('echo ==================================================================\r\n')
+                    f.write(f'python "{ascec_script_path}" "{rel_path}" > "{output_name}"\r\n')
+            else:
+                f.write("#!/bin/bash\n\n")
+                f.write("# Configuration for ASCEC v04\n")
+                f.write("# Set ASCEC_ROOT to the directory containing ascec-v04.py\n")
+                f.write(f'export ASCEC_ROOT="{ascec_directory}"\n\n')
+                f.write("# Save original environment paths\n")
+                f.write('_SYSTEM_PATH="$PATH"\n\n')
+                f.write("# Add the ASCEC directory to the system PATH for direct execution\n")
+                f.write('export PATH="$ASCEC_ROOT:$_SYSTEM_PATH"\n\n')
+                f.write('echo "ASCEC v04 environment is now active via direct script setup."\n')
+                f.write('echo "ASCEC_ROOT set to: $ASCEC_ROOT"\n\n')
+                f.write("# Run ASCEC using the full path\n")
+                commands = []
+                for i, replicated_file in enumerate(replicated_files):
+                    rel_path = os.path.relpath(replicated_file, input_dir)
+                    output_name = os.path.splitext(rel_path)[0] + ".out"
+                    if i > 0:
+                        commands.append('echo "=================================================================="')
+                    commands.append(f"python {ascec_script_path} {rel_path} > {output_name}")
+                f.write(" ; \\\n".join(commands))
+                f.write("\n")
+
+        # Make the script executable (Unix only)
+        if not is_windows:
+            os.chmod(launcher_path, 0o755)
+
         print(f"Created launcher script: {script_name}")
         return launcher_path
-        
+
     except IOError as e:
         print(f"Error creating launcher script '{launcher_path}': {e}")
         return ""
@@ -4454,102 +4465,111 @@ def create_launcher_script(replicated_files: List[str], input_dir: str, script_n
 
 def merge_launcher_scripts(working_dir: str = ".") -> str:
     """
-    Finds all launcher_ascec.sh scripts in the working directory and subfolders,
+    Finds all launcher_ascec scripts in the working directory and subfolders,
     and merges them into a single launcher script.
-    
+    Generates a .sh bash script on Linux/macOS and a .bat script on Windows.
+
     Args:
         working_dir (str): Working directory to search for launcher scripts
-    
+
     Returns:
         str: Path to the merged launcher script
     """
+    is_windows = sys.platform == 'win32'
+    launcher_filename = "launcher_ascec.bat" if is_windows else "launcher_ascec.sh"
+
     working_dir_full = os.path.abspath(working_dir)
-    merged_launcher_path = os.path.join(working_dir_full, "launcher_ascec.sh")
-    
+    merged_launcher_path = os.path.join(working_dir_full, launcher_filename)
+
     # Find all launcher scripts
     launcher_scripts = []
     for root, dirs, files in os.walk(working_dir_full):
         for file in files:
-            if file == "launcher_ascec.sh":
+            if file == launcher_filename:
                 launcher_scripts.append(os.path.join(root, file))
-    
+
     if not launcher_scripts:
-        print("No launcher_ascec.sh scripts found in the working directory or subfolders.")
+        print(f"No {launcher_filename} scripts found in the working directory or subfolders.")
         return ""
-    
+
     print(f"Found {len(launcher_scripts)} launcher scripts:")
     for script in launcher_scripts:
         rel_path = os.path.relpath(script, working_dir_full)
         print(f"  {rel_path}")
-    
+
     # Merge all launcher scripts
     all_commands = []
-    
+
     try:
         for script_path in launcher_scripts:
             with open(script_path, 'r') as f:
                 lines = f.readlines()
-                
-            # Extract commands (skip shebang and comments)
+
+            # Extract python commands (skip shebang, comments, echo, set/export lines)
             commands = []
             for line in lines:
                 line = line.strip()
-                if line and not line.startswith('#') and 'python ascec-v04.py' in line:
-                    # Remove trailing " ; \\" if present
-                    line = line.rstrip(' \\;')
+                if line and 'python' in line and 'ascec-v04.py' in line:
+                    # Remove trailing " ; \\" if present (bash style)
+                    line = line.rstrip(' \\;').strip()
                     commands.append(line)
-            
+
             if commands:
-                # Add commands from this script
                 all_commands.extend(commands)
-                # Add separator comment between different script groups
-                if script_path != launcher_scripts[-1]:  # Don't add separator after last script
+                if script_path != launcher_scripts[-1]:
                     all_commands.append("###")
-        
+
+        # Get the directory where ascec-v04.py is located
+        ascec_script_path = os.path.abspath(__file__)
+        ascec_directory = os.path.dirname(ascec_script_path)
+
         # Write merged launcher script
         with open(merged_launcher_path, 'w') as f:
-            f.write("#!/bin/bash\n\n")
-            
-            # Configuration for ASCEC v04
-            # Get the directory where ascec-v04.py is located
-            ascec_script_path = os.path.abspath(__file__)
-            ascec_directory = os.path.dirname(ascec_script_path)
-            
-            f.write("# Configuration for ASCEC v04\n")
-            f.write("# Set ASCEC_ROOT to the directory containing ascec-v04.py\n")
-            f.write(f'export ASCEC_ROOT="{ascec_directory}"\n\n')
-            
-            f.write("# Save original environment paths\n")
-            f.write('_SYSTEM_PATH="$PATH"\n\n')
-            
-            f.write("# Add the ASCEC directory to the system PATH for direct execution\n")
-            f.write('export PATH="$ASCEC_ROOT:$_SYSTEM_PATH"\n\n')
-            
-            f.write('echo "ASCEC v04 environment is now active via direct script setup."\n')
-            f.write('echo "ASCEC_ROOT set to: $ASCEC_ROOT"\n\n')
-            
-            f.write("# Run ASCEC using the full path\n")
-            
-            # Process commands with proper formatting
-            for i, cmd in enumerate(all_commands):
-                if cmd == "###":
-                    # Write separator on its own line
-                    f.write(" ; \\\n###\n")
-                else:
-                    f.write(cmd)
-                    # Add " ; \" only if this is not the last command and the next command is not "###"
-                    if i < len(all_commands) - 1 and all_commands[i + 1] != "###":
-                        f.write(" ; \\\n")
-                    elif i == len(all_commands) - 1:
-                        f.write("\n")  # Last command, just add newline
-        
-        # Make the script executable
-        os.chmod(merged_launcher_path, 0o755)
-        
-        print(f"\nCreated merged launcher script: launcher_ascec.sh")
+            if is_windows:
+                f.write("@echo off\r\n\r\n")
+                f.write("rem Configuration for ASCEC v04\r\n")
+                f.write("rem Set ASCEC_ROOT to the directory containing ascec-v04.py\r\n")
+                f.write(f'set ASCEC_ROOT={ascec_directory}\r\n\r\n')
+                f.write("rem Add the ASCEC directory to the system PATH for direct execution\r\n")
+                f.write('set PATH=%ASCEC_ROOT%;%PATH%\r\n\r\n')
+                f.write('echo ASCEC v04 environment is now active via direct script setup.\r\n')
+                f.write('echo ASCEC_ROOT set to: %ASCEC_ROOT%\r\n\r\n')
+                f.write("rem Run ASCEC using the full path\r\n")
+                for cmd in all_commands:
+                    if cmd == "###":
+                        f.write('echo ==================================================================\r\n')
+                    else:
+                        f.write(cmd + "\r\n")
+            else:
+                f.write("#!/bin/bash\n\n")
+                f.write("# Configuration for ASCEC v04\n")
+                f.write("# Set ASCEC_ROOT to the directory containing ascec-v04.py\n")
+                f.write(f'export ASCEC_ROOT="{ascec_directory}"\n\n')
+                f.write("# Save original environment paths\n")
+                f.write('_SYSTEM_PATH="$PATH"\n\n')
+                f.write("# Add the ASCEC directory to the system PATH for direct execution\n")
+                f.write('export PATH="$ASCEC_ROOT:$_SYSTEM_PATH"\n\n')
+                f.write('echo "ASCEC v04 environment is now active via direct script setup."\n')
+                f.write('echo "ASCEC_ROOT set to: $ASCEC_ROOT"\n\n')
+                f.write("# Run ASCEC using the full path\n")
+                for i, cmd in enumerate(all_commands):
+                    if cmd == "###":
+                        f.write(" ; \\\n###\n")
+                    else:
+                        f.write(cmd)
+                        if i < len(all_commands) - 1 and all_commands[i + 1] != "###":
+                            f.write(" ; \\\n")
+                        elif i == len(all_commands) - 1:
+                            f.write("\n")
+
+        # Make the script executable (Unix only)
+        if not is_windows:
+            os.chmod(merged_launcher_path, 0o755)
+
+        print(f"\nCreated merged launcher script: {launcher_filename}")
         print(f"Total commands: {len([cmd for cmd in all_commands if cmd != '###'])}")
         return merged_launcher_path
-        
+
     except IOError as e:
         print(f"Error creating merged launcher script: {e}")
         return ""
@@ -9254,16 +9274,11 @@ def find_similarity_script() -> Optional[str]:
         if os.path.exists(location):
             return os.path.abspath(location)
     
-    # Check if in PATH
-    try:
-        result = subprocess.run(['which', 'similarity-v01.py'], 
-                              capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except:
-        pass
-    
+    # Check if in PATH (shutil.which is cross-platform)
+    found = shutil.which('similarity-v01.py')
+    if found:
+        return found
+
     return None
 
 def parse_similarity_percentages(stdout_text: str) -> Tuple[float, float]:
