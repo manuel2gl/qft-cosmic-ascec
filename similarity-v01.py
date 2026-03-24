@@ -2714,12 +2714,11 @@ def create_unique_motifs_folder(all_clusters_data, output_base_dir, openbabel_al
                 and m.get('_is_full_feature', True)
             ]
         else:
-            # Opt-only mode: require electronic energy and full (reduced) feature vector
+            # Opt-only mode: require electronic energy only — the reduced vector IS the
+            # expected feature set, so _is_full_feature filtering is not needed.
             valid_members = [
                 m for m in cluster_members
-                if not m.get('_has_imaginary_freqs', False)
-                and m.get('final_electronic_energy') is not None
-                and m.get('_is_full_feature', True)
+                if m.get('final_electronic_energy') is not None
             ]
         
         if not valid_members:
@@ -4409,19 +4408,22 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
 
     # Reduced-vector structures that never co-cluster with a full-feature structure
     # are likely critical outliers and should be reviewed.
+    # In opt-only mode this concept does not apply — the reduced vector IS the
+    # expected full vector, so nothing should be flagged here.
     reduced_unmatched_critical = []
-    for cluster_members in all_final_clusters:
-        if not cluster_members:
-            continue
-        has_full_feature_member = any(m.get('_is_full_feature', False) for m in cluster_members)
-        if has_full_feature_member:
-            continue
-        for m in cluster_members:
-            if not m.get('_is_full_feature', False):
-                reduced_unmatched_critical.append(m)
+    if _dataset_has_freq:
+        for cluster_members in all_final_clusters:
+            if not cluster_members:
+                continue
+            has_full_feature_member = any(m.get('_is_full_feature', False) for m in cluster_members)
+            if has_full_feature_member:
+                continue
+            for m in cluster_members:
+                if not m.get('_is_full_feature', False):
+                    reduced_unmatched_critical.append(m)
 
-    if reduced_unmatched_critical:
-        print(f"\nReduced-vector criticals: {len(reduced_unmatched_critical)} structure(s) did not match any full-feature structure.")
+        if reduced_unmatched_critical:
+            print(f"\nReduced-vector criticals: {len(reduced_unmatched_critical)} structure(s) did not match any full-feature structure.")
 
     if total_files_attempted > 0:
         reduced_unmatched_percentage = (len(reduced_unmatched_critical) / total_files_attempted) * 100
