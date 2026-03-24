@@ -2468,10 +2468,12 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                         
                         wall_time = stage_info.get('wall_time')
                         if not wall_time:
-                            if stage_type == 'Calculation' and os.path.exists('calculation/orca_summary.txt'):
-                                wall_time = _extract_time_from_orca_summary('calculation/orca_summary.txt')
-                            elif stage_type == 'Optimization' and os.path.exists('optimization/orca_summary.txt'):
-                                wall_time = _extract_time_from_orca_summary('optimization/orca_summary.txt')
+                            _result = stage_info.get('result', {})
+                            _wdir = _result.get('working_dir')
+                            if _wdir:
+                                _sf = os.path.join(_wdir, 'orca_summary.txt')
+                                if os.path.exists(_sf):
+                                    wall_time = _extract_time_from_orca_summary(_sf)
                         
                         if wall_time:
                             total_tracked_time += wall_time
@@ -2555,25 +2557,6 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                         if 'total_accepted' in result:
                             f.write(f"    Accepted:         {result['total_accepted']} configurations\n")
                     
-                    elif stage_type == 'Calculation':
-                        if 'xyz_source' in result:
-                            xyz_source = result['xyz_source'] if result['xyz_source'] else "Annealing"
-                            f.write(f"    Inputs from:      {xyz_source}\n")
-                        if 'completed' in result and 'total' in result:
-                            f.write(f"    Completed:        {result['completed']}/{result['total']} calculations\n")
-                        if 'concurrent_jobs' in result:
-                            f.write(f"    Concurrent:       {result['concurrent_jobs']} jobs\n")
-                        # Mean exec time: prefer total_cpu_time/completed (accurate with concurrency)
-                        _total_cpu = result.get('total_cpu_time')
-                        if _total_cpu and 'completed' in result and result['completed'] > 0:
-                            mean_time = _total_cpu / result['completed']
-                            f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
-                        elif wall_time and 'completed' in result and result['completed'] > 0:
-                            mean_time = wall_time / result['completed']
-                            f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
-                        if 'similarity_folder' in result and result['similarity_folder']:
-                            f.write(f"    Outputs to:       {format_concise_path(result['similarity_folder'])}\n")
-                    
                     elif stage_type == 'Similarity':
                         live_critical_pct = None
                         live_skipped_pct = None
@@ -2597,7 +2580,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                             f.write(f"    RMSD:             N/A\n")
                         f.write("\n")
                         
-                        motifs_created = live_clusters if live_clusters is not None else result.get('motifs_created')
+                        motifs_created = result.get('motifs_created') if result.get('motifs_created') is not None else live_clusters
                         if motifs_created is not None:
                             motif_label = "Unique Motifs" if ('output_dir' in result and 'umotif' in str(result.get('output_dir', ''))) else "Motifs"
                             label_col = f"    {motif_label}:"
@@ -2673,7 +2656,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                                         f.write(f"\n    Validation: Step [{step_num-1}] threshold exceeded!\n")
                                         f.write(f"    Target: {threshold_type} ≤ {threshold_value}% | Actual: {actual}%\n")
                     
-                    elif stage_type == 'Optimization':
+                    elif stage_type in ('Calculation', 'Optimization'):
                         if 'xyz_source' in result and result['xyz_source']:
                             xyz_source = result['xyz_source'] if result['xyz_source'] else "Annealing"
                             f.write(f"    Inputs from:      {xyz_source}\n")
@@ -2681,8 +2664,12 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                             f.write(f"    Completed:        {result['completed']}/{result['total']} optimizations\n")
                         if 'concurrent_jobs' in result:
                             f.write(f"    Concurrent:       {result['concurrent_jobs']} jobs\n")
-                        # Mean exec time: prefer total_cpu_time/completed (accurate with concurrency)
+                        # Mean exec time: use total CPU time / completed (accurate with concurrency).
+                        # Try cache first, then live parse from orca_summary.txt as fallback.
                         _total_cpu = result.get('total_cpu_time')
+                        if not _total_cpu and 'working_dir' in result:
+                            _sum_file = os.path.join(result['working_dir'], 'orca_summary.txt')
+                            _total_cpu = _extract_time_from_orca_summary(_sum_file)
                         if _total_cpu and 'completed' in result and result['completed'] > 0:
                             mean_time = _total_cpu / result['completed']
                             f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
@@ -2699,8 +2686,12 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                             f.write(f"    Completed:        {result['completed']}/{result['total']} refinements\n")
                         if 'concurrent_jobs' in result:
                             f.write(f"    Concurrent:       {result['concurrent_jobs']} jobs\n")
-                        # Mean exec time: prefer total_cpu_time/completed (accurate with concurrency)
+                        # Mean exec time: prefer total_cpu_time/completed (accurate with concurrency).
+                        # Try cache first, then live parse from orca_summary.txt as fallback.
                         _total_cpu = result.get('total_cpu_time')
+                        if not _total_cpu and 'working_dir' in result:
+                            _sum_file = os.path.join(result['working_dir'], 'orca_summary.txt')
+                            _total_cpu = _extract_time_from_orca_summary(_sum_file)
                         if _total_cpu and 'completed' in result and result['completed'] > 0:
                             mean_time = _total_cpu / result['completed']
                             f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
@@ -14064,8 +14055,12 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                     finally:
                         os.chdir(saved_cwd)
 
-                    # Parse total CPU time from orca_summary.txt for protocol summary mean exec time
-                    _orca_sum_path = os.path.join(optimization_dir_path, "orca_summary.txt")
+                    # Parse total CPU time from orca_summary.txt for protocol summary mean exec time.
+                    # Use saved_cwd to build an absolute path so cwd changes don't break resolution.
+                    _orca_sum_path = os.path.join(saved_cwd, optimization_dir_path, "orca_summary.txt")
+                    if not os.path.exists(_orca_sum_path):
+                        # Fallback: try relative to current cwd
+                        _orca_sum_path = os.path.join(optimization_dir_path, "orca_summary.txt")
                     if os.path.exists(_orca_sum_path):
                         try:
                             with open(_orca_sum_path, 'r') as _sf:
@@ -15418,8 +15413,11 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             finally:
                     os.chdir(saved_cwd)
 
-            # Parse total CPU time from orca_summary.txt for protocol summary mean exec time
-            _ref_sum_path = os.path.join(opt_dir, "orca_summary.txt")
+            # Parse total CPU time from orca_summary.txt for protocol summary mean exec time.
+            # Use saved_cwd to build an absolute path so cwd changes don't break resolution.
+            _ref_sum_path = os.path.join(saved_cwd, opt_dir, "orca_summary.txt")
+            if not os.path.exists(_ref_sum_path):
+                _ref_sum_path = os.path.join(opt_dir, "orca_summary.txt")
             if os.path.exists(_ref_sum_path):
                 try:
                     with open(_ref_sum_path, 'r') as _sf:
