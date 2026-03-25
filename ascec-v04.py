@@ -15949,7 +15949,7 @@ def main_ascec_integrated():
         
         # Execute workflow with caching enabled
         result = execute_workflow_stages(input_file, stages, use_cache=True, protocol_text=protocol_text)
-        sys.exit(result)
+        os._exit(result)
 
     # AUTO-DETECT EMBEDDED PROTOCOL (single input-file invocation)
     # Example: ascec04 glaw.asc
@@ -15974,8 +15974,8 @@ def main_ascec_integrated():
                     sys.exit(1)
 
                 result = execute_workflow_stages(input_file, stages, use_cache=True, protocol_text=protocol_text)
-                sys.exit(result)
-    
+                os._exit(result)
+
     # CHECK FOR WORKFLOW MODE (',' or 'then' separator-based commands)
     if len(sys.argv) >= 2 and contains_workflow_separator(sys.argv[1:]):
         # First argument should be input file
@@ -16003,7 +16003,7 @@ def main_ascec_integrated():
         
         # Execute workflow
         result = execute_workflow_stages(input_file, stages)
-        sys.exit(result)
+        os._exit(result)
     
     # STANDARD SINGLE-COMMAND MODE (backward compatibility)
     # Setup argument parser - use parse_known_args to handle shell expansion
