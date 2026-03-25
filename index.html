@@ -2032,7 +2032,10 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
 
             <!-- Simulation Box Preview (Box 6) -->
             <div class="card smart-simulation-box">
-                <h2>Simulation Box</h2>
+                <div class="card-title-row">
+                    <h2>Simulation Box</h2>
+                    <span style="font-size:0.88em; color:#7f8c8d; font-style:italic; font-weight:400;"><b style="font-weight:600;">Box Suggestion</b> — adjust as needed</span>
+                </div>
                 <div class="smart-simulation-layout">
                     <div class="smart-sim-main">
                         <div class="smart-box-stage">
@@ -2043,7 +2046,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                                         <input type="number" id="smart-box-size-top" value="7.0" step="0.5" min="3" oninput="applyTopSmartBoxControls('box')">
                                     </div>
                                     <div class="smart-top-inline">
-                                        <label class="smart-pack-mini" title="Packing percentage">
+                                        <label class="smart-pack-mini" title="Packing %: The percentage of the box occupied by your system. Set a lower value for a sparse box with plenty of empty space, or a higher value to pack molecules tightly.">
                                             <div class="custom-inline-control" style="width:auto;">
                                                 <select id="smart-packing-top-input" onchange="toggleCustomInput('smart-packing-top-input','smart-packing-top-custom'); applyTopSmartBoxControls('packing')">
                                                     <option value="5">5</option>
