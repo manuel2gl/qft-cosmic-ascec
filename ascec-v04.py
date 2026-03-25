@@ -269,6 +269,121 @@ r_atom = {
     86: 1.50,  # Rn (Radon)
 }
 
+# Van der Waals radii (Bondi 1964 / Alvarez 2013, Å) — used for monatomic species (atoms, ions)
+r_vdw = {
+    # Period 1
+    1: 1.20,   # H
+    2: 1.40,   # He
+    # Period 2
+    3: 1.82,   # Li
+    4: 1.53,   # Be
+    5: 1.92,   # B
+    6: 1.70,   # C
+    7: 1.55,   # N
+    8: 1.52,   # O
+    9: 1.47,   # F
+    10: 1.54,  # Ne
+    # Period 3
+    11: 2.27,  # Na
+    12: 1.73,  # Mg
+    13: 1.84,  # Al
+    14: 2.10,  # Si
+    15: 1.80,  # P
+    16: 1.80,  # S
+    17: 1.75,  # Cl
+    18: 1.88,  # Ar
+    # Period 4
+    19: 2.75,  # K
+    20: 2.31,  # Ca
+    21: 2.11,  # Sc
+    22: 2.00,  # Ti
+    23: 2.00,  # V
+    24: 2.00,  # Cr
+    25: 2.00,  # Mn
+    26: 2.00,  # Fe
+    27: 2.00,  # Co
+    28: 1.63,  # Ni
+    29: 1.40,  # Cu
+    30: 1.39,  # Zn
+    31: 1.87,  # Ga
+    32: 2.11,  # Ge
+    33: 1.85,  # As
+    34: 1.90,  # Se
+    35: 1.85,  # Br
+    36: 2.02,  # Kr
+    # Period 5
+    37: 3.03,  # Rb
+    38: 2.49,  # Sr
+    39: 2.31,  # Y
+    40: 2.23,  # Zr
+    41: 2.18,  # Nb
+    42: 2.17,  # Mo
+    43: 2.16,  # Tc
+    44: 2.13,  # Ru
+    45: 2.10,  # Rh
+    46: 1.63,  # Pd
+    47: 1.72,  # Ag
+    48: 1.58,  # Cd
+    49: 1.93,  # In
+    50: 2.17,  # Sn
+    51: 2.06,  # Sb
+    52: 2.06,  # Te
+    53: 1.98,  # I
+    54: 2.16,  # Xe
+    # Period 6
+    55: 3.43,  # Cs
+    56: 2.68,  # Ba
+    57: 2.43,  # La
+    58: 2.42,  # Ce
+    59: 2.40,  # Pr
+    60: 2.39,  # Nd
+    61: 2.38,  # Pm
+    62: 2.36,  # Sm
+    63: 2.35,  # Eu
+    64: 2.34,  # Gd
+    65: 2.33,  # Tb
+    66: 2.31,  # Dy
+    67: 2.30,  # Ho
+    68: 2.29,  # Er
+    69: 2.27,  # Tm
+    70: 2.26,  # Yb
+    71: 2.24,  # Lu
+    72: 2.23,  # Hf
+    73: 2.22,  # Ta
+    74: 2.18,  # W
+    75: 2.16,  # Re
+    76: 2.16,  # Os
+    77: 2.13,  # Ir
+    78: 1.75,  # Pt
+    79: 1.66,  # Au
+    80: 1.55,  # Hg
+    81: 1.96,  # Tl
+    82: 2.02,  # Pb
+    83: 2.07,  # Bi
+    84: 1.97,  # Po
+    85: 2.02,  # At
+    86: 2.20,  # Rn
+}
+
+def get_radius(atomic_num: int, mol_def=None) -> float:
+    """Return the appropriate atomic radius for box-length calculations.
+
+    Uses van der Waals radius for monatomic species (single atom or ion) and
+    covalent radius for multi-atom molecules.
+
+    Args:
+        atomic_num: Atomic number of the element.
+        mol_def: MoleculeData object (optional). If provided and has only one atom,
+                 the VDW radius is used.
+
+    Returns:
+        float: Radius in Angstroms.
+    """
+    is_monatomic = mol_def is not None and len(mol_def.atoms_coords) == 1
+    if is_monatomic:
+        return r_vdw.get(atomic_num, r_atom.get(atomic_num, 1.70) * 1.2)
+    return r_atom.get(atomic_num, 1.50)
+
 # Element Symbol to Atomic Number Mapping
 # This dictionary will be used to convert element symbols from the input to atomic numbers.
 element_symbols = {
@@ -3851,13 +3966,14 @@ def calculate_molecular_volume(mol_def, method='coordinate_based') -> float:
         # Legacy: sum of individual atomic volumes (not coordinate-aware)
         total_volume = 0.0
         for atomic_num, x, y, z in mol_def.atoms_coords:
-            radius = r_atom.get(atomic_num, 1.5)
+            radius = get_radius(atomic_num, mol_def)
             atomic_volume = (4.0/3.0) * np.pi * (radius ** 3)
             total_volume += atomic_volume
         overlap_factor = 0.74
         return total_volume * overlap_factor
 
     # Default: coordinate-based volume using convex hull of atomic spheres
+    # Uses VDW radii for monatomic species, covalent for molecules.
     try:
         from scipy.spatial import ConvexHull
 
@@ -3877,7 +3993,7 @@ def calculate_molecular_volume(mol_def, method='coordinate_based') -> float:
 
         all_surface_points = []
         for atomic_num, x, y, z in mol_def.atoms_coords:
-            radius = r_atom.get(atomic_num, 1.5)
+            radius = get_radius(atomic_num, mol_def)
             for ddx, ddy, ddz in directions:
                 all_surface_points.append([x + radius*ddx, y + radius*ddy, z + radius*ddz])
 
@@ -3902,7 +4018,7 @@ def _bounding_box_volume(mol_def) -> float:
     max_xyz = np.array([-np.inf, -np.inf, -np.inf])
 
     for atomic_num, x, y, z in mol_def.atoms_coords:
-        radius = r_atom.get(atomic_num, 1.5)
+        radius = get_radius(atomic_num, mol_def)
         pos = np.array([x, y, z])
         min_xyz = np.minimum(min_xyz, pos - radius)
         max_xyz = np.maximum(max_xyz, pos + radius)
@@ -3915,7 +4031,8 @@ def _bounding_box_volume(mol_def) -> float:
 def calculate_molecular_extent(mol_def) -> float:
     """
     Calculate the longest molecular extent (max distance between any two atoms
-    including their covalent radii). This is the molecular 'diameter'.
+    including their radii). This is the molecular 'diameter'.
+    Uses VDW radii for monatomic species (atoms/ions), covalent for molecules.
 
     Args:
         mol_def: MoleculeData object containing atomic coordinates and numbers
@@ -3925,7 +4042,7 @@ def calculate_molecular_extent(mol_def) -> float:
     """
     if not mol_def.atoms_coords or len(mol_def.atoms_coords) < 2:
         if mol_def.atoms_coords:
-            r = r_atom.get(mol_def.atoms_coords[0][0], 1.5)
+            r = get_radius(mol_def.atoms_coords[0][0], mol_def)
             return 2.0 * r
         return 0.0
 
@@ -3933,10 +4050,10 @@ def calculate_molecular_extent(mol_def) -> float:
     coords = mol_def.atoms_coords
     for i in range(len(coords)):
         ai, xi, yi, zi = coords[i]
-        ri = r_atom.get(ai, 1.5)
+        ri = get_radius(ai, mol_def)
         for j in range(i + 1, len(coords)):
             aj, xj, yj, zj = coords[j]
-            rj = r_atom.get(aj, 1.5)
+            rj = get_radius(aj, mol_def)
             dist = math.sqrt((xi - xj)**2 + (yi - yj)**2 + (zi - zj)**2) + ri + rj
             if dist > max_dist:
                 max_dist = dist
@@ -4034,7 +4151,7 @@ def calculate_optimal_box_length(state: SystemState, target_packing_fractions: O
     Two methods (both use L = (V_eff / phi)^(1/3)):
       Method A (HB systems):  V_eff = V_mol + V_HB  (hull volumes + H-bond ghost cylinders)
       Method B (non-HB):      V_eff = L_diag³        (diagonal-derived volume from extents)
-                               where L_diag = 1.5 × sum_of_extents / sqrt(3)
+                               where L_diag = sum_of_extents / sqrt(3)
 
     Method A is preferred when the system has primary hydrogen bond potential.
     Method B is used otherwise.
@@ -4104,8 +4221,8 @@ def calculate_optimal_box_length(state: SystemState, target_packing_fractions: O
     results['total_hb_network_volume'] = total_hb_network_volume
     results['has_primary_hbonds'] = system_has_hbonds
 
-    # Diagonal-based reference length (sum of extents × 1.5 / √3)
-    diagonal = total_extent_sum * 1.5
+    # Diagonal-based reference length (sum of extents / √3)
+    diagonal = total_extent_sum * 1.0
     diagonal_box_length = diagonal / math.sqrt(3.0)
     diagonal_derived_volume = diagonal_box_length ** 3
     results['diagonal_sum_extents'] = total_extent_sum
@@ -4197,7 +4314,7 @@ def provide_box_length_advice(state: SystemState):
     Provides comprehensive advice on appropriate box lengths.
     Both methods use L = (V_eff / phi)^(1/3):
       Method A (HB):     V_eff = V_mol + V_HB
-      Method B (non-HB): V_eff = L_diag³, where L_diag = 1.5 × sum_of_extents / sqrt(3)
+      Method B (non-HB): V_eff = L_diag³, where L_diag = sum_of_extents / sqrt(3)
     """
     if not state.all_molecule_definitions:
         _print_verbose("Cannot provide box length advice: No molecule definitions found.", 0, state)
@@ -4234,7 +4351,7 @@ def provide_box_length_advice(state: SystemState):
         _print_verbose(f"  Effective volume: V_mol + V_HB = {total_effective_volume:.2f} Å³", 1, state)
     else:
         _print_verbose(f"  Sum of extents (ΣE): {results['diagonal_sum_extents']:.2f} Å", 1, state)
-        _print_verbose(f"  L_diag = 1.5 × ΣE / √3 = {results['diagonal_box_length']:.2f} Å", 1, state)
+        _print_verbose(f"  L_diag = ΣE / √3 = {results['diagonal_box_length']:.2f} Å", 1, state)
         _print_verbose(f"  Effective volume: L_diag³ = {total_effective_volume:.2f} Å³", 1, state)
 
     _print_verbose("\nIndividual molecule analysis:", 1, state)
