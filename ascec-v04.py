@@ -4064,7 +4064,7 @@ def has_primary_hydrogen_bonds(mol_defs) -> bool:
     """
     Detect whether the system has significant primary hydrogen bond donors/acceptors.
     A system has primary H-bonds if at least one molecule has both H-bond donors
-    (H atoms) and acceptors (N, O, F with weight 1; S with weight 0.5; Cl with weight 0.3).
+    (H atoms) and acceptors (N, P, O, S, Se, F, Cl, Br, I — each counting as 1).
 
     Args:
         mol_defs: List of MoleculeData objects
@@ -4072,6 +4072,7 @@ def has_primary_hydrogen_bonds(mol_defs) -> bool:
     Returns:
         bool: True if the system has primary hydrogen bonding potential
     """
+    HB_ACCEPTORS = {'N', 'P', 'O', 'S', 'Se', 'F', 'Cl', 'Br', 'I'}
     total_donors = 0
     total_acceptors = 0
     for mol_def in mol_defs:
@@ -4079,12 +4080,8 @@ def has_primary_hydrogen_bonds(mol_defs) -> bool:
             element = get_element_symbol(atomic_num)
             if element == 'H':
                 total_donors += 1
-            elif element in ['N', 'O', 'F']:
+            elif element in HB_ACCEPTORS:
                 total_acceptors += 1
-            elif element == 'S':
-                total_acceptors += 0.5
-            elif element == 'Cl':
-                total_acceptors += 0.3
     # Need at least 1 donor AND 1 acceptor for primary H-bonds
     return total_donors >= 1 and total_acceptors >= 1
 
@@ -4108,25 +4105,20 @@ def calculate_hydrogen_bond_potential(mol_def) -> Dict:
     hb_volume_per_bond = math.pi * (hb_interaction_radius ** 2) * avg_hb_length
     
     # Count potential donors and acceptors
+    HB_ACCEPTORS = {'N', 'P', 'O', 'S', 'Se', 'F', 'Cl', 'Br', 'I'}
     donors = 0
     acceptors = 0
-    
+
     for atomic_num, x, y, z in mol_def.atoms_coords:
         element = get_element_symbol(atomic_num)
-        
-        # Hydrogen bond donors (H attached to N, O, F)
+
+        # Hydrogen bond donors (H atoms)
         if element == 'H':
             donors += 1
-        
-        # Hydrogen bond acceptors (N, O, F with lone pairs)
-        elif element in ['N', 'O', 'F']:
+
+        # Hydrogen bond acceptors (N, P, O, S, Se, F, Cl, Br, I — each counts as 1)
+        elif element in HB_ACCEPTORS:
             acceptors += 1
-        
-        # Special cases for other elements that can participate
-        elif element == 'S':
-            acceptors += 0.5  # Weaker acceptor
-        elif element == 'Cl':
-            acceptors += 0.3  # Weak acceptor
     
     # Estimate potential hydrogen bonds (limited by the smaller of donors/acceptors)
     potential_hb_bonds = min(donors, acceptors)
