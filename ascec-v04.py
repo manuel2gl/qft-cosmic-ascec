@@ -6576,6 +6576,23 @@ def create_replicated_runs(input_file_path: str, num_replicas: int, create_launc
     return replicated_files
 
 
+def _sim_base_name(path: str) -> str:
+    """Extract the similarity base folder name from a path.
+
+    For absolute paths like '/home/user/project/similarity/orca_out_126',
+    returns 'similarity'.  For relative paths like 'similarity/orca_out_126',
+    returns 'similarity'.  For plain names like 'similarity', returns as-is.
+    """
+    if os.path.isabs(path):
+        # Walk up from the leaf until we find a 'similarity*' component
+        parts = path.split(os.sep)
+        for part in reversed(parts):
+            if part.startswith('similarity'):
+                return part
+        # Fallback: parent of last component
+        return os.path.basename(os.path.dirname(path))
+    return path.split('/')[0] if '/' in path else path
+
 # Sort functionality - integrated from sort_files.py
 def extract_base(filename):
     """Extract base name from filename by removing extension and known suffixes."""
@@ -8683,7 +8700,10 @@ def collect_out_files_with_tracking(reuse_existing=False, target_sim_folder=None
             file_type_desc = "ORCA files"
         print(f"Copied {num_files} {file_type_desc} to {similarity_folder_name}/{destination_folder_name}")
         return destination_path
-    except Exception:
+    except Exception as e:
+        import traceback
+        print(f"Error collecting output files: {e}")
+        traceback.print_exc()
         return None
 
 def parse_gaussian_output(filepath):
@@ -12891,7 +12911,7 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
     # organize step sets context.refinement_sim_folder to "similarity_2/orca_out_5_1"
     # but skipped_structures is at "similarity_2/skipped_structures/"
     if '/' in sim_dir and ('orca_out_' in sim_dir or 'gaussian_out_' in sim_dir):
-        sim_dir = sim_dir.split('/')[0]
+        sim_dir = _sim_base_name(sim_dir)
     
     # 2. Locate need_recalculation directory and optionally clustered_with_minima
     need_recalc_dir = os.path.join(sim_dir, "skipped_structures", "need_recalculation")
@@ -14147,12 +14167,18 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                             
                             # Extract key info from output
                             output = f.getvalue()
+                            # Surface any errors that were captured during redirect
+                            if 'Error' in output or 'Traceback' in output:
+                                import sys as _sys
+                                for _line in output.split('\n'):
+                                    if 'Error' in _line or 'Traceback' in _line or _line.startswith('  File '):
+                                        print(_line, file=_sys.stderr)
                             if context.workflow_verbose_level >= 1:
                                 if 'Summary written to' in output:
                                     print("\nSummary file(s) generated")
                             if similarity_folder:
                                 context.optimization_sim_folder = similarity_folder
-                                sim_base = similarity_folder.split('/')[0] if '/' in similarity_folder else similarity_folder
+                                sim_base = _sim_base_name(similarity_folder)
                                 context.pending_similarity_folder = sim_base
                             # Look for similarity folder reference
                             if 'Copied' in output and 'similarity' in output:
@@ -14167,10 +14193,10 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                                             sim_folder = match.group(1)
                                             context.optimization_sim_folder = sim_folder
                                             # Also set as pending for next similarity stage
-                                            sim_base = sim_folder.split('/')[0] if '/' in sim_folder else sim_folder
+                                            sim_base = _sim_base_name(sim_folder)
                                             context.pending_similarity_folder = sim_base
                                         break
-                            
+
                             if context.workflow_verbose_level >= 1:
                                 print(f"\n✓ Files organized and sorted")
                             
@@ -14250,25 +14276,25 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     # Check if there's a pending_similarity_folder (set by optimization/refinement organize step)
     if hasattr(context, 'pending_similarity_folder') and context.pending_similarity_folder:
         pending_sim = context.pending_similarity_folder
-        pending_base = pending_sim.split('/')[0] if '/' in pending_sim else pending_sim
+        pending_base = _sim_base_name(pending_sim)
         if os.path.isdir(pending_base):
             similarity_base = pending_base
         elif getattr(context, 'workflow_verbose_level', 0) >= 1:
             print(f"Warning: Pending similarity folder '{pending_base}' not found. Using fallback selection.")
         # Clear it after checking so stale values don't affect later stages
         context.pending_similarity_folder = None
-    
+
     # Fallback: check what optimization_sim_folder or refinement_sim_folder were set
     if not similarity_base:
         # If refinement_sim_folder is more recent (set after optimization_sim_folder), prefer it
         if hasattr(context, 'refinement_sim_folder') and context.refinement_sim_folder:
-            opt_base = context.refinement_sim_folder.split('/')[0] if '/' in context.refinement_sim_folder else context.refinement_sim_folder
+            opt_base = _sim_base_name(context.refinement_sim_folder)
             if os.path.exists(opt_base):
                 similarity_base = opt_base
-        
+
         # Otherwise use optimization_sim_folder
         if not similarity_base and hasattr(context, 'optimization_sim_folder') and context.optimization_sim_folder:
-            calc_base = context.optimization_sim_folder.split('/')[0] if '/' in context.optimization_sim_folder else context.optimization_sim_folder
+            calc_base = _sim_base_name(context.optimization_sim_folder)
             if os.path.exists(calc_base):
                 similarity_base = calc_base
     
@@ -14738,7 +14764,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     # Check if optimization stage set a similarity folder
     if hasattr(context, 'optimization_sim_folder') and context.optimization_sim_folder:
         # Extract base folder (e.g., "similarity" from "similarity/orca_out_10")
-        calc_base = context.optimization_sim_folder.split('/')[0] if '/' in context.optimization_sim_folder else context.optimization_sim_folder
+        calc_base = _sim_base_name(context.optimization_sim_folder)
         motifs_source_folder = calc_base
     else:
         # Fallback: search for existing similarity folders with motifs
@@ -14793,7 +14819,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
 
     existing_ref_sim_raw = getattr(context, 'refinement_sim_folder', None)
     existing_ref_sim: Optional[str] = existing_ref_sim_raw if isinstance(existing_ref_sim_raw, str) else None
-    existing_ref_base: Optional[str] = existing_ref_sim.split('/')[0] if existing_ref_sim and '/' in existing_ref_sim else existing_ref_sim
+    existing_ref_base: Optional[str] = _sim_base_name(existing_ref_sim) if existing_ref_sim else existing_ref_sim
     if isinstance(existing_ref_base, str) and existing_ref_base == expected_sim_folder:
         used_sim_folder: str = str(existing_ref_base)
     else:
@@ -15182,17 +15208,14 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         # organize step may set refinement_sim_folder to "similarity_2/orca_out_5"
         # but we need just "similarity_2" to scan for orca_out subdirectories
         if refinement_sim_folder and '/' in refinement_sim_folder:
-            refinement_sim_folder = refinement_sim_folder.split('/')[0]
+            refinement_sim_folder = _sim_base_name(refinement_sim_folder)
         
         if not refinement_sim_folder:
             # Calculate the expected folder based on motifs source
             if hasattr(context, 'refinement_motifs_source'):
                 motifs_source = context.refinement_motifs_source
                 # Extract base folder (e.g., "similarity" from "similarity/motifs_03/")
-                if '/' in motifs_source:
-                    calc_base = motifs_source.split('/')[0]
-                else:
-                    calc_base = motifs_source
+                calc_base = _sim_base_name(motifs_source)
                 
                 # Optimization outputs go to the NEXT similarity folder
                 if calc_base == "similarity":
@@ -15412,7 +15435,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                 # Determine similarity folder - use refinement_sim_folder (set earlier in this function)
                 if hasattr(context, 'refinement_sim_folder') and context.refinement_sim_folder:
                     # Use the folder determined at the start of execute_optimization_stage
-                    sim_base = context.refinement_sim_folder.split('/')[0] if '/' in context.refinement_sim_folder else context.refinement_sim_folder
+                    sim_base = _sim_base_name(context.refinement_sim_folder)
                 else:
                     # Calculate next similarity folder
                     root_dir = os.getcwd()
@@ -15496,7 +15519,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                         print("\nSummary file(s) generated")
                 if similarity_folder:
                     context.refinement_sim_folder = similarity_folder
-                    sim_base = similarity_folder.split('/')[0] if '/' in similarity_folder else similarity_folder
+                    sim_base = _sim_base_name(similarity_folder)
                     context.pending_similarity_folder = sim_base
                 if 'Copied' in output and 'similarity' in output:
                     # Extract the copy message and similarity folder
@@ -15510,7 +15533,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                                 sim_folder = match.group(1)
                                 context.refinement_sim_folder = sim_folder
                                 # Also set as pending for next similarity stage
-                                sim_base = sim_folder.split('/')[0] if '/' in sim_folder else sim_folder
+                                sim_base = _sim_base_name(sim_folder)
                                 context.pending_similarity_folder = sim_base
                             break
                 
