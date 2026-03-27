@@ -8562,8 +8562,11 @@ def collect_out_files_with_tracking(reuse_existing=False, target_sim_folder=None
         )]
         
         if not all_out_files:
+            import sys as _dbg_sys2
+            print(f"[DEBUG-COLLECT] No .out files found in {current_directory}", file=_dbg_sys2.stderr)
+            print(f"[DEBUG-COLLECT] Raw find_out_files returned {len(find_out_files(current_directory, include_orca=True, include_gaussian=include_gaussian))} files before filter", file=_dbg_sys2.stderr)
             return None
-        
+
         num_files = len(all_out_files)
         
         # Detect file types to name folder appropriately
@@ -14115,6 +14118,9 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                 
                 # Sort output files by energy (only in workflow mode)
                 # Run organize step if any calculations completed (new or already done)
+                # DEBUG: trace sort entry
+                import sys as _dbg_sys
+                print(f"[DEBUG-SORT] total_completed={total_completed}, is_workflow={context.is_workflow}, cwd={os.getcwd()}", file=_dbg_sys.stderr)
                 if total_completed > 0 and context.is_workflow:
                     saved_cwd = os.getcwd()
                     try:
@@ -14125,7 +14131,8 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                         target_sim_base = fixed_opt_sim_base
 
                         already_organized = os.path.exists(os.path.join(parent_dir, target_sim_base))
-                        
+                        print(f"[DEBUG-SORT] parent_dir={parent_dir}, target={target_sim_base}, already_organized={already_organized}", file=_dbg_sys.stderr)
+
                         if already_organized:
                             if not workflow_concise:
                                 print("\n✓ Files already organized (resuming from cache)")
@@ -14145,7 +14152,8 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                                 shutil.rmtree("good_structures")
                             
                             os.chdir(optimization_dir_path)
-                            
+                            print(f"[DEBUG-SORT] chdir to {os.getcwd()}, files: {len(os.listdir('.'))}, .out count: {len([x for x in os.listdir('.') if x.endswith('.out')])}", file=_dbg_sys.stderr)
+
                             # Group files by base names into subfolders (silent in workflow)
                             import io
                             import contextlib
@@ -14156,7 +14164,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                                 combine_xyz_files()
                                 create_combined_mol()
                                 create_summary_with_tracking(".", actual_wall_time=_actual_wall)
-                                
+
                                 # Reuse stage folder for redo/resume and write into fixed target folder.
                                 is_redo = hasattr(context, 'recalculated_files') and bool(context.recalculated_files)
                                 reuse_folder = is_redo or os.path.exists(os.path.join(parent_dir, target_sim_base))
@@ -14164,9 +14172,10 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                                     reuse_existing=reuse_folder,
                                     target_sim_folder=target_sim_base
                                 )
-                            
+
                             # Extract key info from output
                             output = f.getvalue()
+                            print(f"[DEBUG-SORT] similarity_folder={similarity_folder}, output_preview={output[:200]}", file=_dbg_sys.stderr)
                             # Surface any errors that were captured during redirect
                             if 'Error' in output or 'Traceback' in output:
                                 import sys as _sys
@@ -14202,6 +14211,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                             
                     except Exception as e:
                         print(f"⚠ Warning: Could not organize files: {e}")
+                        import traceback; traceback.print_exc(file=_dbg_sys.stderr)
                     finally:
                         os.chdir(saved_cwd)
 
