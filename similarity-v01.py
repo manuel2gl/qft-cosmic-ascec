@@ -3329,7 +3329,7 @@ def preprocess_j_argument(argv):
 
 
 # Modified to accept rmsd_threshold and output_base_dir
-def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, motif_threshold=1.0, num_cores=None, temperature_k=298.15, loose=False):
+def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, motif_threshold=1.0, num_cores=None, temperature_k=298.15, loose=False, group_hb=False):
     """
     Performs hierarchical clustering and comprehensive analysis on molecular structures.
     This is the main analysis function that orchestrates the entire clustering workflow.
@@ -3743,18 +3743,31 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
     elif loose and _dataset_has_freq:
         print("NOTE: --loose flag ignored (dataset has frequency data, loose mode only applies to opt-only)")
 
-    # --- Single-pool clustering (no H-bond pre-grouping) ---
-    # H-bond detection is sensitive to small geometric changes — two nearly
-    # identical structures can differ by 1-2 H-bonds.  Pre-grouping by exact
-    # H-bond count imposes a rigid partition that can split genuinely similar
-    # structures into separate families.  Instead, all structures go into a
-    # single pool and property-based clustering decides the grouping.
-    # H-bond count is still recorded per structure for informational output.
-    hbond_groups = {0: sorted(clean_data_for_clustering,
-                              key=lambda x: (_sorting_energy(x), x['filename']))}
-
+    # --- H-bond grouping decision ---
+    # By default, all structures go into a single pool and property-based
+    # clustering decides the grouping.  H-bond detection is sensitive to small
+    # geometric changes — two nearly identical structures can differ by 1-2
+    # H-bonds — so pre-grouping by exact H-bond count can split genuinely
+    # similar structures into separate families.
+    #
+    # The --group-hb flag restores the old behavior of pre-grouping by exact
+    # H-bond count, which produces separate dendrograms per HB family.  This
+    # can be useful for visualization when the user wants to inspect each
+    # H-bond family independently.
     if is_compare_mode and len(clean_data_for_clustering) >= 2:
+        hbond_groups = {0: sorted(clean_data_for_clustering,
+                                  key=lambda x: (_sorting_energy(x), x['filename']))}
         print("  Comparison mode: Running clustering to generate dendrogram, then forcing a single output cluster.")
+    elif group_hb:
+        # Group by exact H-bond count (separate dendrograms per HB family)
+        hbond_groups = {}
+        for item in clean_data_for_clustering:
+            hbond_groups.setdefault(item['num_hydrogen_bonds'], []).append(item)
+        print(f"  H-bond pre-grouping enabled: {len(hbond_groups)} HB families detected")
+    else:
+        # Default: single pool — let property-based clustering decide
+        hbond_groups = {0: sorted(clean_data_for_clustering,
+                                  key=lambda x: (_sorting_energy(x), x['filename']))}
 
     # Output directory paths
     dendrogram_images_folder = os.path.join(output_base_dir, "dendrogram_images")
@@ -4086,7 +4099,10 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
         if previous_hbond_group_processed:
             hbond_group_summary_lines.append("\n" + "-" * 75 + "\n") 
         
-        hbond_group_summary_lines.append(f"All configurations\n")
+        if group_hb and not is_compare_mode:
+            hbond_group_summary_lines.append(f"Hydrogen bonds: {hbond_count}\n")
+        else:
+            hbond_group_summary_lines.append(f"All configurations\n")
         hbond_group_summary_lines.append(f"Configurations: {len(group_data)}")
 
         current_hbond_group_clusters_for_final_output = [] 
@@ -4150,7 +4166,8 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
                 continue # Skip to next hbond group
             
             # Announce clustering start for this group
-            print_step(f"Clustering {len(group_data)} configurations...")
+            _hb_tag = f" (H-bonds={hbond_count})" if group_hb else ""
+            print_step(f"Clustering {len(group_data)} configurations{_hb_tag}...")
             
             # Show information about reduced vibrational frequency weights (only once)
             vib_freq_features = ['first_vib_freq', 'last_vib_freq']
@@ -4210,6 +4227,8 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
             
             if is_compare_mode:
                 dendrogram_title_suffix = "Comparison"
+            elif group_hb:
+                dendrogram_title_suffix = f"H-bonds = {hbond_count}"
             else:
                 dendrogram_title_suffix = "All configurations"
             plt.title(f"Hierarchical Clustering Dendrogram ({dendrogram_title_suffix})")
@@ -4218,7 +4237,10 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
             plt.ylabel("Euclidean Distance")
             plt.ylim(bottom=0)
 
-            dendrogram_filename = os.path.join(dendrogram_images_folder, f"dendrogram.png")
+            if group_hb and not is_compare_mode:
+                dendrogram_filename = os.path.join(dendrogram_images_folder, f"dendrogram_H{hbond_count}.png")
+            else:
+                dendrogram_filename = os.path.join(dendrogram_images_folder, f"dendrogram.png")
 
             plt.tight_layout()
             plt.savefig(dendrogram_filename)
@@ -4417,7 +4439,7 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
                 cluster_name_prefix = f"cluster_{current_global_cluster_id}_{num_configurations_in_cluster}"
 
             write_cluster_dat_file(cluster_name_prefix, members_data, output_base_dir, rmsd_threshold, 
-                                   hbond_count_for_original_cluster=None, weights=weights, tolerances=abs_tolerances)
+                                   hbond_count_for_original_cluster=hbond_count if group_hb else None, weights=weights, tolerances=abs_tolerances)
             vprint(f"Wrote combined data for Cluster '{cluster_name_prefix}' to '{cluster_name_prefix}.dat'")
 
             cluster_xyz_subfolder = os.path.join(extracted_clusters_folder, cluster_name_prefix)
@@ -4761,6 +4783,8 @@ OPTIONS:
     --compare FILE [FILE ...]     Direct comparison mode (minimum 2 files)
     -T=FLOAT, --temperature=FLOAT Temperature for Boltzmann analysis in K
                                   (default: 298.15)
+    --group-hb                    Group structures by H-bond count before
+                                  clustering (separate dendrograms per family)
   
   Output:
     -v, --verbose                 Enable detailed progress output
@@ -4775,7 +4799,7 @@ OUTPUT FILES:
   clustering_summary.txt          Comprehensive clustering report with statistics
   data_cache.pkl                  Cache file for output data
   dendrogram_images/              Hierarchical clustering dendrograms
-    └── dendrogram.png            Hierarchical clustering dendrogram
+    └── dendrogram.png            Single dendrogram (or dendrogram_H{N}.png with --group-hb)
   extracted_data/                 Raw data files (.dat) for each cluster
     └── cluster_*.dat
   extracted_clusters/             Individual cluster directories
@@ -4875,6 +4899,9 @@ MORE INFORMATION:
     parser.add_argument("-V", "--version", action="store_true",
                         help="display version and exit")
     
+    parser.add_argument("--group-hb", action="store_true",
+                        help="group structures by H-bond count before clustering (separate dendrograms per HB family)")
+
     parser.add_argument("--loose", action="store_true",
                         help="use relaxed weights for geometry-sensitive features (for loose optimizations in opt-only mode)")
 
@@ -4978,7 +5005,8 @@ MORE INFORMATION:
             motif_threshold=motif_threshold,
             num_cores=num_cores,
             temperature_k=temperature_k,
-            loose=args.loose
+            loose=args.loose,
+            group_hb=args.group_hb
         )
         print(f"\n--- Finished comparing {len(compare_files)} files: {', '.join(file_names)} ---\n")
 
@@ -5091,7 +5119,7 @@ MORE INFORMATION:
                 display_name = "./"
             print(f"\nProcessing folder: {display_name}\n")
 
-            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, motif_threshold=motif_threshold, num_cores=num_cores, temperature_k=temperature_k, loose=args.loose)
+            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, motif_threshold=motif_threshold, num_cores=num_cores, temperature_k=temperature_k, loose=args.loose, group_hb=args.group_hb)
 
             print(f"\nFinished processing folder: {display_name}\n")
 
