@@ -3743,33 +3743,18 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
     elif loose and _dataset_has_freq:
         print("NOTE: --loose flag ignored (dataset has frequency data, loose mode only applies to opt-only)")
 
-    hbond_groups = {}
-    
-    # NEW: Handle comparison mode's clustering logic
+    # --- Single-pool clustering (no H-bond pre-grouping) ---
+    # H-bond detection is sensitive to small geometric changes — two nearly
+    # identical structures can differ by 1-2 H-bonds.  Pre-grouping by exact
+    # H-bond count imposes a rigid partition that can split genuinely similar
+    # structures into separate families.  Instead, all structures go into a
+    # single pool and property-based clustering decides the grouping.
+    # H-bond count is still recorded per structure for informational output.
+    hbond_groups = {0: sorted(clean_data_for_clustering,
+                              key=lambda x: (_sorting_energy(x), x['filename']))}
+
     if is_compare_mode and len(clean_data_for_clustering) >= 2:
         print("  Comparison mode: Running clustering to generate dendrogram, then forcing a single output cluster.")
-        # For comparison, we will treat them as a single group for dendrogram generation
-        # and then force them into one output cluster.
-        group_data_for_clustering = sorted(clean_data_for_clustering,
-                                           key=lambda x: (_sorting_energy(x), x['filename']))
-        
-        # This will be the only "hbond group" processed in comparison mode, effectively.
-        hbond_groups = {0: group_data_for_clustering} # Use 0 as a dummy hbond count
-    elif not _dataset_has_freq:
-        # Opt-only mode: skip H-bond pre-grouping entirely.
-        # H-bond detection is sensitive to small geometric changes — two nearly
-        # identical structures can differ by 1-2 H-bonds.  In freq mode the full
-        # feature vector + Boltzmann filtering compensates, but in opt-only mode
-        # the reduced vector makes this rigid split too aggressive.  Instead, put
-        # all structures in a single pool and let property-based clustering decide.
-        # H-bond count is still recorded per structure for informational output.
-        hbond_groups = {0: sorted(clean_data_for_clustering,
-                                  key=lambda x: (_sorting_energy(x), x['filename']))}
-        vprint(f"Opt-only mode: H-bond pre-grouping disabled, clustering all {len(clean_data_for_clustering)} structures together")
-    else:
-        # Freq mode: original logic — group by exact H-bond count
-        for item in clean_data_for_clustering:
-            hbond_groups.setdefault(item['num_hydrogen_bonds'], []).append(item)
 
     # Output directory paths
     dendrogram_images_folder = os.path.join(output_base_dir, "dendrogram_images")
@@ -3938,9 +3923,9 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
             active_numerical_features_for_group, dropped_scalar_features = select_complete_group_scalar_features(group_data, all_potential_numerical_features)
             use_rotational_constants = all(has_valid_rotational_constants(molecule_data) for molecule_data in group_data)
             if dropped_scalar_features:
-                vprint(f"  H-bond group {hbond_count}: reduced scalar feature set due to missing values in some structures: {', '.join(dropped_scalar_features)}")
+                vprint(f"  Reduced scalar feature set due to missing values in some structures: {', '.join(dropped_scalar_features)}")
             if not use_rotational_constants:
-                vprint(f"  H-bond group {hbond_count}: reduced vector excludes rotational constants because they are not available for all structures")
+                vprint(f"  Reduced vector excludes rotational constants because they are not available for all structures")
 
             features_for_scaling_raw = []
             ordered_feature_names_for_scaling = []
@@ -4101,17 +4086,13 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
         if previous_hbond_group_processed:
             hbond_group_summary_lines.append("\n" + "-" * 75 + "\n") 
         
-        if not _DATASET_HAS_FREQ and hbond_count == 0:
-            # Opt-only mode: all structures in one pool, no H-bond pre-grouping
-            hbond_group_summary_lines.append(f"All configurations (H-bond pre-grouping disabled)\n")
-        else:
-            hbond_group_summary_lines.append(f"Hydrogen bonds: {hbond_count}\n")
+        hbond_group_summary_lines.append(f"All configurations\n")
         hbond_group_summary_lines.append(f"Configurations: {len(group_data)}")
 
         current_hbond_group_clusters_for_final_output = [] 
 
         if len(group_data) < 2 or not group_has_any_clustering_feature_data(group_data):
-            vprint(f"\nSkipping detailed clustering for H-bond group {hbond_count}: Less than 2 configurations or no valid numerical features left after filtering. Treating each as a single-configuration cluster.")
+            vprint(f"\nSkipping detailed clustering: Less than 2 configurations or no valid numerical features left after filtering. Treating each as a single-configuration cluster.")
             
             for single_mol_data in group_data:
                 single_mol_data['_rmsd_pass_origin'] = 'first_pass_validated' 
@@ -4162,19 +4143,19 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
             # Check if there are any features left to scale after applying weights
             if not features_for_scaling_raw or all(len(f) == 0 for f in features_for_scaling_raw):
                 vprint(f"  WARNING: No numerical features left for clustering after applying weights. Treating each as a single-configuration cluster.")
-                print_step(f"H-bond group {hbond_count}: {len(group_data)} config(s) - no features for clustering")
+                print_step(f"{len(group_data)} config(s) - no features for clustering")
                 for single_mol_data in group_data:
                     single_mol_data['_rmsd_pass_origin'] = 'first_pass_validated' 
                     current_hbond_group_clusters_for_final_output.append([single_mol_data]) 
                 continue # Skip to next hbond group
             
             # Announce clustering start for this group
-            print_step(f"H-bond group {hbond_count}: Clustering {len(group_data)} configurations...")
+            print_step(f"Clustering {len(group_data)} configurations...")
             
             # Show information about reduced vibrational frequency weights (only once)
             vib_freq_features = ['first_vib_freq', 'last_vib_freq']
             reduced_weights = [f for f in vib_freq_features if f in ordered_feature_names_for_scaling and weights.get(f, 1.0) < 1.0]
-            if reduced_weights and hbond_count == sorted(hbond_groups.keys())[0]:  # Only show for first group
+            if reduced_weights:
                 weight_info = ", ".join([f"{f}: {weights.get(f, 1.0)}" for f in reduced_weights])
                 vprint(f"  NOTE: Using reduced weights for vibrational frequencies ({weight_info}) due to computational sensitivity")
 
@@ -4229,22 +4210,15 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
             
             if is_compare_mode:
                 dendrogram_title_suffix = "Comparison"
-            elif not _DATASET_HAS_FREQ and hbond_count == 0:
-                dendrogram_title_suffix = "All configurations"
             else:
-                dendrogram_title_suffix = f"H-bonds = {hbond_count}"
+                dendrogram_title_suffix = "All configurations"
             plt.title(f"Hierarchical Clustering Dendrogram ({dendrogram_title_suffix})")
-            
+
             plt.xlabel("Configuration")
             plt.ylabel("Euclidean Distance")
             plt.ylim(bottom=0)
-            
-            # --- MODIFIED DENDROGRAM FILENAME LOGIC ---
-            if is_compare_mode:
-                dendrogram_filename = os.path.join(dendrogram_images_folder, f"dendrogram.png")
-            else:
-                dendrogram_filename = os.path.join(dendrogram_images_folder, f"dendrogram_H{hbond_count}.png")
-            # --- END MODIFIED DENDROGRAM FILENAME LOGIC ---
+
+            dendrogram_filename = os.path.join(dendrogram_images_folder, f"dendrogram.png")
 
             plt.tight_layout()
             plt.savefig(dendrogram_filename)
@@ -4320,7 +4294,7 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
 
 
                 if rmsd_threshold is not None:
-                    print(f"  Performing first RMSD validation for H-bond group {hbond_count}...")
+                    print(f"  Performing first RMSD validation...")
                     
                     validated_main_clusters, individual_outliers_from_first_pass = \
                         post_process_clusters_with_rmsd(initial_clusters_list_sorted_by_energy, rmsd_threshold)
@@ -4329,7 +4303,7 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
                     total_rmsd_outliers_first_pass += len(individual_outliers_from_first_pass)
 
                     if individual_outliers_from_first_pass:
-                        print(f"    Attempting second RMSD clustering on {len(individual_outliers_from_first_pass)} outliers from first pass (H-bonds {hbond_count})...")
+                        print(f"    Attempting second RMSD clustering on {len(individual_outliers_from_first_pass)} outliers from first pass...")
                         
                         outliers_grouped_by_parent_global_cluster = {}
                         for outlier_conf in individual_outliers_from_first_pass:
@@ -4355,7 +4329,6 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
                                                                                   min(m['filename'] for m in cluster))) 
 
         # Filter out structures with imaginary frequencies AFTER clustering
-        # This is done per H-bond group to maintain proper grouping
         current_hbond_group_clusters_for_final_output, hbond_skipped_info = filter_imaginary_freq_structures(
             current_hbond_group_clusters_for_final_output, 
             output_base_dir, 
@@ -4381,14 +4354,14 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
 
         hbond_group_summary_lines.append(f"Number of clusters: {len(current_hbond_group_clusters_for_final_output)}\n\n")
 
-        # Print info about this H-bond group only if it has valid clusters after filtering
+        # Print info only if there are valid clusters after filtering
         if len(current_hbond_group_clusters_for_final_output) > 0:
             # Check if this was a single-config group (before any potential RMSD processing)
             original_group_size = len(group_data)
             if original_group_size < 2:
                 print()
                 print()
-                print_step(f"H-bond group {hbond_count}: {original_group_size} config(s) - treating as single-config clusters")
+                print_step(f"{original_group_size} config(s) - treating as single-config clusters")
                 print()  # Blank line after single-config group
 
         # Add blank line before multi-config group
@@ -4444,7 +4417,7 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
                 cluster_name_prefix = f"cluster_{current_global_cluster_id}_{num_configurations_in_cluster}"
 
             write_cluster_dat_file(cluster_name_prefix, members_data, output_base_dir, rmsd_threshold, 
-                                   hbond_count_for_original_cluster=hbond_count, weights=weights, tolerances=abs_tolerances)
+                                   hbond_count_for_original_cluster=None, weights=weights, tolerances=abs_tolerances)
             vprint(f"Wrote combined data for Cluster '{cluster_name_prefix}' to '{cluster_name_prefix}.dat'")
 
             cluster_xyz_subfolder = os.path.join(extracted_clusters_folder, cluster_name_prefix)
@@ -4466,7 +4439,7 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
             summary_file_content_lines.extend(hbond_group_summary_lines)
             previous_hbond_group_processed = True 
 
-    # Write combined skipped structures summary after all H-bond groups are processed
+    # Write combined skipped structures summary after clustering
     if all_skipped_clustered_with_normal or all_skipped_need_recalc:
         combined_skipped_info = {
             'clustered_with_normal': all_skipped_clustered_with_normal,
@@ -4753,7 +4726,7 @@ if __name__ == "__main__":
         epilog="""DESCRIPTION:
   Similarity performs topological clustering of quantum chemistry outputs
   using a multi-dimensional physicochemical feature vector (energy, HOMO-LUMO
-  gap, dipole moment, rotational constants, vibrational frequencies, H-bonds).
+  gap, dipole moment, rotational constants, vibrational frequencies, H-bond geometry).
   Hierarchical clustering with optional RMSD refinement identifies unique
   conformational families and filters redundant structures.
 
@@ -4802,7 +4775,7 @@ OUTPUT FILES:
   clustering_summary.txt          Comprehensive clustering report with statistics
   data_cache.pkl                  Cache file for output data
   dendrogram_images/              Hierarchical clustering dendrograms
-    └── dendrogram.png            (or dendrogram_H{N}.png for H-bond groups)
+    └── dendrogram.png            Hierarchical clustering dendrogram
   extracted_data/                 Raw data files (.dat) for each cluster
     └── cluster_*.dat
   extracted_clusters/             Individual cluster directories
