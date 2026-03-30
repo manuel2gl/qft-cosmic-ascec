@@ -10919,6 +10919,17 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         # Opt-only → possible_final_ensemble (no true minima can be assured).
         # Freq mode → final_ensemble (original behaviour).
         opt_only = getattr(context, 'similarity_opt_only', False)
+        # Fallback: check clustering_summary.txt for opt-only marker in case the
+        # context flag was not set (e.g. similarity stage was fully cached).
+        if not opt_only and resolved_similarity_dir:
+            _cs_path = os.path.join(resolved_similarity_dir, "clustering_summary.txt")
+            if os.path.exists(_cs_path):
+                try:
+                    with open(_cs_path, 'r') as _csf:
+                        if 'opt-only mode' in _csf.read():
+                            opt_only = True
+                except OSError:
+                    pass
         if opt_only:
             ensemble_name = 'possible_final_ensemble'
         else:
@@ -11296,7 +11307,13 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     completed_stage_count = stage_num
                     context.completed_stage_count = completed_stage_count
                     stage_idx += 1
-                    
+
+                    # Restore similarity_opt_only flag from cached similarity result
+                    if stage_type == 'similarity':
+                        cached_result = stage_cache.get('result', {})
+                        if isinstance(cached_result, dict) and cached_result.get('opt_only', False):
+                            context.similarity_opt_only = True
+
                     # Validate cached optimization+similarity if applicable
                     if stage_type == 'optimization':
                         should_skip, new_idx = validate_cached_optimization_similarity(
@@ -11305,6 +11322,13 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         if not should_skip:
                             stage_idx = new_idx
                             continue
+                        # Restore similarity_opt_only from the skipped similarity cache
+                        if new_idx > stage_idx:
+                            sim_key = f"similarity_{stage_idx + 1}"
+                            sim_cached = cache.get('stages', {}).get(sim_key, {})
+                            sim_res = sim_cached.get('result', {})
+                            if isinstance(sim_res, dict) and sim_res.get('opt_only', False):
+                                context.similarity_opt_only = True
                         stage_idx = new_idx
                     # Validate cached refinement+similarity if applicable
                     elif stage_type == 'refinement':
@@ -11314,6 +11338,13 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         if not should_skip:
                             stage_idx = new_idx
                             continue
+                        # Restore similarity_opt_only from the skipped similarity cache
+                        if new_idx > stage_idx:
+                            sim_key = f"similarity_{stage_idx + 1}"
+                            sim_cached = cache.get('stages', {}).get(sim_key, {})
+                            sim_res = sim_cached.get('result', {})
+                            if isinstance(sim_res, dict) and sim_res.get('opt_only', False):
+                                context.similarity_opt_only = True
                         stage_idx = new_idx
                     continue
         
