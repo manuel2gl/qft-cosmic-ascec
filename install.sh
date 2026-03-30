@@ -169,21 +169,18 @@ pip install orca-pi
 echo "> Configuring shortcuts in .bashrc..."
 BASHRC="$HOME/.bashrc"
 
-# Add py11 activation alias if separate environment was created
-if [ "$INSTALL_PY11" = "TRUE" ]; then
-    if ! grep -q "alias py11=" "$BASHRC"; then
-        echo "" >> "$BASHRC"
-        echo "# conda_py11 shortcut" >> "$BASHRC"
-        echo "alias py11='conda activate py11'" >> "$BASHRC"
-    fi
-fi
-
 # Add ASCEC shortcuts
 if ! grep -q "alias ascec=" "$BASHRC"; then
     echo "" >> "$BASHRC"
     echo "# ASCEC & Similarity aliases" >> "$BASHRC"
-    echo "alias ascec='python \$HOME/software/ascec04/ascec-v04.py'" >> "$BASHRC"
-    echo "alias simil='python \$HOME/software/ascec04/similarity-v01.py'" >> "$BASHRC"
+    if [ "$INSTALL_PY11" = "TRUE" ]; then
+        CONDA_BASE=$(conda info --base)
+        PYTHON_BIN="$CONDA_BASE/envs/py11/bin/python"
+    else
+        PYTHON_BIN="python"
+    fi
+    echo "alias ascec='$PYTHON_BIN $TARGET_DIR/ascec-v04.py'" >> "$BASHRC"
+    echo "alias simil='$PYTHON_BIN $TARGET_DIR/similarity-v01.py'" >> "$BASHRC"
 fi
 
 echo "-------------------------------------------------------"
@@ -191,9 +188,6 @@ echo "> INSTALLATION COMPLETE!"
 echo ">"
 echo "> Reload your shell configuration:"
 echo "    source ~/.bashrc"
-if [ "$INSTALL_PY11" = "TRUE" ]; then
-    echo ">"
-    echo "> Activate the py11 environment:"
-    echo "    py11"
-fi
+echo ">"
+echo "> Then use 'ascec' and 'simil' directly — no environment activation needed."
 echo "-------------------------------------------------------"
