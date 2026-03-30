@@ -10524,9 +10524,6 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     final_motifs_dir = candidates[-1]
                     break
 
-        if final_sim_dir:
-            final_motif_mapping = parse_sim_mapping(final_sim_dir)
-
         # --- Helper: find motif representative folders in a calculation directory ---
         def find_representative_folders(calc_dir, motif_mapping):
             """Map motif ranks to actual subdirectory paths in calc_dir.
@@ -10660,6 +10657,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     for tmp_file in glob.glob(os.path.join(dest_path, pat)):
                         os.remove(tmp_file)
             return len(rep_folders)
+
+        if final_sim_dir:
+            final_motif_mapping = parse_sim_mapping(final_sim_dir)
 
         # --- Build similarity chain mappings ---
         # sim_mappings[i] = {rank: source_stem} for similarity stage i
