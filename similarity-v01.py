@@ -2955,7 +2955,7 @@ def create_unique_motifs_folder(all_clusters_data, output_base_dir, openbabel_al
             
             if len(representatives_data) > 1:
 
-                linkage_matrix = linkage(representatives_data, method='ward')
+                linkage_matrix = linkage(representatives_data, method='average', metric='euclidean')
                 
 
                 plt.figure(figsize=(12, 8))
@@ -3328,8 +3328,153 @@ def preprocess_j_argument(argv):
 
 
 
+def compute_mojena_threshold(linkage_matrix, verbose=False):
+    """
+    Compute Mojena's stopping rule threshold (robust variant) for diagnostic purposes.
+
+    Uses the robust formulation: median(h) + alpha * 1.4826 * MAD(h)
+    where MAD = median(|h - median(h)|) and 1.4826 is the consistency constant
+    for normal distributions (Mojena, 1977).
+
+    Parameters
+    ----------
+    linkage_matrix : np.ndarray, shape (n_samples-1, 4)
+        Linkage matrix from scipy.cluster.hierarchy.linkage (UPGMA).
+    verbose : bool
+        If True, print diagnostic details to stdout.
+
+    Returns
+    -------
+    mojena_threshold : float
+        The Mojena-recommended threshold (for diagnostic comparison).
+    mojena_k : int
+        Number of clusters at the Mojena threshold.
+    """
+    from scipy.cluster.hierarchy import fcluster
+    from scipy.stats import median_abs_deviation
+
+    MOJENA_ALPHA = 2.0
+
+    heights = linkage_matrix[:, 2]
+    n_samples = len(heights) + 1
+
+    if n_samples <= 2 or np.all(heights < 1e-12):
+        return float(heights[-1]) if len(heights) > 0 else 0.0, 1
+
+    median_h = float(np.median(heights))
+    mad_h = float(median_abs_deviation(heights))
+
+    if mad_h > 1e-12:
+        mojena_t = median_h + MOJENA_ALPHA * 1.4826 * mad_h
+    else:
+        mojena_t = float(np.mean(heights)) + MOJENA_ALPHA * float(np.std(heights))
+
+    # Clamp within merge height range
+    mojena_t = max(float(heights[0]) * 1.01, min(mojena_t, float(heights[-1]) * 0.99))
+
+    labels = fcluster(linkage_matrix, t=mojena_t, criterion='distance')
+    mojena_k = len(set(labels))
+
+    if verbose:
+        print(f"  Mojena diagnostic (robust, alpha={MOJENA_ALPHA}):")
+        print(f"    median={median_h:.4f}, MAD={mad_h:.4f}")
+        print(f"    Mojena threshold = {mojena_t:.4f} (k={mojena_k})")
+
+    return mojena_t, mojena_k
+
+
+def plot_annotated_dendrogram(linkage_matrix, optimal_k, cut_height,
+                               filename, title_suffix="", conf_labels=None,
+                               mojena_threshold=None, mojena_k=None):
+    """
+    Save two plot files:
+      1. Dendrogram with horizontal cut line → filename (e.g., dendrogram.png)
+      2. Mojena diagnostic → threshold_diagnostic.png in the same directory
+
+    Parameters
+    ----------
+    linkage_matrix : np.ndarray
+    optimal_k : int
+    cut_height : float
+    filename : str
+        Output path for the dendrogram PNG.
+    title_suffix : str
+    conf_labels : list of str or None
+    mojena_threshold : float or None
+        Mojena's recommended threshold for diagnostic comparison.
+    mojena_k : int or None
+        Number of clusters at the Mojena threshold.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from scipy.cluster.hierarchy import dendrogram
+
+    # Check if all distances are effectively zero
+    lm = linkage_matrix.copy()
+    if np.all(lm[:, 2] == 0.0):
+        lm[:, 2] += 1e-12
+
+    # --- File 1: Dendrogram ---
+    fig1, ax1 = plt.subplots(1, 1, figsize=(12, 8))
+    dendrogram(lm, labels=conf_labels, leaf_rotation=90, leaf_font_size=8, ax=ax1)
+
+    cut_label = f'Threshold t={cut_height:.2f} (k={optimal_k})'
+    ax1.axhline(y=cut_height, color='#e74c3c', linestyle='--', linewidth=1.5,
+                label=cut_label)
+    ax1.legend(loc='upper right', fontsize=9)
+    ax1.set_title(f"Hierarchical Clustering Dendrogram ({title_suffix})")
+    ax1.set_xlabel("Configuration")
+    ax1.set_ylabel("UPGMA Distance (Z-standardized)")
+    ax1.set_ylim(bottom=0)
+    fig1.tight_layout()
+    fig1.savefig(filename, dpi=150)
+    plt.close(fig1)
+
+    # --- File 2: Mojena diagnostic plot ---
+    heights = linkage_matrix[:, 2]
+    n_merges = len(heights)
+    if n_merges < 3:
+        return
+
+    diag_filename = os.path.join(os.path.dirname(filename), "threshold_diagnostic.png")
+
+    fig2, ax2 = plt.subplots(1, 1, figsize=(10, 6))
+
+    # Plot merge heights as a step function (sorted, indexed by merge step)
+    merge_indices = np.arange(1, n_merges + 1)
+    ax2.fill_between(merge_indices, 0, heights, alpha=0.15, color='#3498db')
+    ax2.plot(merge_indices, heights, '-', color='#3498db', linewidth=1.2,
+             label='Merge heights')
+
+    # User's threshold line
+    n_above_user = int(np.sum(heights > cut_height))
+    ax2.axhline(y=cut_height, color='#e74c3c', linestyle='--', linewidth=2,
+                label=f'Threshold t={cut_height:.2f} (k={n_above_user + 1})')
+
+    # Mojena's threshold line (diagnostic)
+    if mojena_threshold is not None and mojena_k is not None:
+        ax2.axhline(y=mojena_threshold, color='#9b59b6', linestyle=':', linewidth=1.5,
+                    label=f'Mojena (robust) t={mojena_threshold:.2f} (k={mojena_k})')
+
+    # Shade between-cluster region (above user threshold)
+    ax2.fill_between(merge_indices, cut_height, heights,
+                     where=(heights > cut_height),
+                     alpha=0.2, color='#e74c3c', label='Between-cluster merges')
+
+    ax2.set_xlabel("Merge Step (sorted)")
+    ax2.set_ylabel("UPGMA Merge Height")
+    ax2.set_title("Threshold Diagnostic (Merge Height Distribution)")
+    ax2.legend(loc='upper left', fontsize=9)
+    ax2.set_ylim(bottom=0)
+    ax2.grid(True, alpha=0.3)
+    fig2.tight_layout()
+    fig2.savefig(diag_filename, dpi=150)
+    plt.close(fig2)
+
+
 # Modified to accept rmsd_threshold and output_base_dir
-def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, motif_threshold=1.0, num_cores=None, temperature_k=298.15, loose=False, group_hb=False):
+def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, loose=False, group_hb=False):
     """
     Performs hierarchical clustering and comprehensive analysis on molecular structures.
     This is the main analysis function that orchestrates the entire clustering workflow.
@@ -3995,25 +4140,26 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
                         features_scaled[:, col_idx] = scaler.fit_transform(col_data.reshape(-1, 1)).flatten()
 
             linkage_matrix = linkage(features_scaled, method='average', metric='euclidean')
+
             initial_cluster_labels = fcluster(linkage_matrix, t=threshold, criterion='distance')
 
             initial_clusters_data = {}
             for i, label in enumerate(initial_cluster_labels):
-                group_data[i]['_initial_cluster_label'] = label 
+                group_data[i]['_initial_cluster_label'] = label
                 # The _parent_global_cluster_id should already be set for these from the Boltzmann calculation setup
                 initial_clusters_data.setdefault(label, []).append(group_data[i])
-            
+
             initial_clusters_list_unsorted = list(initial_clusters_data.values())
-            
+
             # Sort these initial clusters by their lowest energy representative
             initial_clusters_list_sorted_by_energy = sorted(
                 initial_clusters_list_unsorted,
-                key=lambda cluster: (min(_sorting_energy(m) for m in cluster), 
-                                     min(m['filename'] for m in cluster)) 
+                key=lambda cluster: (min(_sorting_energy(m) for m in cluster),
+                                     min(m['filename'] for m in cluster))
             )
 
             for initial_prop_cluster in initial_clusters_list_sorted_by_energy:
-                parent_id = pseudo_global_cluster_id_counter 
+                parent_id = pseudo_global_cluster_id_counter
                 for member_conf in initial_prop_cluster:
                     member_conf['_parent_global_cluster_id'] = parent_id 
                 all_initial_property_clusters.append(initial_prop_cluster) # Add to the list for Boltzmann calculation
@@ -4205,46 +4351,43 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
 
             linkage_matrix = linkage(features_scaled, method='average', metric='euclidean')
 
-            # Dendrogram generation - now always runs if there's data to cluster
-            plt.figure(figsize=(12, 8))
-            
-            # Check if all distances are effectively zero and add a small offset for visualization
-            if np.all(linkage_matrix[:, 2] == 0.0):
-                linkage_matrix[:, 2] += 1e-12
-            
-            # Extract configuration numbers from filenames for labels
+            # --- Apply threshold clustering ---
+            initial_cluster_labels = fcluster(linkage_matrix, t=threshold, criterion='distance')
+            _main_optimal_k = len(set(initial_cluster_labels))
+            _main_cut_height = threshold
+
+            # Compute Mojena diagnostic threshold (for comparison plot only)
+            _mojena_t, _mojena_k = compute_mojena_threshold(linkage_matrix, verbose=VERBOSE)
+
+            # --- Extract configuration labels for dendrogram ---
             import re
             conf_labels = []
             for filename in filenames_base:
-                # Try to extract number from filename (e.g., "opt_conf_123" -> "123")
                 match = re.search(r'(\d+)', filename)
                 if match:
                     conf_labels.append(match.group(1))
                 else:
                     conf_labels.append(filename)
 
-            dendrogram(linkage_matrix, labels=conf_labels, leaf_rotation=90, leaf_font_size=8)
-            
+            # --- Dendrogram title and filename ---
             if is_compare_mode:
                 dendrogram_title_suffix = "Comparison"
             elif group_hb:
                 dendrogram_title_suffix = f"H-bonds = {hbond_count}"
             else:
                 dendrogram_title_suffix = "All configurations"
-            plt.title(f"Hierarchical Clustering Dendrogram ({dendrogram_title_suffix})")
-
-            plt.xlabel("Configuration")
-            plt.ylabel("Euclidean Distance")
-            plt.ylim(bottom=0)
 
             if group_hb and not is_compare_mode:
                 dendrogram_filename = os.path.join(dendrogram_images_folder, f"dendrogram_H{hbond_count}.png")
             else:
                 dendrogram_filename = os.path.join(dendrogram_images_folder, f"dendrogram.png")
 
-            plt.tight_layout()
-            plt.savefig(dendrogram_filename)
-            plt.close()
+            # --- Generate annotated dendrogram + diagnostic plot ---
+            plot_annotated_dendrogram(
+                linkage_matrix, _main_optimal_k, _main_cut_height,
+                dendrogram_filename, title_suffix=dendrogram_title_suffix,
+                conf_labels=conf_labels,
+                mojena_threshold=_mojena_t, mojena_k=_mojena_k)
             vprint(f"Dendrogram saved as '{os.path.basename(dendrogram_filename)}'")
 
             if is_compare_mode and len(group_data) >= 2:
@@ -4252,7 +4395,7 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
                 # we force the two files into a single output cluster.
                 # The 'threshold' and 'fcluster' are not used to determine the output clusters here.
                 print("  Comparison mode: Overriding clustering to output a single combined cluster.")
-                
+
                 # Manually set cluster properties for the forced cluster
                 for i, member in enumerate(group_data): # group_data is already sorted by energy
                     member['_initial_cluster_label'] = 1 # Always label as 1 for comparison
@@ -4271,22 +4414,21 @@ def perform_clustering_and_analysis(input_source, threshold=1.0, file_extension_
                     elif prop_rep_conf.get('final_geometry_coords') is not None and prop_rep_conf.get('final_geometry_atomnos') is not None and \
                          member_conf.get('final_geometry_coords') is not None and \
                          member_conf.get('final_geometry_atomnos') is not None:
-                        
+
                         rmsd_val = calculate_rmsd(
-                            prop_rep_conf['final_geometry_atomnos'], prop_rep_conf['final_geometry_coords'], # Corrected key here
+                            prop_rep_conf['final_geometry_atomnos'], prop_rep_conf['final_geometry_coords'],
                             member_conf['final_geometry_atomnos'], member_conf['final_geometry_coords']
                         )
                     else:
                         rmsd_val = None
                     first_rmsd_listing.append({'filename': member_conf['filename'], 'rmsd_to_rep': rmsd_val})
-                
+
                 for member_conf in group_data:
                     member_conf['_first_rmsd_context_listing'] = first_rmsd_listing
 
                 current_hbond_group_clusters_for_final_output.append(group_data) # Add the single combined cluster
             else:
-                # Normal clustering logic for non-comparison mode or >2 files in a group
-                initial_cluster_labels = fcluster(linkage_matrix, t=threshold, criterion='distance')
+                # Normal clustering: labels already computed above
 
                 initial_clusters_data = {}
                 for i, label in enumerate(initial_cluster_labels):
@@ -4756,28 +4898,27 @@ METHODOLOGY:
   1. Feature Extraction: Parse QM outputs (.log/.out) for scalar descriptors
   2. Z-score Standardization: Normalize features across different units
   3. Weighted Euclidean Distance: Calculate similarity matrix
-  4. Hierarchical Clustering: Ward linkage with user-defined threshold
+  4. Hierarchical Clustering: UPGMA linkage with 2-sigma threshold on Z-standardized features
+     (Calinski-Harabasz + Silhouette score optimization)
   5. RMSD Refinement (optional): Distinguish geometric stereoisomers
   6. Quality Control: Flag imaginary frequencies and convergence failures
 
 OPTIONS:
-  Required:
-    --threshold=FLOAT, --th=FLOAT Similarity threshold (default: 1.0)
-                                  Lower values = more strict clustering
-  
+  Manual Override (deprecated):
+    --threshold=FLOAT, --th=FLOAT Manual distance threshold (overrides statistical
+                                  consensus method). Consider removing this flag.
+
   Geometric Validation:
     --rmsd=FLOAT                  Enable RMSD validation in Ångström
                                   If no value given, defaults to 1.0 Å
                                   Recommended: 0.5-1.0 for tight geometric control
-  
+
   Processing Control:
     --cores=INT, -j=INT           Number of CPU cores (default: auto-detect)
     --reprocess-files             Ignore cache and force feature re-extraction
     --output-dir=PATH             Output directory (default: current directory)
-  
+
   Advanced Features:
-    --motif=FLOAT                 Separate threshold for motif clustering
-                                  (default: same as --threshold)
     --weights=STRING              Custom feature weights in format:
                                   '(energy=0.1)(gap=0.2)(dipole=0.15)'
     --compare FILE [FILE ...]     Direct comparison mode (minimum 2 files)
@@ -4817,14 +4958,14 @@ OUTPUT FILES:
     └── need_recalculation/       Isolated imaginary freq. structures
 
 EXAMPLES:
-  Basic clustering:
-    similarity --th=2                   Standard clustering
-    similarity --th=2 --rmsd=1          Add RMSD validation at 1.0 Å
+  Basic clustering (2-sigma threshold - recommended):
+    similarity                          Default threshold=2.0 (moderate)
+    similarity --rmsd=1                 Add RMSD validation at 1.0 Å
     similarity calculation/             Process specific folder
-  
-  High-precision clustering:
+
+  Manual threshold (deprecated):
+    similarity --th=2                   Manual clustering at threshold 2.0
     similarity --th=1 --rmsd=0.5        Tight similarity with RMSD control
-    similarity --th=2 --motif=0.85      Different thresholds for motif/structure
   
   Performance optimization:
     similarity --th=2 -j=8              Use 8 CPU cores for parallel processing
@@ -4867,14 +5008,14 @@ MORE INFORMATION:
   Documentation:  See user manual for theoretical background
   Support:        Química Física Teórica - Universidad de Antioquia
 """)
-    # Required arguments
-    parser.add_argument("--threshold", "--th", type=float, default=1.0, metavar="FLOAT",
-                        help="similarity threshold (default: 1.0)")
-    
+    # Clustering threshold (default: 2.0 = 2-sigma rule on Z-standardized UPGMA distances)
+    parser.add_argument("--threshold", "--th", type=float, default=2.0, metavar="FLOAT",
+                        help="UPGMA distance threshold for dendrogram cut (default: 2.0, the 2-sigma rule on Z-standardized features). Use 0.5 for tight, 2.0 for moderate, 3.0-4.0 for loose clustering.")
+
     # Geometric validation
     parser.add_argument("--rmsd", type=float, nargs='?', const=1.0, default=None, metavar="FLOAT",
                         help="RMSD geometric validation in Ångström (default: 1.0)")
-    
+
     # Processing control
     parser.add_argument("--cores", "-j", type=int, default=None, metavar="INT",
                         help="number of CPU cores (default: auto-detect)")
@@ -4882,10 +5023,6 @@ MORE INFORMATION:
                         help="ignore cache and force re-extraction")
     parser.add_argument("--output-dir", type=str, default=None, metavar="PATH",
                         help="output directory (default: current directory)")
-    
-    # Advanced features
-    parser.add_argument("--motif", type=float, default=None, metavar="FLOAT",
-                        help="motif clustering threshold (default: same as --threshold)")
     parser.add_argument("--weights", type=str, default="", metavar="STRING",
                         help="custom feature weights: '(energy=0.1)(gap=0.2)'")
     parser.add_argument("--compare", nargs='+', metavar="FILE",
@@ -4928,13 +5065,12 @@ MORE INFORMATION:
         sys.exit(0)
     
     clustering_threshold = args.threshold
-    rmsd_validation_threshold = args.rmsd 
+    rmsd_validation_threshold = args.rmsd
     output_directory = args.output_dir
     force_reprocess_cache = args.reprocess_files
     weights_dict = parse_weights_argument(args.weights)
-    min_std_threshold_val = args.min_std_threshold 
+    min_std_threshold_val = args.min_std_threshold
     abs_tolerances_dict = parse_abs_tolerance_argument(args.abs_tolerance)
-    motif_threshold = args.motif if args.motif is not None else clustering_threshold
     num_cores = args.cores if args.cores is not None else get_cpu_count_fast()
     temperature_k = args.temperature
     
@@ -5002,7 +5138,6 @@ MORE INFORMATION:
             is_compare_mode=True,
             min_std_threshold=min_std_threshold_val,
             abs_tolerances=abs_tolerances_dict,
-            motif_threshold=motif_threshold,
             num_cores=num_cores,
             temperature_k=temperature_k,
             loose=args.loose,
@@ -5119,7 +5254,7 @@ MORE INFORMATION:
                 display_name = "./"
             print(f"\nProcessing folder: {display_name}\n")
 
-            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, motif_threshold=motif_threshold, num_cores=num_cores, temperature_k=temperature_k, loose=args.loose, group_hb=args.group_hb)
+            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, loose=args.loose, group_hb=args.group_hb)
 
             print(f"\nFinished processing folder: {display_name}\n")
 
