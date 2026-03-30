@@ -8905,7 +8905,7 @@ def execute_similarity_analysis(*args):
         return
     
     # Build command
-    cmd = ["python", similarity_script] + list(args)
+    cmd = [sys.executable, similarity_script] + list(args)
     # If user provides --th/--threshold, pass it through; otherwise
     # similarity uses statistical consensus cutting (no threshold needed).
 
@@ -14827,7 +14827,7 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         print(f"Using similarity script: {os.path.basename(similarity_script)}")
     
     # Build command - pass '1' via stdin to auto-select the first folder
-    cmd = ['python', similarity_script] + other_args
+    cmd = [sys.executable, similarity_script] + other_args
     
     # Add --cores if not already specified and user explicitly set ascec_parallel_cores in input file
     # (ascec_parallel_cores > 0 means it was explicitly set)
