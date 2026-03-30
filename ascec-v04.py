@@ -62,6 +62,7 @@ if __name__ == '__main__':
 
 # Global Constants
 ASCEC_VERSION = "* ASCEC-v04: Feb 2026 *"  # ASCEC version string for display
+_ascec_maxprint_requested = False  # Set by main_ascec_integrated() before workflow execution
 
 max_mole = 100  # Increase this if you have more than 100 molecules
 B2 = 3.166811563e-6   # Boltzmann constant in Hartree/K (approx. 3.166811563 × 10^-6 Hartree/K)
@@ -8883,7 +8884,7 @@ def execute_sort_command(include_summary=True, target_sim_folder=None, reuse_exi
             
         if similarity_dirs:
             print("\nSuggested next step:")
-            print("  python similarity --threshold 0.9")
+            print("  python similarity")
             print("  Run similarity analysis on collected output files")
 
     except Exception as e:
@@ -8905,10 +8906,9 @@ def execute_similarity_analysis(*args):
     
     # Build command
     cmd = ["python", similarity_script] + list(args)
-    has_threshold_arg = any(str(arg).startswith("--th=") or str(arg).startswith("--threshold=") for arg in args)
-    if not has_threshold_arg:
-        cmd.extend(["--th", "2.0"])
-    
+    # If user provides --th/--threshold, pass it through; otherwise
+    # similarity uses statistical consensus cutting (no threshold needed).
+
     print("=" * 50)
     print("ASCEC Similarity Analysis")
     print("=" * 50)
@@ -9107,6 +9107,7 @@ class WorkflowContext:
     update_progress: Optional[Callable[[str], None]] = None  # Compact workflow progress callback
     completed_stage_count: int = 0  # Number of finished workflow stages for progress rendering
     generated_template_files: List[str] = dataclasses.field(default_factory=list)  # Temp files extracted from embedded template labels
+    maxprint: bool = False  # If True, keep all intermediate files (legacy behavior). Default: miniprint (clean up at end)
     
     def get_previous_stage_output_dir(self, stage_type: str) -> Optional[str]:
         """
@@ -10443,6 +10444,395 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         progress_lines = len(lines)
         last_progress_render = tuple(lines)
 
+    def miniprint_cleanup() -> None:
+        """
+        Reduce disk usage by removing intermediate files, keeping only:
+        - annealing/ as-is
+        - optimization/refinement dirs: combined_results.*, orca_summary.txt, launcher_*.sh
+        - similarity dirs: dendrogram_images/, clustering_summary.txt, boltzmann_distribution.txt,
+          extracted_clusters/, extracted_data/, final motifs_N/ or umotifs_N/
+        - Root: final_ensemble.* or possible_final_ensemble.*, protocol_summary.txt, .asc file
+        - geom_opt_out/ or geom_ref_out/: motif representative calculation folders from last stage
+        """
+        import re as _re
+
+        input_root = os.path.dirname(os.path.abspath(input_file)) or "."
+        verbose = context.workflow_verbose_level >= 1
+
+        if verbose:
+            print(f"\n{'─' * 60}")
+            print("Miniprint cleanup: reducing disk usage...")
+            print(f"{'─' * 60}")
+
+        # --- Identify stage directories and their types ---
+        # Walk the stages list to figure out which directories correspond to what
+        opt_dirs = []      # (dir_path, stage_index, is_refinement)
+        sim_dirs = []      # (dir_path, stage_index)
+        similarity_counter = 0
+
+        for idx, stage in enumerate(stages):
+            stype = stage['type']
+            if stype == 'optimization':
+                # First optimization uses 'calculation' or 'optimization' dir
+                calc_dir = context.optimization_stage_dir if context.optimization_stage_dir else "optimization"
+                if not os.path.isdir(calc_dir):
+                    calc_dir = "calculation"
+                if os.path.isdir(calc_dir):
+                    opt_dirs.append((calc_dir, idx, False))
+            elif stype == 'refinement':
+                # Refinement dirs can be 'optimization' or 'refinement'
+                ref_dir = context.refinement_stage_dir if context.refinement_stage_dir else "optimization"
+                if not os.path.isdir(ref_dir):
+                    ref_dir = "refinement"
+                if os.path.isdir(ref_dir):
+                    opt_dirs.append((ref_dir, idx, True))
+            elif stype == 'similarity':
+                similarity_counter += 1
+                if similarity_counter == 1:
+                    sim_dir = "similarity"
+                else:
+                    sim_dir = f"similarity_{similarity_counter}"
+                if os.path.isdir(sim_dir):
+                    sim_dirs.append((sim_dir, idx))
+
+        # If context has better info from cache, also scan for dirs directly
+        if not opt_dirs:
+            for d in sorted(glob.glob("optimization*")) + sorted(glob.glob("calculation*")) + sorted(glob.glob("refinement*")):
+                if os.path.isdir(d):
+                    is_ref = "refine" in d.lower()
+                    opt_dirs.append((d, -1, is_ref))
+        if not sim_dirs:
+            for d in sorted(glob.glob("similarity*")):
+                if os.path.isdir(d) and not d.startswith("similarity_tmp"):
+                    sim_dirs.append((d, -1))
+
+        # --- Determine the LAST optimization/refinement stage ---
+        last_opt_idx = len(opt_dirs) - 1 if opt_dirs else -1
+
+        # --- Find the final motif names from the last similarity stage ---
+        # These map back to the original calculation directories
+        final_motif_mapping = {}  # motif_rank -> original_base_name (e.g. "opt_conf_5" or "motif_03_opt")
+        final_sim_dir = sim_dirs[-1][0] if sim_dirs else None
+        final_motifs_dir = None
+
+        if final_sim_dir:
+            # Find the final motifs/umotifs directory (highest numbered)
+            for pattern in ["umotifs_*", "motifs_*"]:
+                candidates = sorted(glob.glob(os.path.join(final_sim_dir, pattern)))
+                candidates = [c for c in candidates if os.path.isdir(c)]
+                if candidates:
+                    final_motifs_dir = candidates[-1]
+                    break
+
+        if final_sim_dir:
+            final_motif_mapping = parse_sim_mapping(final_sim_dir)
+
+        # --- Helper: find motif representative folders in a calculation directory ---
+        def find_representative_folders(calc_dir, motif_mapping):
+            """Map motif ranks to actual subdirectory paths in calc_dir.
+            Returns dict: rank -> (subdir_path, original_base_name)"""
+            result = {}
+            if not os.path.isdir(calc_dir):
+                return result
+
+            subdirs = {d: os.path.join(calc_dir, d) for d in os.listdir(calc_dir)
+                       if os.path.isdir(os.path.join(calc_dir, d))}
+
+            for rank, stem in motif_mapping.items():
+                # Generate candidate folder names from the filename stem
+                # stem examples: "motif_01_opt_conf_5", "motif_01_opt", "umotif_01_motif_03_opt"
+                candidates = [stem]
+                # Strip trailing _opt suffix (calculation folders don't include it)
+                if stem.endswith('_opt'):
+                    candidates.append(stem[:-4])
+                # Try just the part after the output prefix (e.g. "opt_conf_5" from "motif_01_opt_conf_5")
+                m = _re.match(r'(?:u?motif)_\d+_(.*)', stem)
+                if m:
+                    rest = m.group(1)
+                    candidates.append(rest)
+                    if rest.endswith('_opt'):
+                        candidates.append(rest[:-4])
+                # For refinement: "motif_01_opt" -> folder "motif_01"
+                m2 = _re.match(r'((?:u?motif)_\d+)_opt$', stem)
+                if m2:
+                    candidates.append(m2.group(1))
+
+                for variant in candidates:
+                    if variant in subdirs:
+                        result[rank] = (subdirs[variant], variant)
+                        break
+            return result
+
+        # --- Helper: parse Boltzmann distribution file for rank -> source mapping ---
+        def parse_boltzmann_sources(sim_dir_path):
+            """Parse boltzmann_distribution.txt to get rank -> source_stem mapping."""
+            mapping = {}
+            boltz = os.path.join(sim_dir_path, "boltzmann_distribution.txt")
+            if os.path.exists(boltz):
+                try:
+                    with open(boltz, 'r') as bf:
+                        lines = bf.readlines()
+                    cur_rank = None
+                    for line in lines:
+                        mr = _re.search(r'\((?:u?motif)_(\d+)\)', line)
+                        if mr:
+                            cur_rank = int(mr.group(1))
+                        ms = _re.search(r'(?:From s|S)tructure:\s*(\S+)', line)
+                        if ms and cur_rank is not None:
+                            mapping[cur_rank] = ms.group(1)
+                            cur_rank = None
+                except (IOError, OSError):
+                    pass
+            return mapping
+
+        # --- Helper: parse a similarity stage's motif-to-source mapping ---
+        def parse_sim_mapping(sim_dir_path):
+            """Parse motif filenames or Boltzmann file to get rank -> source_stem mapping.
+            For clean names (umotif_01.xyz with no suffix), prefers Boltzmann source info
+            since filenames don't encode the original structure name."""
+            mapping = {}
+            motifs_d = None
+            for pat in ["umotifs_*", "motifs_*"]:
+                cands = sorted(glob.glob(os.path.join(sim_dir_path, pat)))
+                cands = [c for c in cands if os.path.isdir(c)]
+                if cands:
+                    motifs_d = cands[-1]
+                    break
+            if not motifs_d:
+                return mapping
+
+            # Check if filenames encode source info (have suffix beyond prefix_NN)
+            has_informative_names = False
+            for fname in sorted(os.listdir(motifs_d)):
+                if not fname.endswith('.xyz') or 'combined' in fname:
+                    continue
+                stem = fname[:-4]
+                m = _re.match(r'(?:u?motif)_(\d+)(?:_(.+))?\.xyz', fname)
+                if m:
+                    rank = int(m.group(1))
+                    rest = m.group(2)
+                    if rest:
+                        # Has suffix like "opt_conf_5" or "motif_03_opt" — informative
+                        has_informative_names = True
+                        mapping[rank] = stem
+
+            if has_informative_names and mapping:
+                return mapping
+
+            # Clean names (umotif_01.xyz) — use Boltzmann for source traceability
+            boltz_mapping = parse_boltzmann_sources(sim_dir_path)
+            if boltz_mapping:
+                return boltz_mapping
+
+            # Last resort: use filename stems even if not informative
+            mapping = {}
+            for fname in sorted(os.listdir(motifs_d)):
+                if not fname.endswith('.xyz') or 'combined' in fname:
+                    continue
+                stem = fname[:-4]
+                m = _re.match(r'(?:u?motif)_(\d+)', fname)
+                if m:
+                    mapping[int(m.group(1))] = stem
+            return mapping
+
+        # --- Helper: extract rank number from a motif/umotif stem ---
+        def extract_rank_from_stem(stem):
+            """Extract the rank number from stems like 'umotif_05_opt', 'motif_03_opt', 'umotif_05'."""
+            m = _re.match(r'(?:u?motif)_(\d+)', stem)
+            return int(m.group(1)) if m else None
+
+        # --- Helper: copy motif folders from calc_dir to out_dir with final naming ---
+        def extract_motif_folders(calc_dir, rank_to_stem, out_dir, prefix):
+            """Extract representative folders, renaming to final Boltzmann ordering.
+            rank_to_stem maps final_rank -> stem that should exist as folder in calc_dir."""
+            rep_folders = find_representative_folders(calc_dir, rank_to_stem)
+            if not rep_folders:
+                return 0
+            os.makedirs(out_dir, exist_ok=True)
+            for rank in sorted(rep_folders.keys()):
+                src_path, _ = rep_folders[rank]
+                dest_path = os.path.join(out_dir, f"{prefix}_{rank:02d}")
+                if os.path.exists(dest_path):
+                    shutil.rmtree(dest_path)
+                shutil.copytree(src_path, dest_path)
+                # Remove temp files
+                for pat in ["*.tmp", "*.densitiesinfo", "*.xtbw"]:
+                    for tmp_file in glob.glob(os.path.join(dest_path, pat)):
+                        os.remove(tmp_file)
+            return len(rep_folders)
+
+        # --- Build similarity chain mappings ---
+        # sim_mappings[i] = {rank: source_stem} for similarity stage i
+        sim_mappings = []
+        for sd, _ in sim_dirs:
+            sim_mappings.append(parse_sim_mapping(sd))
+
+        # --- Identify refinement stages vs optimization-only ---
+        ref_stages = [(d, idx, ir) for d, idx, ir in opt_dirs if ir]  # refinement stages only
+        opt_only_stages = [(d, idx, ir) for d, idx, ir in opt_dirs if not ir]  # optimization stages
+
+        # --- Determine the final prefix (motif vs umotif) ---
+        final_prefix = "umotif" if (final_motifs_dir and "umotif" in os.path.basename(final_motifs_dir)) else "motif"
+
+        if ref_stages and final_motif_mapping:
+            # Multiple refinement stages: extract from each, chaining through similarity stages
+            # ref_stages are ordered: first = geometry refinement, last = energy refinement
+            # Each ref stage N is followed by sim_dirs[N] (if sim_dirs[0] follows opt, sim_dirs[1] follows ref1, etc.)
+
+            # The final similarity mapping (last entry) gives us: final_rank -> last_ref_stem
+            # To reach earlier ref stages, chain backwards through intermediate similarity mappings
+
+            for ref_idx, (ref_dir, _, _) in enumerate(ref_stages):
+                # How many similarity stages back do we need to chain?
+                # ref_stages[0] is followed by sim_dirs[1] (sim_dirs[0] follows optimization)
+                # ref_stages[1] is followed by sim_dirs[2]
+                # The last sim_dirs entry is the final one
+                # We need to chain from the final sim backwards to sim_dirs[ref_idx + 1]
+
+                # Number of chain steps from final similarity back to this ref's similarity
+                # ref_idx=0 (first ref) → its output is analyzed by sim_dirs[1] (if opt exists) or sim_dirs[0]
+                # The sim index for this ref stage is: ref_idx + len(opt_only_stages)
+                sim_for_this_ref = ref_idx + len(opt_only_stages)
+
+                # Build the mapping: final_rank -> stem in this ref stage's calc dir
+                # Start from final_motif_mapping (final_rank -> stem in last ref)
+                rank_to_stem = dict(final_motif_mapping)
+
+                # Chain backwards through similarity stages
+                # From the final sim mapping back to sim_for_this_ref + 1
+                final_sim_idx = len(sim_mappings) - 1
+                for chain_idx in range(final_sim_idx, sim_for_this_ref, -1):
+                    # rank_to_stem currently maps final_rank -> stem at chain_idx level
+                    # We need to translate to chain_idx - 1 level
+                    prev_mapping = sim_mappings[chain_idx - 1] if chain_idx - 1 >= 0 else {}
+                    new_rank_to_stem = {}
+                    for final_rank, current_stem in rank_to_stem.items():
+                        # current_stem is something like "umotif_05_opt" from this sim level
+                        # Extract the intermediate rank (e.g., 5)
+                        intermediate_rank = extract_rank_from_stem(current_stem)
+                        if intermediate_rank is not None and intermediate_rank in prev_mapping:
+                            # Map to the previous level's stem
+                            new_rank_to_stem[final_rank] = prev_mapping[intermediate_rank]
+                        # else: can't trace further, skip this rank
+                    rank_to_stem = new_rank_to_stem
+
+                # Determine output directory name
+                if len(ref_stages) == 1:
+                    out_dir_name = "geom_ref_out"
+                elif ref_idx == len(ref_stages) - 1:
+                    out_dir_name = "energy_ref_out"
+                elif ref_idx == 0:
+                    out_dir_name = "geom_ref_out"
+                else:
+                    out_dir_name = f"ref_{ref_idx + 1}_out"
+
+                out_dir = os.path.join(input_root, out_dir_name)
+                count = extract_motif_folders(ref_dir, rank_to_stem, out_dir, final_prefix)
+                if verbose and count > 0:
+                    print(f"  Created {out_dir_name}/ with {count} {final_prefix} folders")
+
+        elif opt_only_stages and final_motif_mapping:
+            # No refinement stages — extract from the last optimization stage
+            last_opt_dir = opt_only_stages[-1][0]
+            out_dir = os.path.join(input_root, "geom_opt_out")
+            count = extract_motif_folders(last_opt_dir, final_motif_mapping, out_dir, "motif")
+            if verbose and count > 0:
+                print(f"  Created geom_opt_out/ with {count} motif folders")
+
+        # --- Clean optimization/refinement directories ---
+        # Keep only: combined_results.*, orca_summary.txt, launcher_*.sh
+        for i, (calc_dir, _, is_ref) in enumerate(opt_dirs):
+            if not os.path.isdir(calc_dir):
+                continue
+
+            kept_root_files = set()
+            removed_count = 0
+
+            for entry in os.listdir(calc_dir):
+                entry_path = os.path.join(calc_dir, entry)
+
+                # Keep non-directory files that are summaries
+                if os.path.isfile(entry_path):
+                    keep = (entry.startswith("combined_results") or
+                            entry == "orca_summary.txt" or
+                            entry.startswith("launcher_") or
+                            entry.endswith('.sh'))
+                    if keep:
+                        kept_root_files.add(entry)
+                    else:
+                        os.remove(entry_path)
+                        removed_count += 1
+                elif os.path.isdir(entry_path):
+                    # Remove all subdirectories (opt_conf_*, motif_* folders)
+                    shutil.rmtree(entry_path)
+                    removed_count += 1
+
+            if verbose and removed_count > 0:
+                label = "refinement" if is_ref else "optimization"
+                print(f"  Cleaned {calc_dir}/ ({label}): kept {len(kept_root_files)} summary files")
+
+        # --- Clean similarity directories ---
+        for sim_dir, _ in sim_dirs:
+            if not os.path.isdir(sim_dir):
+                continue
+
+            removed_count = 0
+            # Find the final motifs/umotifs dir (highest numbered)
+            final_motif_dir_name = None
+            for pattern in ["umotifs_*", "motifs_*"]:
+                candidates = sorted(glob.glob(os.path.join(sim_dir, pattern)))
+                candidates = [c for c in candidates if os.path.isdir(c)]
+                if candidates:
+                    final_motif_dir_name = os.path.basename(candidates[-1])
+                    break
+
+            keep_entries = {
+                "dendrogram_images", "extracted_clusters", "extracted_data",
+                "clustering_summary.txt", "boltzmann_distribution.txt",
+                "threshold_diagnostic.png"
+            }
+            if final_motif_dir_name:
+                keep_entries.add(final_motif_dir_name)
+
+            for entry in os.listdir(sim_dir):
+                entry_path = os.path.join(sim_dir, entry)
+                if entry in keep_entries:
+                    continue
+
+                # Remove everything else: orca_out_*, data_cache_*.pkl, non-final motifs_*
+                if os.path.isdir(entry_path):
+                    shutil.rmtree(entry_path)
+                    removed_count += 1
+                elif os.path.isfile(entry_path):
+                    os.remove(entry_path)
+                    removed_count += 1
+
+            if verbose and removed_count > 0:
+                print(f"  Cleaned {sim_dir}/: removed {removed_count} intermediate entries")
+
+        # --- Clean root-level protocol cache files ---
+        for pkl in glob.glob(os.path.join(input_root, "protocol_*.pkl")):
+            os.remove(pkl)
+            if verbose:
+                print(f"  Removed {os.path.basename(pkl)}")
+
+        # --- Report final disk usage ---
+        try:
+            total_size = sum(
+                os.path.getsize(os.path.join(dirpath, f))
+                for dirpath, _, filenames in os.walk(input_root)
+                for f in filenames
+            )
+            size_mb = total_size / (1024 * 1024)
+            if verbose:
+                print(f"\n  Final disk usage: {size_mb:.1f} MB")
+                print(f"{'─' * 60}")
+            else:
+                print(f"\n✓ Miniprint: {size_mb:.1f} MB (use --maxprint to keep all files)")
+        except OSError:
+            if not verbose:
+                print("\n✓ Miniprint cleanup complete (use --maxprint to keep all files)")
+
     def copy_final_ensemble_to_root() -> None:
         """Copy final ensemble files from the last similarity output to input root."""
         input_root = os.path.dirname(os.path.abspath(input_file))
@@ -10561,6 +10951,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     context.is_workflow = True  # We're in workflow mode
     context.workflow_verbose_level = parse_verbosity_level(sys.argv)
     context.similarity_opt_only = False  # Set to True if similarity detects opt-only dataset
+    context.maxprint = globals().get('_ascec_maxprint_requested', False)  # Default: miniprint (clean up at end)
     
     # Read configuration from input file
     # - Line 9: QM program index and alias (e.g., "2 orca")
@@ -11970,7 +12361,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     os.remove(temp_tpl)
             except OSError:
                 pass
-    
+
+    # Miniprint cleanup: reduce disk usage unless --maxprint was specified
+    if not context.maxprint:
+        miniprint_cleanup()
+
     return 0
 
 def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int:
@@ -14440,10 +14835,8 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     if not has_cores_arg and hasattr(context, 'ascec_parallel_cores') and context.ascec_parallel_cores > 0:
         cmd.extend(['--cores', str(context.ascec_parallel_cores)])
 
-    # Default similarity threshold when user doesn't provide one.
-    has_threshold_arg = any(arg.startswith('--th=') or arg.startswith('--threshold=') for arg in other_args)
-    if not has_threshold_arg:
-        cmd.extend(['--th', '2.0'])
+    # If user provides --th/--threshold, pass it through; otherwise
+    # similarity uses statistical consensus cutting (no threshold needed).
     
     # No need to specify motif prefix - similarity script auto-detects from filenames:
     # conf_* files → creates motifs_*/ folder (after calculation)
@@ -15594,6 +15987,11 @@ def main_ascec_integrated():
     glob = _glob_module
     re = _re_module
     
+    # Strip --maxprint from sys.argv (handled via context, not per-stage)
+    global _ascec_maxprint_requested
+    _ascec_maxprint_requested = '--maxprint' in sys.argv
+    sys.argv = [a for a in sys.argv if a != '--maxprint']
+
     # CHECK FOR VERSION COMMAND (early check before other processing)
     if len(sys.argv) >= 2 and sys.argv[1] in ["--version", "-V", "version"]:
         print_version_banner("ASCEC")
@@ -16206,6 +16604,9 @@ WORKFLOW:
 PROTOCOL FLAGS (optional):
   These flags modify stage behavior. Defaults shown in [brackets].
 
+    Output:
+    --maxprint       Keep all intermediate files from every stage [miniprint]
+
     Optimization/Refinement stages:
     --critical=N    Max %% of "critical" structures (imaginary freqs) [0]
     --redo=N        Max stage redos (re-run all failed structures) [3]
@@ -16249,6 +16650,7 @@ OPTIONS:
   -v2             Verbose level 2: extended progress tracking
   -v3             Verbose level 3: maximum detail output
   --standard       Use standard Metropolis acceptance criterion
+  --maxprint       Keep all intermediate files (default: miniprint, reduces disk usage)
   --nobox          Disable generation of box-visualization XYZ files
   --nosum          Skip summary file generation in sort command
   --justsum        Generate summary only without sorting structures
@@ -16295,7 +16697,9 @@ MORE INFORMATION:
     
     parser.add_argument("--nobox", action="store_true", 
                        help="Disable generation of box-visualization XYZ files")
-    parser.add_argument("-V", "--version", action="store_true", 
+    parser.add_argument("--maxprint", action="store_true",
+                       help="Keep all intermediate files from every stage (default: miniprint, clean up at end)")
+    parser.add_argument("-V", "--version", action="store_true",
                        help="Display version information and exit")
     
     # Use parse_known_args to handle shell expansion gracefully
