@@ -3455,7 +3455,7 @@ def plot_annotated_dendrogram(linkage_matrix, optimal_k, cut_height,
     # Mojena's threshold line (diagnostic)
     if mojena_threshold is not None and mojena_k is not None:
         ax2.axhline(y=mojena_threshold, color='#9b59b6', linestyle=':', linewidth=1.5,
-                    label=f'Mojena (robust) t={mojena_threshold:.2f} (k={mojena_k})')
+                    label=f'Mojena t={mojena_threshold:.2f} (k={mojena_k})')
 
     # Shade between-cluster region (above user threshold)
     ax2.fill_between(merge_indices, cut_height, heights,
