@@ -61,7 +61,7 @@ ASCEC requires **Python 3.9+** (3.11 recommended) and utilizes an external elect
 > ORCA 6.0 is **not** supported due to parser limitations. Please use ORCA v5.0.x or upgrade to **v6.1+**.
 
 ### Option 1: Automatic "One-Click" Installation (Recommended)
-We provide a unified shell script that automates the entire setup. It will install Miniconda (if missing), set up a dedicated Python 3.11 environment (`py11`), install all dependencies (`cclib`, `orca-pi`, `openbabel`), and configure your terminal aliases.
+We provide a unified shell script that automates the entire setup. It will install Miniconda (if missing), set up a dedicated Python 3.11 environment (`py11`), install all dependencies (`cclib`, `orca-pi`, `openbabel`), and configure your terminal aliases. The aliases point directly to the environment's Python binary, so **no manual `conda activate` is needed** to run `ascec` or `simil`.
 
 #### 1. Download the installation script
 ```bash
@@ -99,10 +99,11 @@ pip install orca-pi
 ```
 
 **4. Set up aliases:**
-Add the following lines to your `~/.bashrc` (or `~/.zshrc`) to make the commands globally available:
+Add the following lines to your `~/.bashrc` (or `~/.zshrc`) to make the commands globally available. Use the full path to the environment's Python binary so no activation is needed:
 ```bash
-alias ascec='python $HOME/software/ascec04/ascec-v04.py'
-alias simil='python $HOME/software/ascec04/similarity-v01.py'
+# Replace <conda_base> with the output of: conda info --base
+alias ascec='<conda_base>/envs/py11/bin/python $HOME/software/ascec04/ascec-v04.py'
+alias simil='<conda_base>/envs/py11/bin/python $HOME/software/ascec04/similarity-v01.py'
 ```
 Run `source ~/.bashrc` to apply the changes.
 
