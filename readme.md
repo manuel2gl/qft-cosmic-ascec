@@ -5,7 +5,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.9%20%7C%203.11-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/license-GPL_v3-coral.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Web Interface](https://img.shields.io/badge/Web-Input_Generator-gold?logo=googlechrome&logoColor=white)](https://manuel2gl.github.io/qft-ascec-cosmic/)
+[![Web Interface](https://img.shields.io/badge/Web-Input_Generator-gold?logo=googlechrome&logoColor=white)](https://manuel2gl.github.io/qft-cosmic-ascec/)
 [![Documentation](https://img.shields.io/badge/📖-User_Manual-brightgreen)](#-documentation)
 
 *Bridging the gap between stochastic chaos and ordered chemical insight.*
@@ -65,7 +65,7 @@ We provide a unified shell script that automates the entire setup. It will insta
 
 #### 1. Download the installation script
 ```bash
-wget https://raw.githubusercontent.com/manuel2gl/qft-ascec-cosmic/main/install.sh
+wget https://raw.githubusercontent.com/manuel2gl/qft-cosmic-ascec/main/install.sh
 ```
 #### 2. Run the script
 ```
@@ -82,7 +82,7 @@ If you prefer to manage your environments manually, you can set up ASCEC using C
 **1. Clone the repository:**
 ```bash
 mkdir -p ~/software/ascec04
-git clone https://github.com/manuel2gl/qft-ascec-cosmic.git ~/software/ascec04/
+git clone https://github.com/manuel2gl/qft-cosmic-ascec.git ~/software/ascec04/
 ```
 
 **2. Create and activate a clean environment:**
@@ -114,7 +114,7 @@ Run `source ~/.bashrc` to apply the changes.
 ### 1. Generate Input via Web Interface
 Use the ASCEC Web Generator with built-in PubChem integration to instantly get 3D coordinates and visualize your simulation box.
 
-**[ASCEC Web Input Generator](https://manuel2gl.github.io/qft-ascec-cosmic/)**
+**[ASCEC Web Input Generator](https://manuel2gl.github.io/qft-cosmic-ascec/)**
 
 Alternatively, launch it directly from your terminal:
 ```bash
