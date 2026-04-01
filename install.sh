@@ -6,7 +6,7 @@ set -e  # Stop immediately if any command fails
 #==========================================
 # To install ASCEC, simply download and run this script:
 #
-#   wget https://raw.githubusercontent.com/manuel2gl/qft-ascec-similarity/main/install.sh
+#   wget https://raw.githubusercontent.com/manuel2gl/qft-ascec-cosmic/main/install.sh
 #   bash install.sh
 #
 # This script will automatically:
@@ -39,7 +39,7 @@ if [ -d "$TARGET_DIR/.git" ]; then
     cd "$TARGET_DIR" && git pull
 else
     echo "> Cloning repository..."
-    git clone https://github.com/manuel2gl/qft-ascec-similarity.git "$TARGET_DIR"
+    git clone https://github.com/manuel2gl/qft-ascec-cosmic.git "$TARGET_DIR"
 fi
 
 #-----------------------------------------
@@ -172,7 +172,7 @@ BASHRC="$HOME/.bashrc"
 # Add ASCEC shortcuts
 if ! grep -q "alias ascec=" "$BASHRC"; then
     echo "" >> "$BASHRC"
-    echo "# ASCEC & Similarity aliases" >> "$BASHRC"
+    echo "# COSMIC ASCEC aliases" >> "$BASHRC"
     if [ "$INSTALL_PY11" = "TRUE" ]; then
         CONDA_BASE=$(conda info --base)
         PYTHON_BIN="$CONDA_BASE/envs/py11/bin/python"
@@ -180,7 +180,7 @@ if ! grep -q "alias ascec=" "$BASHRC"; then
         PYTHON_BIN="python"
     fi
     echo "alias ascec='$PYTHON_BIN $TARGET_DIR/ascec-v04.py'" >> "$BASHRC"
-    echo "alias simil='$PYTHON_BIN $TARGET_DIR/similarity-v01.py'" >> "$BASHRC"
+    echo "alias cosmic='$PYTHON_BIN $TARGET_DIR/cosmic-v01.py'" >> "$BASHRC"
 fi
 
 echo "-------------------------------------------------------"
@@ -189,5 +189,5 @@ echo ">"
 echo "> Reload your shell configuration:"
 echo "    source ~/.bashrc"
 echo ">"
-echo "> Then use 'ascec' and 'simil' directly — no environment activation needed."
+echo "> Then use 'ascec' and 'cosmic' directly — no environment activation needed."
 echo "-------------------------------------------------------"
