@@ -6,7 +6,7 @@ set -e  # Stop immediately if any command fails
 #==========================================
 # To install ASCEC, simply download and run this script:
 #
-#   wget https://raw.githubusercontent.com/manuel2gl/qft-ascec-cosmic/main/install.sh
+#   wget https://raw.githubusercontent.com/manuel2gl/qft-cosmic-ascec/main/install.sh
 #   bash install.sh
 #
 # This script will automatically:
@@ -39,7 +39,7 @@ if [ -d "$TARGET_DIR/.git" ]; then
     cd "$TARGET_DIR" && git pull
 else
     echo "> Cloning repository..."
-    git clone https://github.com/manuel2gl/qft-ascec-cosmic.git "$TARGET_DIR"
+    git clone https://github.com/manuel2gl/qft-cosmic-ascec.git "$TARGET_DIR"
 fi
 
 #-----------------------------------------
