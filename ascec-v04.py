@@ -824,7 +824,7 @@ def _process_xyz_file_for_opt(xyz_file_data):
             input_name = f"{source_name}_opt{input_ext}"
         elif motif_match:
             # Keep motif prefix, just add _opt suffix
-            # Similarity will later promote motif_##_opt → umotif_##
+            # COSMIC will later promote motif_##_opt → umotif_##
             source_name = motif_match.group(1).lower()
             input_name = f"{source_name}_opt{input_ext}"
         else:
@@ -1985,7 +1985,7 @@ def update_protocol_cache(stage_name: str, status: str, result: Optional[Dict[st
     Update protocol cache with stage completion info.
     
     Args:
-        stage_name: Name of the stage (e.g., 'r1', 'opt', 'similarity')
+        stage_name: Name of the stage (e.g., 'r1', 'opt', 'cosmic')
         status: Status ('in_progress', 'completed', 'failed')
         result: Optional result dictionary with stage-specific data
         cache_file: Path to cache file
@@ -2429,7 +2429,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
         return text.center(width)
 
     def format_concise_path(path_value: str) -> str:
-        """Render paths concisely for summary output (e.g., /similarity_2/orca_out_3)."""
+        """Render paths concisely for summary output (e.g., /cosmic_2/orca_out_3)."""
         if not path_value:
             return path_value
 
@@ -2495,18 +2495,18 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
             pass
         return None
 
-    def _resolve_similarity_summary_file(result: Dict[str, Any]) -> Optional[str]:
-        """Resolve clustering_summary.txt for a similarity result entry."""
-        sim_path = result.get('working_dir') or result.get('similarity_folder')
-        if not sim_path:
+    def _resolve_cosmic_summary_file(result: Dict[str, Any]) -> Optional[str]:
+        """Resolve clustering_summary.txt for a cosmic result entry."""
+        cosmic_path = result.get('working_dir') or result.get('cosmic_folder')
+        if not cosmic_path:
             return None
 
-        sim_base = sim_path
-        base_name = os.path.basename(os.path.normpath(sim_path))
+        cosmic_base = cosmic_path
+        base_name = os.path.basename(os.path.normpath(cosmic_path))
         if base_name.startswith('orca_out_') or base_name.startswith('opt_out_'):
-            sim_base = os.path.dirname(sim_path)
+            cosmic_base = os.path.dirname(cosmic_path)
 
-        summary_file = os.path.join(sim_base, 'clustering_summary.txt')
+        summary_file = os.path.join(cosmic_base, 'clustering_summary.txt')
         return summary_file if os.path.exists(summary_file) else None
     
     try:
@@ -2551,7 +2551,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                     if stage_info.get('status') == 'completed':
                         stage_type = stage_key.split('_')[0].capitalize()
                         type_map = {'Replication': 'Annealing', 'Calculation': 'Optimization',
-                                  'Similarity': 'Similarity', 'Optimization': 'Optimization',
+                                  'COSMIC': 'COSMIC', 'Optimization': 'Optimization',
                                   'Refinement': 'Refinement'}
                         stage_name = type_map.get(stage_type, stage_type)
                         completed_stages.append(stage_name)
@@ -2578,8 +2578,8 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                     if stage_info.get('status') == 'completed':
                         stage_type = stage_key.split('_')[0].capitalize()
                         
-                        # Skip similarity stages in timing (no QM time)
-                        if stage_type == 'Similarity':
+                        # Skip cosmic stages in timing (no QM time)
+                        if stage_type == 'COSMIC':
                             continue
                         
                         wall_time = stage_info.get('wall_time')
@@ -2645,7 +2645,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                     
                     stage_type = stage_key.split('_')[0].capitalize()
                     type_map = {'Replication': 'Annealing', 'Calculation': 'Optimization',
-                              'Similarity': 'Similarity', 'Optimization': 'Optimization',
+                              'COSMIC': 'COSMIC', 'Optimization': 'Optimization',
                               'Refinement': 'Refinement'}
                     stage_name = type_map.get(stage_type, stage_type)
                     
@@ -2673,21 +2673,21 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                         if 'total_accepted' in result:
                             f.write(f"    Accepted:         {result['total_accepted']} configurations\n")
                     
-                    elif stage_type == 'Similarity':
+                    elif stage_type == 'COSMIC':
                         live_critical_pct = None
                         live_skipped_pct = None
                         live_critical_count = None
                         live_skipped_count = None
                         live_clusters = None
-                        sim_summary_file = _resolve_similarity_summary_file(result)
-                        if sim_summary_file:
-                            live_critical_pct, live_skipped_pct = parse_similarity_summary(sim_summary_file)
-                            sim_base = os.path.dirname(sim_summary_file)
-                            live_critical_count, live_skipped_count = parse_similarity_output(sim_base)
-                            live_clusters = _extract_final_clusters_from_summary(sim_summary_file)
+                        cosmic_summary_file = _resolve_cosmic_summary_file(result)
+                        if cosmic_summary_file:
+                            live_critical_pct, live_skipped_pct = parse_cosmic_summary(cosmic_summary_file)
+                            cosmic_base = os.path.dirname(cosmic_summary_file)
+                            live_critical_count, live_skipped_count = parse_cosmic_output(cosmic_base)
+                            live_clusters = _extract_final_clusters_from_summary(cosmic_summary_file)
 
-                        if 'similarity_folder' in result and result['similarity_folder']:
-                            f.write(f"    Working dir:      {format_concise_path(result['similarity_folder'])}\n")
+                        if 'cosmic_folder' in result and result['cosmic_folder']:
+                            f.write(f"    Working dir:      {format_concise_path(result['cosmic_folder'])}\n")
                         if 'threshold' in result:
                             f.write(f"    Threshold:        {result['threshold']}\n")
                         if 'rmsd_threshold' in result:
@@ -2792,8 +2792,8 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                         elif wall_time and 'completed' in result and result['completed'] > 0:
                             mean_time = wall_time / result['completed']
                             f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
-                        if 'similarity_folder' in result and result['similarity_folder']:
-                            f.write(f"    Outputs to:       {format_concise_path(result['similarity_folder'])}\n")
+                        if 'cosmic_folder' in result and result['cosmic_folder']:
+                            f.write(f"    Outputs to:       {format_concise_path(result['cosmic_folder'])}\n")
 
                     elif stage_type == 'Refinement':
                         if 'motifs_source' in result and result['motifs_source']:
@@ -2814,11 +2814,11 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                         elif wall_time and 'completed' in result and result['completed'] > 0:
                             mean_time = wall_time / result['completed']
                             f.write(f"    Mean exec time:   {format_wall_time_timing(mean_time)}\n")
-                        if 'similarity_folder' in result and result['similarity_folder']:
-                            f.write(f"    Outputs to:       {format_concise_path(result['similarity_folder'])}\n")
+                        if 'cosmic_folder' in result and result['cosmic_folder']:
+                            f.write(f"    Outputs to:       {format_concise_path(result['cosmic_folder'])}\n")
 
-                    # Wall time for non-similarity stages
-                    if wall_time and stage_type != 'Similarity':
+                    # Wall time for non-cosmic stages
+                    if wall_time and stage_type != 'COSMIC':
                         f.write(f"    Wall time:        {format_wall_time_timing(wall_time)}\n")
                     
                     f.write("\n")
@@ -5773,7 +5773,7 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
         # FIRST: Check for retry_input folder (structures from need_recalculation)
         if os.path.exists("retry_input"):
             if not workflow_mode:
-                print("Found retry_input folder, using structures from previous similarity analysis")
+                print("Found retry_input folder, using structures from previous cosmic analysis")
             for file in os.listdir("retry_input"):
                 if file.endswith(".xyz") and not file.startswith("combined"):
                     xyz_files.append(os.path.join("retry_input", file))
@@ -6577,18 +6577,18 @@ def create_replicated_runs(input_file_path: str, num_replicas: int, create_launc
     return replicated_files
 
 
-def _sim_base_name(path: str) -> str:
-    """Extract the similarity base folder name from a path.
+def _cosmic_base_name(path: str) -> str:
+    """Extract the cosmic base folder name from a path.
 
-    For absolute paths like '/home/user/project/similarity/orca_out_126',
-    returns 'similarity'.  For relative paths like 'similarity/orca_out_126',
-    returns 'similarity'.  For plain names like 'similarity', returns as-is.
+    For absolute paths like '/home/user/project/cosmic/orca_out_126',
+    returns 'cosmic'.  For relative paths like 'cosmic/orca_out_126',
+    returns 'cosmic'.  For plain names like 'cosmic', returns as-is.
     """
     if os.path.isabs(path):
-        # Walk up from the leaf until we find a 'similarity*' component
+        # Walk up from the leaf until we find a 'cosmic*' component
         parts = path.split(os.sep)
         for part in reversed(parts):
-            if part.startswith('similarity'):
+            if part.startswith('cosmic'):
                 return part
         # Fallback: parent of last component
         return os.path.basename(os.path.dirname(path))
@@ -8311,7 +8311,7 @@ def get_unique_folder_name(base_name, current_dir):
 
 
 def collect_out_files():
-    """Collect all .out (ORCA) and .log (Gaussian) files into a single folder inside a similarity directory."""
+    """Collect all .out (ORCA) and .log (Gaussian) files into a single folder inside a cosmic directory."""
     current_directory = os.getcwd()
     print(f"Searching for output files in: {current_directory} and its subfolders...")
 
@@ -8337,16 +8337,16 @@ def collect_out_files():
         base_destination_folder_name = f"orca_out_{num_files}"
         file_type_desc = "ORCA files"
     
-    # Create similarity directory at parent level
+    # Create cosmic directory at parent level
     parent_directory = os.path.dirname(current_directory)
-    similarity_path = os.path.join(parent_directory, "similarity")
-    os.makedirs(similarity_path, exist_ok=True)
+    cosmic_path = os.path.join(parent_directory, "cosmic")
+    os.makedirs(cosmic_path, exist_ok=True)
     
-    destination_folder_name = get_unique_folder_name(base_destination_folder_name, similarity_path)
-    destination_path = os.path.join(similarity_path, destination_folder_name)
+    destination_folder_name = get_unique_folder_name(base_destination_folder_name, cosmic_path)
+    destination_path = os.path.join(cosmic_path, destination_folder_name)
 
     os.makedirs(destination_path)
-    print(f"\nCreated destination folder: similarity/{destination_folder_name}")
+    print(f"\nCreated destination folder: cosmic/{destination_folder_name}")
 
     # Define function to copy a single file
     def copy_file(file_data):
@@ -8357,7 +8357,7 @@ def collect_out_files():
         except Exception as e:
             return f"Error copying {os.path.basename(file_path)}: {e}"
 
-    print(f"Copying {num_files} {file_type_desc} to 'similarity/{destination_folder_name}' in parallel...")
+    print(f"Copying {num_files} {file_type_desc} to 'cosmic/{destination_folder_name}' in parallel...")
     
     # Use parallel processing for file copying
     import multiprocessing as mp
@@ -8384,7 +8384,7 @@ def collect_out_files():
             except Exception as e:
                 print(f"  Unexpected error: {e}")
 
-    print(f"\nCopied {successful_copies}/{num_files} {file_type_desc} to similarity/{destination_folder_name}")
+    print(f"\nCopied {successful_copies}/{num_files} {file_type_desc} to cosmic/{destination_folder_name}")
     print("Process complete. Original files remain untouched.")
     return True
 
@@ -8543,8 +8543,8 @@ def create_summary_with_tracking(directory, file_types_override: Optional[List[s
     return created_files
 
 
-def collect_out_files_with_tracking(reuse_existing=False, target_sim_folder=None, include_gaussian: bool = True):
-    """Collect output files and return the created similarity folder path."""
+def collect_out_files_with_tracking(reuse_existing=False, target_cosmic_folder=None, include_gaussian: bool = True):
+    """Collect output files and return the created cosmic folder path."""
     try:
         current_directory = os.getcwd()
         all_out_files = find_out_files(current_directory, include_orca=True, include_gaussian=include_gaussian)
@@ -8578,43 +8578,43 @@ def collect_out_files_with_tracking(reuse_existing=False, target_sim_folder=None
         else:
             base_destination_folder_name = f"orca_out_{num_files}"
         
-        # Create similarity folder with incremental numbering at parent level
+        # Create cosmic folder with incremental numbering at parent level
         parent_directory = os.path.dirname(current_directory)
         
-        def get_next_similarity_dir():
-            """Find the next available similarity directory (similarity, similarity_2, etc.)"""
+        def get_next_cosmic_dir():
+            """Find the next available cosmic directory (cosmic, cosmic_2, etc.)"""
             # If target folder is explicitly provided, use it
-            if target_sim_folder:
+            if target_cosmic_folder:
                 # Handle both full path and relative path
-                if os.path.isabs(target_sim_folder):
-                    return target_sim_folder
+                if os.path.isabs(target_cosmic_folder):
+                    return target_cosmic_folder
                 else:
-                    return os.path.join(parent_directory, target_sim_folder)
+                    return os.path.join(parent_directory, target_cosmic_folder)
 
-            base_name = "similarity"
-            similarity_path = os.path.join(parent_directory, base_name)
+            base_name = "cosmic"
+            cosmic_path = os.path.join(parent_directory, base_name)
             
             # If reuse_existing is True, return the base path if it exists
-            if reuse_existing and os.path.exists(similarity_path):
-                return similarity_path
+            if reuse_existing and os.path.exists(cosmic_path):
+                return cosmic_path
             
-            if not os.path.exists(similarity_path):
-                return similarity_path
+            if not os.path.exists(cosmic_path):
+                return cosmic_path
             
             counter = 2
             while True:
-                similarity_dir_name = f"{base_name}_{counter}"
-                similarity_path = os.path.join(parent_directory, similarity_dir_name)
-                if not os.path.exists(similarity_path):
-                    return similarity_path
+                cosmic_dir_name = f"{base_name}_{counter}"
+                cosmic_path = os.path.join(parent_directory, cosmic_dir_name)
+                if not os.path.exists(cosmic_path):
+                    return cosmic_path
                 counter += 1
         
-        similarity_dir = get_next_similarity_dir()
-        os.makedirs(similarity_dir, exist_ok=True)
+        cosmic_dir = get_next_cosmic_dir()
+        os.makedirs(cosmic_dir, exist_ok=True)
         
         # Reuse existing destination folder when possible, otherwise create one.
         # This prevents redo/resume flows from producing orca_out_N_1/_2/_3.
-        existing_exact_dest = os.path.join(similarity_dir, base_destination_folder_name)
+        existing_exact_dest = os.path.join(cosmic_dir, base_destination_folder_name)
 
         def _clear_destination_outputs(dest_dir: str) -> None:
             """Remove previous copied outputs so destination reflects current state."""
@@ -8626,13 +8626,13 @@ def collect_out_files_with_tracking(reuse_existing=False, target_sim_folder=None
             except Exception:
                 pass
 
-        # Create the calc_out/orca_out/gaussian_out subfolder inside similarity folder
+        # Create the calc_out/orca_out/gaussian_out subfolder inside cosmic folder
         if reuse_existing:
             # In redo mode: always reuse the same output folder (cleanup if exists)
             # Look for any of the possible folder patterns
-            existing_orca_dirs = glob.glob(os.path.join(similarity_dir, f"orca_out_{num_files}*"))
-            existing_gaussian_dirs = glob.glob(os.path.join(similarity_dir, f"gaussian_out_{num_files}*"))
-            existing_calc_dirs = glob.glob(os.path.join(similarity_dir, f"calc_out_{num_files}*"))
+            existing_orca_dirs = glob.glob(os.path.join(cosmic_dir, f"orca_out_{num_files}*"))
+            existing_gaussian_dirs = glob.glob(os.path.join(cosmic_dir, f"gaussian_out_{num_files}*"))
+            existing_calc_dirs = glob.glob(os.path.join(cosmic_dir, f"calc_out_{num_files}*"))
             existing_orca_dirs.extend(existing_gaussian_dirs)
             existing_orca_dirs.extend(existing_calc_dirs)
 
@@ -8649,23 +8649,23 @@ def collect_out_files_with_tracking(reuse_existing=False, target_sim_folder=None
             else:
                 # First time - create the folder
                 destination_folder_name = base_destination_folder_name
-                destination_path = os.path.join(similarity_dir, destination_folder_name)
+                destination_path = os.path.join(cosmic_dir, destination_folder_name)
                 os.makedirs(destination_path, exist_ok=True)
 
-            # Cleanup old artifacts before reusing similarity folder
-            print(f"Cleaning up previous similarity results in {os.path.basename(similarity_dir)}...")
+            # Cleanup old artifacts before reusing cosmic folder
+            print(f"Cleaning up previous cosmic results in {os.path.basename(cosmic_dir)}...")
             items_to_remove = [
                 'dendrogram_images', 'extracted_clusters', 'extracted_data',
                 'skipped_structures', 'clustering_summary.txt', 'boltzmann_distribution.txt'
             ]
 
             # Also remove motifs folders
-            for item in os.listdir(similarity_dir):
+            for item in os.listdir(cosmic_dir):
                 if item.startswith('motifs_') or item.startswith('umotifs_'):
                     items_to_remove.append(item)
 
             for item in items_to_remove:
-                item_path = os.path.join(similarity_dir, item)
+                item_path = os.path.join(cosmic_dir, item)
                 if os.path.exists(item_path):
                     try:
                         if os.path.isdir(item_path):
@@ -8682,8 +8682,8 @@ def collect_out_files_with_tracking(reuse_existing=False, target_sim_folder=None
                 destination_path = existing_exact_dest
                 _clear_destination_outputs(destination_path)
             else:
-                destination_folder_name = get_unique_folder_name(base_destination_folder_name, similarity_dir)
-                destination_path = os.path.join(similarity_dir, destination_folder_name)
+                destination_folder_name = get_unique_folder_name(base_destination_folder_name, cosmic_dir)
+                destination_path = os.path.join(cosmic_dir, destination_folder_name)
                 os.makedirs(destination_path, exist_ok=True)
         
         # Copy files to the output subfolder
@@ -8691,7 +8691,7 @@ def collect_out_files_with_tracking(reuse_existing=False, target_sim_folder=None
             shutil.copy2(file_path, destination_path)
         
         # Get just the folder name for display (without full path)
-        similarity_folder_name = os.path.basename(similarity_dir)
+        cosmic_folder_name = os.path.basename(cosmic_dir)
         file_type_desc = "output files"
         if has_orca and has_gaussian:
             file_type_desc = "ORCA and Gaussian files"
@@ -8699,7 +8699,7 @@ def collect_out_files_with_tracking(reuse_existing=False, target_sim_folder=None
             file_type_desc = "Gaussian files"
         else:
             file_type_desc = "ORCA files"
-        print(f"Copied {num_files} {file_type_desc} to {similarity_folder_name}/{destination_folder_name}")
+        print(f"Copied {num_files} {file_type_desc} to {cosmic_folder_name}/{destination_folder_name}")
         return destination_path
     except Exception as e:
         import traceback
@@ -8826,7 +8826,7 @@ def execute_summary_only():
         print("\nNo summary files were created (no valid calculation data found).")
 
 
-def execute_sort_command(include_summary=True, target_sim_folder=None, reuse_existing=False):
+def execute_sort_command(include_summary=True, target_cosmic_folder=None, reuse_existing=False):
     """Execute the complete sort process with option to revert."""
     print("=" * 50)
     print("ASCEC Sort Process Started")
@@ -8864,66 +8864,66 @@ def execute_sort_command(include_summary=True, target_sim_folder=None, reuse_exi
         
         # Step 5: Collect .out files
         print("\n5. Collecting .out files...")
-        similarity_folder = collect_out_files_with_tracking(reuse_existing=reuse_existing, target_sim_folder=target_sim_folder)
-        if similarity_folder:
-            created_folders.append(similarity_folder)
+        cosmic_folder = collect_out_files_with_tracking(reuse_existing=reuse_existing, target_cosmic_folder=target_cosmic_folder)
+        if cosmic_folder:
+            created_folders.append(cosmic_folder)
         
         print("\n" + "=" * 50)
         print("ASCEC Sort Process Completed")
         print("=" * 50)
         
-        # Suggest similarity analysis if .out files were collected
-        # Check if any similarity folder exists at the parent level
+        # Suggest cosmic analysis if .out files were collected
+        # Check if any cosmic folder exists at the parent level
         parent_dir = os.path.dirname(os.getcwd())
-        similarity_dirs = []
+        cosmic_dirs = []
         for item in os.listdir(parent_dir):
-            if item == "similarity" or item.startswith("similarity_"):
-                similarity_path = os.path.join(parent_dir, item)
-                if os.path.isdir(similarity_path):
-                    similarity_dirs.append(item)
+            if item == "cosmic" or item.startswith("cosmic_"):
+                cosmic_path = os.path.join(parent_dir, item)
+                if os.path.isdir(cosmic_path):
+                    cosmic_dirs.append(item)
             
-        if similarity_dirs:
+        if cosmic_dirs:
             print("\nSuggested next step:")
-            print("  python similarity")
-            print("  Run similarity analysis on collected output files")
+            print("  python cosmic")
+            print("  Run cosmic analysis on collected output files")
 
     except Exception as e:
         print(f"\nError during sort process: {e}")
 
-def execute_similarity_analysis(*args):
-    """Execute similarity analysis by calling the similarity script."""
+def execute_cosmic_analysis(*args):
+    """Execute cosmic analysis by calling the cosmic script."""
     import subprocess
     import sys
     
     # Get the directory where ascec-v04.py is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    similarity_script = os.path.join(script_dir, "similarity-v01.py")
+    cosmic_script = os.path.join(script_dir, "cosmic-v01.py")
     
-    if not os.path.exists(similarity_script):
-        print(f"Error: similarity_v01.py not found in {script_dir}")
-        print("Make sure similarity_v01.py is in the same directory as ascec-v04.py")
+    if not os.path.exists(cosmic_script):
+        print(f"Error: cosmic_v01.py not found in {script_dir}")
+        print("Make sure cosmic_v01.py is in the same directory as ascec-v04.py")
         return
     
     # Build command
-    cmd = [sys.executable, similarity_script] + list(args)
+    cmd = [sys.executable, cosmic_script] + list(args)
     # If user provides --th/--threshold, pass it through; otherwise
-    # similarity uses statistical consensus cutting (no threshold needed).
+    # cosmic uses statistical consensus cutting (no threshold needed).
 
     print("=" * 50)
-    print("ASCEC Similarity Analysis")
+    print("ASCEC COSMIC Analysis")
     print("=" * 50)
     print(f"Executing: {' '.join(cmd[1:])}")  # Don't show python path
     print()
     
     try:
-        # Execute the similarity script with all arguments
+        # Execute the cosmic script with all arguments
         result = subprocess.run(cmd, check=True)
         print("\n" + "=" * 50)
-        print("Similarity analysis completed successfully.")
+        print("COSMIC analysis completed successfully.")
         print("=" * 50)
     except subprocess.CalledProcessError as e:
-        print(f"\nError executing similarity analysis: {e}")
-        print("Check the similarity script arguments and try again.")
+        print(f"\nError executing cosmic analysis: {e}")
+        print("Check the cosmic script arguments and try again.")
     except Exception as e:
         print(f"\nUnexpected error: {e}")
 
@@ -9061,7 +9061,7 @@ class WorkflowContext:
     num_replicas: int = 0
     annealing_dirs: List[str] = dataclasses.field(default_factory=list)
     optimization_stage_dir: str = ""
-    similarity_dir: str = ""
+    cosmic_dir: str = ""
     refinement_stage_dir: str = ""
     critical_count: int = 0
     skipped_count: int = 0
@@ -9071,7 +9071,7 @@ class WorkflowContext:
     optimization_stage_number: int = 0  # Track which optimization/refinement cycle stage (1 or 2)
     cache_file: str = ""  # Protocol-specific cache filename
     current_stage_key: str = ""  # Current stage key (e.g., "optimization_2")
-    similarity_args: List[str] = dataclasses.field(default_factory=list)  # Store all similarity args
+    cosmic_args: List[str] = dataclasses.field(default_factory=list)  # Store all cosmic args
     is_workflow: bool = False  # True when running in workflow mode (with , or then separators)
     workflow_verbose: bool = False  # True only when workflow should print detailed stage logs
     workflow_verbose_level: int = 0  # 0: silent, 1: -v, 2: -v2, 3: -v3
@@ -9088,20 +9088,20 @@ class WorkflowContext:
     optimization_xyz_source: Optional[str] = None
     optimization_completed: Optional[int] = None
     optimization_total: Optional[int] = None
-    optimization_sim_folder: Optional[str] = None
-    sim_folder: Optional[str] = None
-    sim_motifs_created: Optional[int] = None
-    last_similarity_input_count: Optional[int] = None
-    last_similarity_motif_count: Optional[int] = None
-    last_similarity_umotif_count: Optional[int] = None
-    similarity_stage_counts: Dict[int, int] = dataclasses.field(default_factory=dict)  # stage index -> representative count
-    similarity_stage_input_counts: Dict[int, int] = dataclasses.field(default_factory=dict)  # stage index -> input structure count
+    optimization_cosmic_folder: Optional[str] = None
+    cosmic_folder: Optional[str] = None
+    cosmic_motifs_created: Optional[int] = None
+    last_cosmic_input_count: Optional[int] = None
+    last_cosmic_motif_count: Optional[int] = None
+    last_cosmic_umotif_count: Optional[int] = None
+    cosmic_stage_counts: Dict[int, int] = dataclasses.field(default_factory=dict)  # stage index -> representative count
+    cosmic_stage_input_counts: Dict[int, int] = dataclasses.field(default_factory=dict)  # stage index -> input structure count
     refinement_motifs_source: Optional[str] = None
     refinement_completed: Optional[int] = None
     refinement_total: Optional[int] = None
-    refinement_sim_folder: Optional[str] = None
+    refinement_cosmic_folder: Optional[str] = None
     recalculated_files: Optional[List[str]] = None  # List of basenames for files being recalculated in redo
-    pending_similarity_folder: Optional[str] = None  # Folder set by optimization/refinement for the next similarity stage
+    pending_cosmic_folder: Optional[str] = None  # Folder set by optimization/refinement for the next cosmic stage
     use_skipped_threshold: bool = False  # True if --skipped flag is used, False if --critical (default)
     current_stage: Optional[Dict[str, Any]] = None  # Active workflow stage (for stage-aware helpers)
     update_progress: Optional[Callable[[str], None]] = None  # Compact workflow progress callback
@@ -9114,13 +9114,13 @@ class WorkflowContext:
         Get output directory from the most recent completed stage of given type.
         
         Args:
-            stage_type: Stage type prefix (e.g., 'r', 'optimization', 'similarity', 'refinement')
+            stage_type: Stage type prefix (e.g., 'r', 'optimization', 'cosmic', 'refinement')
         
         Returns:
             Output directory path or None if not found
             
         Example:
-            context.get_previous_stage_output_dir('similarity')  # Returns 'similarity/motifs'
+            context.get_previous_stage_output_dir('cosmic')  # Returns 'cosmic/motifs'
             context.get_previous_stage_output_dir('optimization')  # Returns 'calculation'
         """
         if not self.cache_file:
@@ -9144,7 +9144,7 @@ class WorkflowContext:
         Get working directory for a specific stage by its key.
         
         Args:
-            stage_key: Exact stage key (e.g., 'optimization_1', 'similarity_2')
+            stage_key: Exact stage key (e.g., 'optimization_1', 'cosmic_2')
         
         Returns:
             Working directory path or None if not found
@@ -9169,7 +9169,7 @@ class WorkflowContext:
         Get input directory from the most recent completed stage of given type.
         
         Args:
-            stage_type: Stage type prefix (e.g., 'r', 'optimization', 'similarity', 'refinement')
+            stage_type: Stage type prefix (e.g., 'r', 'optimization', 'cosmic', 'refinement')
         
         Returns:
             Input directory path or None if not found
@@ -9210,12 +9210,12 @@ def parse_workflow_stages(args: List[str]) -> List[Dict[str, Any]]:
     Supports both space-separated and comma-attached formats.
     
     Examples:
-        ascec04 at_annealing.in , r3 , opt --redo=3 preopt.inp launcher.sh , similarity --th=2
-        ascec04 at_annealing.asc, r3, opt --redo=3 preopt.inp launcher.sh, similarity --th=2
-        ascec04 .asc, r3, opt -c --redo=3 preopt.inp launcher.sh, similarity --th=2
+        ascec04 at_annealing.in , r3 , opt --redo=3 preopt.inp launcher.sh , cosmic --th=2
+        ascec04 at_annealing.asc, r3, opt --redo=3 preopt.inp launcher.sh, cosmic --th=2
+        ascec04 .asc, r3, opt -c --redo=3 preopt.inp launcher.sh, cosmic --th=2
         
         With pause after stage (using dot separator):
-        ascec04 .asc, r3, opt --redo=3 preopt.inp launcher.sh. similarity --th=2
+        ascec04 .asc, r3, opt --redo=3 preopt.inp launcher.sh. cosmic --th=2
             (dot after launcher.sh means pause after optimization stage for manual review)
         
         With auto-selection flags:
@@ -9225,7 +9225,7 @@ def parse_workflow_stages(args: List[str]) -> List[Dict[str, Any]]:
             (-c: Combine all result_*.xyz into combined_r{N}.xyz first, then process)
         
         Flag meanings:
-            --redo=N: Redo entire stage (optimization+similarity or refinement+similarity) up to N times
+            --redo=N: Redo entire stage (optimization+cosmic or refinement+cosmic) up to N times
             
         Note: Launch failures (instant crashes) are automatically retried up to 10 times.
         Once an optimization run starts running normally, it will not be retried regardless of exit code.
@@ -9336,10 +9336,10 @@ def finalize_stage(stage_args: List[str], pause_after: bool = False) -> Optional
             stage_dict['pause_after'] = True
         return stage_dict
     
-    # Similarity stage: similarity ... or simil ...
-    elif first_arg in ['similarity', 'simil']:
+    # COSMIC stage: cosmic ... or cosmic ...
+    elif first_arg in ['cosmic', 'cosmic']:
         stage_dict = {
-            'type': 'similarity',
+            'type': 'cosmic',
             'args': stage_args[1:]
         }
         if pause_after:
@@ -9378,25 +9378,25 @@ def finalize_stage(stage_args: List[str], pause_after: bool = False) -> Optional
         print(f"Warning: Unknown stage type '{first_arg}', skipping.")
         return None
 
-def find_similarity_script() -> Optional[str]:
+def find_cosmic_script() -> Optional[str]:
     """
-    Locate similarity-v01.py script.
+    Locate cosmic-v01.py script.
     Searches in: current dir, same dir as ascec script, scripts/ dir, parent dir, and PATH.
     
     Returns:
-        Path to similarity script, or None if not found
+        Path to cosmic script, or None if not found
     """
     # Get directory where this script (ascec-v04.py) is located
     ascec_dir = os.path.dirname(os.path.abspath(__file__))
     
     search_locations = [
-        'similarity-v01.py',  # Current working directory
-        'similarity.py',
-        os.path.join(ascec_dir, 'similarity-v01.py'),  # Same dir as ascec script
-        os.path.join(ascec_dir, 'similarity.py'),
-        'scripts/similarity-v01.py',
-        '../scripts/similarity-v01.py',
-        os.path.expanduser('~/scripts/similarity-v01.py'),
+        'cosmic-v01.py',  # Current working directory
+        'cosmic.py',
+        os.path.join(ascec_dir, 'cosmic-v01.py'),  # Same dir as ascec script
+        os.path.join(ascec_dir, 'cosmic.py'),
+        'scripts/cosmic-v01.py',
+        '../scripts/cosmic-v01.py',
+        os.path.expanduser('~/scripts/cosmic-v01.py'),
     ]
     
     # Check each location
@@ -9405,15 +9405,15 @@ def find_similarity_script() -> Optional[str]:
             return os.path.abspath(location)
     
     # Check if in PATH (shutil.which is cross-platform)
-    found = shutil.which('similarity-v01.py')
+    found = shutil.which('cosmic-v01.py')
     if found:
         return found
 
     return None
 
-def parse_similarity_percentages(stdout_text: str) -> Tuple[float, float]:
+def parse_cosmic_percentages(stdout_text: str) -> Tuple[float, float]:
     """
-    Parse similarity stdout to extract critical and skipped percentages.
+    Parse cosmic stdout to extract critical and skipped percentages.
     
     Example output:
         Total files skipped: 47 (11.2%)
@@ -9428,7 +9428,7 @@ def parse_similarity_percentages(stdout_text: str) -> Tuple[float, float]:
     skipped_pct = 0.0
     
     try:
-        # Look for critical percentages from both legacy and new similarity outputs.
+        # Look for critical percentages from both legacy and new cosmic outputs.
         critical_matches = re.findall(
             r'(?:Critical skipped files|Critical reduced-vector unmatched):.*?\(([0-9.]+)%\)',
             stdout_text,
@@ -9442,12 +9442,12 @@ def parse_similarity_percentages(stdout_text: str) -> Tuple[float, float]:
         if skipped_match:
             skipped_pct = float(skipped_match.group(1))
     except Exception as e:
-        print(f"Warning: Could not parse similarity percentages: {e}")
+        print(f"Warning: Could not parse cosmic percentages: {e}")
     
     return (critical_pct, skipped_pct)
 
 
-def parse_similarity_summary(summary_file: str) -> Tuple[float, float]:
+def parse_cosmic_summary(summary_file: str) -> Tuple[float, float]:
     """
     Parse clustering_summary.txt file to extract critical and skipped percentages.
     
@@ -9481,21 +9481,21 @@ def parse_similarity_summary(summary_file: str) -> Tuple[float, float]:
         if skipped_match:
             skipped_pct = float(skipped_match.group(1))
     except Exception as e:
-        print(f"Warning: Could not parse similarity summary: {e}")
+        print(f"Warning: Could not parse cosmic summary: {e}")
     
     return (critical_pct, skipped_pct)
 
-def parse_similarity_output(similarity_dir: str) -> Tuple[int, int]:
+def parse_cosmic_output(cosmic_dir: str) -> Tuple[int, int]:
     """
-    Parse similarity output to extract critical and skipped file counts.
+    Parse cosmic output to extract critical and skipped file counts.
     
     Returns:
         (critical_count, skipped_count)
     """
-    summary_file = os.path.join(similarity_dir, 'clustering_summary.txt')
+    summary_file = os.path.join(cosmic_dir, 'clustering_summary.txt')
     
     if not os.path.exists(summary_file):
-        print(f"Warning: clustering_summary.txt not found in {similarity_dir}")
+        print(f"Warning: clustering_summary.txt not found in {cosmic_dir}")
         return (0, 0)
     
     critical_count = 0
@@ -9521,7 +9521,7 @@ def parse_similarity_output(similarity_dir: str) -> Tuple[int, int]:
                 skipped_count = int(skipped_match.group(1))
                 
     except Exception as e:
-        print(f"Warning: Error parsing similarity output: {e}")
+        print(f"Warning: Error parsing cosmic output: {e}")
     
     return (critical_count, skipped_count)
 
@@ -10144,11 +10144,11 @@ def check_workflow_pause(stage: Dict[str, Any], stage_num: int, total_stages: in
     
     return False  # Signal to stop execution
 
-def validate_cached_optimization_similarity(cache: dict, stage: Dict[str, Any], stage_num: int,
+def validate_cached_optimization_cosmic(cache: dict, stage: Dict[str, Any], stage_num: int,
                                             stages: List[Dict[str, Any]], stage_idx: int,
                                             cache_file: str) -> Tuple[bool, int]:
     """
-    Validate cached optimization+similarity results against thresholds.
+    Validate cached optimization+cosmic results against thresholds.
     
     Returns:
         Tuple of (should_skip, new_stage_idx)
@@ -10158,13 +10158,13 @@ def validate_cached_optimization_similarity(cache: dict, stage: Dict[str, Any], 
     stage_type = stage['type']
     stage_key = f"{stage_type}_{stage_num}"
     
-    # Check if next stage is similarity AND it's also cached
-    next_is_similarity = (stage_idx < len(stages) and stages[stage_idx]['type'] == 'similarity')
-    if not next_is_similarity:
+    # Check if next stage is cosmic AND it's also cached
+    next_is_cosmic = (stage_idx < len(stages) and stages[stage_idx]['type'] == 'cosmic')
+    if not next_is_cosmic:
         return True, stage_idx
     
     next_stage_num = stage_idx + 1
-    next_stage_key = f"similarity_{next_stage_num}"
+    next_stage_key = f"cosmic_{next_stage_num}"
     if next_stage_key not in cache.get('stages', {}) or \
        cache['stages'][next_stage_key].get('status') != 'completed':
         return True, stage_idx
@@ -10182,29 +10182,29 @@ def validate_cached_optimization_similarity(cache: dict, stage: Dict[str, Any], 
     
     # If no thresholds set, cache is valid
     if max_critical is None and max_skipped is None:
-        # Print skipped similarity stage
-        sim_stage_cache = cache['stages'][next_stage_key]
+        # Print skipped cosmic stage
+        cosmic_stage_cache = cache['stages'][next_stage_key]
         print(f"\n{'-' * 60}")
-        print(f"[{next_stage_num}/{len(stages)}] Similarity (cached)")
-        print(f"  ✓ Skipped (completed at {sim_stage_cache.get('timestamp', 'unknown')})")
+        print(f"[{next_stage_num}/{len(stages)}] COSMIC (cached)")
+        print(f"  ✓ Skipped (completed at {cosmic_stage_cache.get('timestamp', 'unknown')})")
         print('-' * 60)
         return True, stage_idx + 1
     
-    # Get similarity directory from cache and validate
-    sim_cache = cache['stages'][next_stage_key]
-    sim_dir = sim_cache.get('result', {}).get('working_dir', 'similarity')
-    summary_file = os.path.join(sim_dir, "clustering_summary.txt")
+    # Get cosmic directory from cache and validate
+    cosmic_cache = cache['stages'][next_stage_key]
+    cosmic_dir = cosmic_cache.get('result', {}).get('working_dir', 'cosmic')
+    summary_file = os.path.join(cosmic_dir, "clustering_summary.txt")
     
     if not os.path.exists(summary_file):
         # Can't validate, accept cache
-        sim_stage_cache = cache['stages'][next_stage_key]
+        cosmic_stage_cache = cache['stages'][next_stage_key]
         print(f"\n{'-' * 60}")
-        print(f"[{next_stage_num}/{len(stages)}] Similarity (cached)")
-        print(f"  ✓ Skipped (completed at {sim_stage_cache.get('timestamp', 'unknown')})")
+        print(f"[{next_stage_num}/{len(stages)}] COSMIC (cached)")
+        print(f"  ✓ Skipped (completed at {cosmic_stage_cache.get('timestamp', 'unknown')})")
         print('-' * 60)
         return True, stage_idx + 1
     
-    critical_pct, skipped_pct = parse_similarity_summary(summary_file)
+    critical_pct, skipped_pct = parse_cosmic_summary(summary_file)
     
     threshold_met = True
     if max_critical is not None:
@@ -10219,7 +10219,7 @@ def validate_cached_optimization_similarity(cache: dict, stage: Dict[str, Any], 
             print(f"  Invalidating cache and re-running optimization with redo logic...")
     
     if not threshold_met:
-        # Remove both optimization and similarity from cache
+        # Remove both optimization and cosmic from cache
         if stage_key in cache.get('stages', {}):
             del cache['stages'][stage_key]
         if next_stage_key in cache.get('stages', {}):
@@ -10231,18 +10231,18 @@ def validate_cached_optimization_similarity(cache: dict, stage: Dict[str, Any], 
         return False, stage_idx - 1
     
     # Threshold met - skip both stages
-    sim_stage_cache = cache['stages'][next_stage_key]
+    cosmic_stage_cache = cache['stages'][next_stage_key]
     print(f"\n{'-' * 60}")
-    print(f"[{next_stage_num}/{len(stages)}] Similarity (cached)")
-    print(f"  ✓ Skipped (completed at {sim_stage_cache.get('timestamp', 'unknown')})")
+    print(f"[{next_stage_num}/{len(stages)}] COSMIC (cached)")
+    print(f"  ✓ Skipped (completed at {cosmic_stage_cache.get('timestamp', 'unknown')})")
     print('-' * 60)
     return True, stage_idx + 1
 
-def validate_cached_refinement_similarity(cache: dict, stage: Dict[str, Any], stage_num: int, 
+def validate_cached_refinement_cosmic(cache: dict, stage: Dict[str, Any], stage_num: int, 
                                    stages: List[Dict[str, Any]], stage_idx: int,
                                    cache_file: str) -> Tuple[bool, int]:
     """
-    Validate cached optimization+similarity results against thresholds.
+    Validate cached optimization+cosmic results against thresholds.
     
     Returns:
         Tuple of (should_skip, new_stage_idx)
@@ -10252,13 +10252,13 @@ def validate_cached_refinement_similarity(cache: dict, stage: Dict[str, Any], st
     stage_type = stage['type']
     stage_key = f"{stage_type}_{stage_num}"
     
-    # Check if next stage is similarity AND it's also cached
-    next_is_similarity = (stage_idx < len(stages) and stages[stage_idx]['type'] == 'similarity')
-    if not next_is_similarity:
+    # Check if next stage is cosmic AND it's also cached
+    next_is_cosmic = (stage_idx < len(stages) and stages[stage_idx]['type'] == 'cosmic')
+    if not next_is_cosmic:
         return True, stage_idx
     
     next_stage_num = stage_idx + 1
-    next_stage_key = f"similarity_{next_stage_num}"
+    next_stage_key = f"cosmic_{next_stage_num}"
     if next_stage_key not in cache.get('stages', {}) or \
        cache['stages'][next_stage_key].get('status') != 'completed':
         return True, stage_idx
@@ -10276,29 +10276,29 @@ def validate_cached_refinement_similarity(cache: dict, stage: Dict[str, Any], st
     
     # If no thresholds set, cache is valid
     if max_critical is None and max_skipped is None:
-        # Print skipped similarity stage
-        sim_stage_cache = cache['stages'][next_stage_key]
+        # Print skipped cosmic stage
+        cosmic_stage_cache = cache['stages'][next_stage_key]
         print(f"\n{'-' * 60}")
-        print(f"[{next_stage_num}/{len(stages)}] Similarity (cached)")
-        print(f"  ✓ Skipped (completed at {sim_stage_cache.get('timestamp', 'unknown')})")
+        print(f"[{next_stage_num}/{len(stages)}] COSMIC (cached)")
+        print(f"  ✓ Skipped (completed at {cosmic_stage_cache.get('timestamp', 'unknown')})")
         print('-' * 60)
         return True, stage_idx + 1
     
-    # Get similarity directory from cache and validate
-    sim_cache = cache['stages'][next_stage_key]
-    sim_dir = sim_cache.get('result', {}).get('working_dir', 'similarity')
-    summary_file = os.path.join(sim_dir, "clustering_summary.txt")
+    # Get cosmic directory from cache and validate
+    cosmic_cache = cache['stages'][next_stage_key]
+    cosmic_dir = cosmic_cache.get('result', {}).get('working_dir', 'cosmic')
+    summary_file = os.path.join(cosmic_dir, "clustering_summary.txt")
     
     if not os.path.exists(summary_file):
         # Can't validate, accept cache
-        sim_stage_cache = cache['stages'][next_stage_key]
+        cosmic_stage_cache = cache['stages'][next_stage_key]
         print(f"\n{'-' * 60}")
-        print(f"[{next_stage_num}/{len(stages)}] Similarity (cached)")
-        print(f"  ✓ Skipped (completed at {sim_stage_cache.get('timestamp', 'unknown')})")
+        print(f"[{next_stage_num}/{len(stages)}] COSMIC (cached)")
+        print(f"  ✓ Skipped (completed at {cosmic_stage_cache.get('timestamp', 'unknown')})")
         print('-' * 60)
         return True, stage_idx + 1
     
-    critical_pct, skipped_pct = parse_similarity_summary(summary_file)
+    critical_pct, skipped_pct = parse_cosmic_summary(summary_file)
     
     threshold_met = True
     if max_critical is not None:
@@ -10313,7 +10313,7 @@ def validate_cached_refinement_similarity(cache: dict, stage: Dict[str, Any], st
             print(f"  Invalidating cache and re-running optimization with redo logic...")
     
     if not threshold_met:
-        # Remove both opt and similarity from cache
+        # Remove both opt and cosmic from cache
         if stage_key in cache.get('stages', {}):
             del cache['stages'][stage_key]
         if next_stage_key in cache.get('stages', {}):
@@ -10325,10 +10325,10 @@ def validate_cached_refinement_similarity(cache: dict, stage: Dict[str, Any], st
         return False, stage_idx - 1
     
     # Threshold met - skip both stages
-    sim_stage_cache = cache['stages'][next_stage_key]
+    cosmic_stage_cache = cache['stages'][next_stage_key]
     print(f"\n{'-' * 60}")
-    print(f"[{next_stage_num}/{len(stages)}] Similarity (cached)")
-    print(f"  ✓ Skipped (completed at {sim_stage_cache.get('timestamp', 'unknown')})")
+    print(f"[{next_stage_num}/{len(stages)}] COSMIC (cached)")
+    print(f"  ✓ Skipped (completed at {cosmic_stage_cache.get('timestamp', 'unknown')})")
     print('-' * 60)
     return True, stage_idx + 1
 
@@ -10368,13 +10368,13 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         total = len(stages)
         bar = render_progress_bar(total, total, width=30)
 
-        # Prefer cache-backed stage data so redo mode reports FINAL similarity counts.
+        # Prefer cache-backed stage data so redo mode reports FINAL cosmic counts.
         final_cache: Dict[str, Any] = {}
         if use_cache and isinstance(cache_file, str) and cache_file and os.path.exists(cache_file):
             final_cache = load_protocol_cache(cache_file) or {}
         cache_stages = final_cache.get('stages', {}) if isinstance(final_cache, dict) else {}
 
-        similarity_counter = 0
+        cosmic_counter = 0
         summary_lines: List[str] = []
 
         for idx, stage_def in enumerate(stages, start=1):
@@ -10382,10 +10382,10 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             stage_name = stage_display_map.get(stage_type, str(stage_type).capitalize())
             stage_line = f"[{idx}/{total}] {stage_name} ✓"
 
-            if stage_type == 'similarity':
-                similarity_counter += 1
-                stage_name = "Similarity" if similarity_counter == 1 else f"Similarity_{similarity_counter}"
-                stage_key = f"similarity_{idx}"
+            if stage_type == 'cosmic':
+                cosmic_counter += 1
+                stage_name = "COSMIC" if cosmic_counter == 1 else f"COSMIC_{cosmic_counter}"
+                stage_key = f"cosmic_{idx}"
                 stage_data = cache_stages.get(stage_key, {}) if isinstance(cache_stages, dict) else {}
                 stage_result = stage_data.get('result', {}) if isinstance(stage_data, dict) else {}
 
@@ -10397,9 +10397,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
                 # Fallback to last known count if cache is unavailable.
                 if motifs_created is None:
-                    motifs_created = context.sim_motifs_created
+                    motifs_created = context.cosmic_motifs_created
                 if inputs_count is None:
-                    stage_input_counts = getattr(context, 'similarity_stage_input_counts', {})
+                    stage_input_counts = getattr(context, 'cosmic_stage_input_counts', {})
                     inputs_count = stage_input_counts.get(idx)
 
                 if motifs_created is not None:
@@ -10419,7 +10419,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         # in-place instead of printing a duplicate header below it.
         lines = [
             "",
-            "=== ASCEC & Similarity ===",
+            "=== COSMIC ASCEC ===",
             "-" * 60,
             f"Progress [{bar}] 100.0%",
             "-" * 60,
@@ -10449,7 +10449,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         Reduce disk usage by removing intermediate files, keeping only:
         - annealing/ as-is
         - optimization/refinement dirs: combined_results.*, orca_summary.txt, launcher_*.sh
-        - similarity dirs: dendrogram_images/, clustering_summary.txt, boltzmann_distribution.txt,
+        - cosmic dirs: dendrogram_images/, clustering_summary.txt, boltzmann_distribution.txt,
           extracted_clusters/, extracted_data/, final motifs_N/ or umotifs_N/
         - Root: final_ensemble.* or possible_final_ensemble.*, protocol_summary.txt, .asc file
         - geom_opt_out/ or geom_ref_out/: motif representative calculation folders from last stage
@@ -10467,8 +10467,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         # --- Identify stage directories and their types ---
         # Walk the stages list to figure out which directories correspond to what
         opt_dirs = []      # (dir_path, stage_index, is_refinement)
-        sim_dirs = []      # (dir_path, stage_index)
-        similarity_counter = 0
+        cosmic_dirs = []      # (dir_path, stage_index)
+        cosmic_counter = 0
 
         for idx, stage in enumerate(stages):
             stype = stage['type']
@@ -10486,14 +10486,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     ref_dir = "refinement"
                 if os.path.isdir(ref_dir):
                     opt_dirs.append((ref_dir, idx, True))
-            elif stype == 'similarity':
-                similarity_counter += 1
-                if similarity_counter == 1:
-                    sim_dir = "similarity"
+            elif stype == 'cosmic':
+                cosmic_counter += 1
+                if cosmic_counter == 1:
+                    cosmic_dir = "cosmic"
                 else:
-                    sim_dir = f"similarity_{similarity_counter}"
-                if os.path.isdir(sim_dir):
-                    sim_dirs.append((sim_dir, idx))
+                    cosmic_dir = f"cosmic_{cosmic_counter}"
+                if os.path.isdir(cosmic_dir):
+                    cosmic_dirs.append((cosmic_dir, idx))
 
         # If context has better info from cache, also scan for dirs directly
         if not opt_dirs:
@@ -10501,24 +10501,24 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 if os.path.isdir(d):
                     is_ref = "refine" in d.lower()
                     opt_dirs.append((d, -1, is_ref))
-        if not sim_dirs:
-            for d in sorted(glob.glob("similarity*")):
-                if os.path.isdir(d) and not d.startswith("similarity_tmp"):
-                    sim_dirs.append((d, -1))
+        if not cosmic_dirs:
+            for d in sorted(glob.glob("cosmic*")):
+                if os.path.isdir(d) and not d.startswith("cosmic_tmp"):
+                    cosmic_dirs.append((d, -1))
 
         # --- Determine the LAST optimization/refinement stage ---
         last_opt_idx = len(opt_dirs) - 1 if opt_dirs else -1
 
-        # --- Find the final motif names from the last similarity stage ---
+        # --- Find the final motif names from the last cosmic stage ---
         # These map back to the original calculation directories
         final_motif_mapping = {}  # motif_rank -> original_base_name (e.g. "opt_conf_5" or "motif_03_opt")
-        final_sim_dir = sim_dirs[-1][0] if sim_dirs else None
+        final_cosmic_dir = cosmic_dirs[-1][0] if cosmic_dirs else None
         final_motifs_dir = None
 
-        if final_sim_dir:
+        if final_cosmic_dir:
             # Find the final motifs/umotifs directory (highest numbered)
             for pattern in ["umotifs_*", "motifs_*"]:
-                candidates = sorted(glob.glob(os.path.join(final_sim_dir, pattern)))
+                candidates = sorted(glob.glob(os.path.join(final_cosmic_dir, pattern)))
                 candidates = [c for c in candidates if os.path.isdir(c)]
                 if candidates:
                     final_motifs_dir = candidates[-1]
@@ -10561,10 +10561,10 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             return result
 
         # --- Helper: parse Boltzmann distribution file for rank -> source mapping ---
-        def parse_boltzmann_sources(sim_dir_path):
+        def parse_boltzmann_sources(cosmic_dir_path):
             """Parse boltzmann_distribution.txt to get rank -> source_stem mapping."""
             mapping = {}
-            boltz = os.path.join(sim_dir_path, "boltzmann_distribution.txt")
+            boltz = os.path.join(cosmic_dir_path, "boltzmann_distribution.txt")
             if os.path.exists(boltz):
                 try:
                     with open(boltz, 'r') as bf:
@@ -10582,15 +10582,15 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     pass
             return mapping
 
-        # --- Helper: parse a similarity stage's motif-to-source mapping ---
-        def parse_sim_mapping(sim_dir_path):
+        # --- Helper: parse a cosmic stage's motif-to-source mapping ---
+        def parse_sim_mapping(cosmic_dir_path):
             """Parse motif filenames or Boltzmann file to get rank -> source_stem mapping.
             For clean names (umotif_01.xyz with no suffix), prefers Boltzmann source info
             since filenames don't encode the original structure name."""
             mapping = {}
             motifs_d = None
             for pat in ["umotifs_*", "motifs_*"]:
-                cands = sorted(glob.glob(os.path.join(sim_dir_path, pat)))
+                cands = sorted(glob.glob(os.path.join(cosmic_dir_path, pat)))
                 cands = [c for c in cands if os.path.isdir(c)]
                 if cands:
                     motifs_d = cands[-1]
@@ -10617,7 +10617,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 return mapping
 
             # Clean names (umotif_01.xyz) — use Boltzmann for source traceability
-            boltz_mapping = parse_boltzmann_sources(sim_dir_path)
+            boltz_mapping = parse_boltzmann_sources(cosmic_dir_path)
             if boltz_mapping:
                 return boltz_mapping
 
@@ -10658,14 +10658,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         os.remove(tmp_file)
             return len(rep_folders)
 
-        if final_sim_dir:
-            final_motif_mapping = parse_sim_mapping(final_sim_dir)
+        if final_cosmic_dir:
+            final_motif_mapping = parse_sim_mapping(final_cosmic_dir)
 
-        # --- Build similarity chain mappings ---
-        # sim_mappings[i] = {rank: source_stem} for similarity stage i
-        sim_mappings = []
-        for sd, _ in sim_dirs:
-            sim_mappings.append(parse_sim_mapping(sd))
+        # --- Build cosmic chain mappings ---
+        # cosmic_mappings[i] = {rank: source_stem} for cosmic stage i
+        cosmic_mappings = []
+        for sd, _ in cosmic_dirs:
+            cosmic_mappings.append(parse_sim_mapping(sd))
 
         # --- Identify refinement stages vs optimization-only ---
         ref_stages = [(d, idx, ir) for d, idx, ir in opt_dirs if ir]  # refinement stages only
@@ -10675,36 +10675,36 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         final_prefix = "umotif" if (final_motifs_dir and "umotif" in os.path.basename(final_motifs_dir)) else "motif"
 
         if ref_stages and final_motif_mapping:
-            # Multiple refinement stages: extract from each, chaining through similarity stages
+            # Multiple refinement stages: extract from each, chaining through cosmic stages
             # ref_stages are ordered: first = geometry refinement, last = energy refinement
-            # Each ref stage N is followed by sim_dirs[N] (if sim_dirs[0] follows opt, sim_dirs[1] follows ref1, etc.)
+            # Each ref stage N is followed by cosmic_dirs[N] (if cosmic_dirs[0] follows opt, cosmic_dirs[1] follows ref1, etc.)
 
-            # The final similarity mapping (last entry) gives us: final_rank -> last_ref_stem
-            # To reach earlier ref stages, chain backwards through intermediate similarity mappings
+            # The final cosmic mapping (last entry) gives us: final_rank -> last_ref_stem
+            # To reach earlier ref stages, chain backwards through intermediate cosmic mappings
 
             for ref_idx, (ref_dir, _, _) in enumerate(ref_stages):
-                # How many similarity stages back do we need to chain?
-                # ref_stages[0] is followed by sim_dirs[1] (sim_dirs[0] follows optimization)
-                # ref_stages[1] is followed by sim_dirs[2]
-                # The last sim_dirs entry is the final one
-                # We need to chain from the final sim backwards to sim_dirs[ref_idx + 1]
+                # How many cosmic stages back do we need to chain?
+                # ref_stages[0] is followed by cosmic_dirs[1] (cosmic_dirs[0] follows optimization)
+                # ref_stages[1] is followed by cosmic_dirs[2]
+                # The last cosmic_dirs entry is the final one
+                # We need to chain from the final sim backwards to cosmic_dirs[ref_idx + 1]
 
-                # Number of chain steps from final similarity back to this ref's similarity
-                # ref_idx=0 (first ref) → its output is analyzed by sim_dirs[1] (if opt exists) or sim_dirs[0]
+                # Number of chain steps from final cosmic back to this ref's cosmic
+                # ref_idx=0 (first ref) → its output is analyzed by cosmic_dirs[1] (if opt exists) or cosmic_dirs[0]
                 # The sim index for this ref stage is: ref_idx + len(opt_only_stages)
-                sim_for_this_ref = ref_idx + len(opt_only_stages)
+                cosmic_for_this_ref = ref_idx + len(opt_only_stages)
 
                 # Build the mapping: final_rank -> stem in this ref stage's calc dir
                 # Start from final_motif_mapping (final_rank -> stem in last ref)
                 rank_to_stem = dict(final_motif_mapping)
 
-                # Chain backwards through similarity stages
-                # From the final sim mapping back to sim_for_this_ref + 1
-                final_sim_idx = len(sim_mappings) - 1
-                for chain_idx in range(final_sim_idx, sim_for_this_ref, -1):
+                # Chain backwards through cosmic stages
+                # From the final sim mapping back to cosmic_for_this_ref + 1
+                final_cosmic_idx = len(cosmic_mappings) - 1
+                for chain_idx in range(final_cosmic_idx, cosmic_for_this_ref, -1):
                     # rank_to_stem currently maps final_rank -> stem at chain_idx level
                     # We need to translate to chain_idx - 1 level
-                    prev_mapping = sim_mappings[chain_idx - 1] if chain_idx - 1 >= 0 else {}
+                    prev_mapping = cosmic_mappings[chain_idx - 1] if chain_idx - 1 >= 0 else {}
                     new_rank_to_stem = {}
                     for final_rank, current_stem in rank_to_stem.items():
                         # current_stem is something like "umotif_05_opt" from this sim level
@@ -10771,16 +10771,16 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 label = "refinement" if is_ref else "optimization"
                 print(f"  Cleaned {calc_dir}/ ({label}): kept {len(kept_root_files)} summary files")
 
-        # --- Clean similarity directories ---
-        for sim_dir, _ in sim_dirs:
-            if not os.path.isdir(sim_dir):
+        # --- Clean cosmic directories ---
+        for cosmic_dir, _ in cosmic_dirs:
+            if not os.path.isdir(cosmic_dir):
                 continue
 
             removed_count = 0
             # Find the final motifs/umotifs dir (highest numbered)
             final_motif_dir_name = None
             for pattern in ["umotifs_*", "motifs_*"]:
-                candidates = sorted(glob.glob(os.path.join(sim_dir, pattern)))
+                candidates = sorted(glob.glob(os.path.join(cosmic_dir, pattern)))
                 candidates = [c for c in candidates if os.path.isdir(c)]
                 if candidates:
                     final_motif_dir_name = os.path.basename(candidates[-1])
@@ -10794,8 +10794,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             if final_motif_dir_name:
                 keep_entries.add(final_motif_dir_name)
 
-            for entry in os.listdir(sim_dir):
-                entry_path = os.path.join(sim_dir, entry)
+            for entry in os.listdir(cosmic_dir):
+                entry_path = os.path.join(cosmic_dir, entry)
                 if entry in keep_entries:
                     continue
 
@@ -10808,7 +10808,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     removed_count += 1
 
             if verbose and removed_count > 0:
-                print(f"  Cleaned {sim_dir}/: removed {removed_count} intermediate entries")
+                print(f"  Cleaned {cosmic_dir}/: removed {removed_count} intermediate entries")
 
         # --- Clean root-level protocol cache files ---
         for pkl in glob.glob(os.path.join(input_root, "protocol_*.pkl")):
@@ -10834,21 +10834,21 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 print("\n✓ Miniprint cleanup complete (use --maxprint to keep all files)")
 
     def copy_final_ensemble_to_root() -> None:
-        """Copy final ensemble files from the last similarity output to input root."""
+        """Copy final ensemble files from the last cosmic output to input root."""
         input_root = os.path.dirname(os.path.abspath(input_file))
 
-        # Resolve the last similarity directory from context first, then cache fallback.
-        similarity_candidates: List[str] = []
-        if getattr(context, 'similarity_dir', None):
-            similarity_candidates.append(str(context.similarity_dir))
+        # Resolve the last cosmic directory from context first, then cache fallback.
+        cosmic_candidates: List[str] = []
+        if getattr(context, 'cosmic_dir', None):
+            cosmic_candidates.append(str(context.cosmic_dir))
 
         if use_cache and isinstance(cache_file, str) and cache_file and os.path.exists(cache_file):
             cache_data = load_protocol_cache(cache_file) or {}
             cache_stages = cache_data.get('stages', {}) if isinstance(cache_data, dict) else {}
             for idx in range(len(stages), 0, -1):
-                if stages[idx - 1].get('type') != 'similarity':
+                if stages[idx - 1].get('type') != 'cosmic':
                     continue
-                stage_key = f"similarity_{idx}"
+                stage_key = f"cosmic_{idx}"
                 stage_data = cache_stages.get(stage_key, {}) if isinstance(cache_stages, dict) else {}
                 if not isinstance(stage_data, dict):
                     continue
@@ -10857,11 +10857,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     continue
                 working_dir = stage_result.get('working_dir')
                 if isinstance(working_dir, str) and working_dir:
-                    similarity_candidates.append(working_dir)
+                    cosmic_candidates.append(working_dir)
                 break
 
-        resolved_similarity_dir = None
-        for candidate in similarity_candidates:
+        resolved_cosmic_dir = None
+        for candidate in cosmic_candidates:
             candidate_dir = candidate
             base_name = os.path.basename(candidate_dir)
             if base_name.startswith('orca_out_') or base_name.startswith('gaussian_out_') or base_name.startswith('opt_out_'):
@@ -10869,20 +10869,20 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
             abs_candidate = os.path.abspath(candidate_dir)
             if os.path.isdir(abs_candidate):
-                resolved_similarity_dir = abs_candidate
+                resolved_cosmic_dir = abs_candidate
                 break
 
-        if not resolved_similarity_dir:
-            print("Warning: Could not resolve final similarity directory for final ensemble copy.")
+        if not resolved_cosmic_dir:
+            print("Warning: Could not resolve final cosmic directory for final ensemble copy.")
             return
 
-        umotif_dirs = sorted(glob.glob(os.path.join(resolved_similarity_dir, 'umotifs_*')))
-        motif_dirs = sorted(glob.glob(os.path.join(resolved_similarity_dir, 'motifs_*')))
+        umotif_dirs = sorted(glob.glob(os.path.join(resolved_cosmic_dir, 'umotifs_*')))
+        motif_dirs = sorted(glob.glob(os.path.join(resolved_cosmic_dir, 'motifs_*')))
 
         # Prefer the most refined/final ensemble when present.
         source_dir = umotif_dirs[-1] if umotif_dirs else (motif_dirs[-1] if motif_dirs else None)
         if not source_dir:
-            print(f"Warning: No motifs_/umotifs_ folder found in {resolved_similarity_dir} for final ensemble copy.")
+            print(f"Warning: No motifs_/umotifs_ folder found in {resolved_cosmic_dir} for final ensemble copy.")
             return
 
         source_xyz = None
@@ -10918,11 +10918,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         # Choose output naming based on whether the dataset had frequency calculations.
         # Opt-only → possible_final_ensemble (no true minima can be assured).
         # Freq mode → final_ensemble (original behaviour).
-        opt_only = getattr(context, 'similarity_opt_only', False)
+        opt_only = getattr(context, 'cosmic_opt_only', False)
         # Fallback: check clustering_summary.txt for opt-only marker in case the
-        # context flag was not set (e.g. similarity stage was fully cached).
-        if not opt_only and resolved_similarity_dir:
-            _cs_path = os.path.join(resolved_similarity_dir, "clustering_summary.txt")
+        # context flag was not set (e.g. cosmic stage was fully cached).
+        if not opt_only and resolved_cosmic_dir:
+            _cs_path = os.path.join(resolved_cosmic_dir, "clustering_summary.txt")
             if os.path.exists(_cs_path):
                 try:
                     with open(_cs_path, 'r') as _csf:
@@ -10961,7 +10961,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     context = WorkflowContext(input_file=input_file)
     context.is_workflow = True  # We're in workflow mode
     context.workflow_verbose_level = parse_verbosity_level(sys.argv)
-    context.similarity_opt_only = False  # Set to True if similarity detects opt-only dataset
+    context.cosmic_opt_only = False  # Set to True if cosmic detects opt-only dataset
     context.maxprint = globals().get('_ascec_maxprint_requested', False)  # Default: miniprint (clean up at end)
     
     # Read configuration from input file
@@ -11130,10 +11130,10 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             cache['total_stages'] = len(stages)
             save_protocol_cache(cache, cache_file)
     
-    # Pre-scan stages to extract similarity args for use in optimization stage
+    # Pre-scan stages to extract cosmic args for use in optimization stage
     for stage in stages:
-        if stage['type'] == 'similarity':
-            context.similarity_args = stage.get('args', [])
+        if stage['type'] == 'cosmic':
+            context.cosmic_args = stage.get('args', [])
             break
     
     # Count optimization stages for proper numbering (opt, opt2)
@@ -11143,7 +11143,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     stage_display_map: Dict[str, str] = {
         'replication': 'Annealing',
         'optimization': 'Optimization',
-        'similarity': 'Similarity',
+        'cosmic': 'COSMIC',
         'refinement': 'Refinement'
     }
 
@@ -11175,14 +11175,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             name = stage_display_map.get(st['type'], st['type'].capitalize())
             if i <= completed_stages:
                 line = f"[{i}/{total}] {name} ✓"
-                if st.get('type') == 'similarity':
-                    stage_counts = getattr(context, 'similarity_stage_counts', {})
-                    stage_input_counts = getattr(context, 'similarity_stage_input_counts', {})
+                if st.get('type') == 'cosmic':
+                    stage_counts = getattr(context, 'cosmic_stage_counts', {})
+                    stage_input_counts = getattr(context, 'cosmic_stage_input_counts', {})
                     stage_total = stage_counts.get(i)
                     stage_inputs = stage_input_counts.get(i)
                     if stage_total is None:
-                        motif_count = getattr(context, 'last_similarity_motif_count', None)
-                        umotif_count = getattr(context, 'last_similarity_umotif_count', None)
+                        motif_count = getattr(context, 'last_cosmic_motif_count', None)
+                        umotif_count = getattr(context, 'last_cosmic_umotif_count', None)
                         if motif_count is not None or umotif_count is not None:
                             m_val = motif_count if motif_count is not None else 0
                             u_val = umotif_count if umotif_count is not None else 0
@@ -11216,7 +11216,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
         lines = [
             "",
-            "=== ASCEC & Similarity ===",
+            "=== COSMIC ASCEC ===",
             "-" * 60,
             f"Progress [{bar}] {pct:.1f}%",
             "-" * 60,
@@ -11281,7 +11281,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
     completed_stage_count = 0
     
-    # Execute each stage in sequence with optimization+similarity retry logic
+    # Execute each stage in sequence with optimization+cosmic retry logic
     stage_idx = 0
     while stage_idx < len(stages):
         stage_num = stage_idx + 1
@@ -11308,43 +11308,43 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     context.completed_stage_count = completed_stage_count
                     stage_idx += 1
 
-                    # Restore similarity_opt_only flag from cached similarity result
-                    if stage_type == 'similarity':
+                    # Restore cosmic_opt_only flag from cached cosmic result
+                    if stage_type == 'cosmic':
                         cached_result = stage_cache.get('result', {})
                         if isinstance(cached_result, dict) and cached_result.get('opt_only', False):
-                            context.similarity_opt_only = True
+                            context.cosmic_opt_only = True
 
-                    # Validate cached optimization+similarity if applicable
+                    # Validate cached optimization+cosmic if applicable
                     if stage_type == 'optimization':
-                        should_skip, new_idx = validate_cached_optimization_similarity(
+                        should_skip, new_idx = validate_cached_optimization_cosmic(
                             cache, stage, stage_num, stages, stage_idx, cache_file
                         )
                         if not should_skip:
                             stage_idx = new_idx
                             continue
-                        # Restore similarity_opt_only from the skipped similarity cache
+                        # Restore cosmic_opt_only from the skipped cosmic cache
                         if new_idx > stage_idx:
-                            sim_key = f"similarity_{stage_idx + 1}"
-                            sim_cached = cache.get('stages', {}).get(sim_key, {})
-                            sim_res = sim_cached.get('result', {})
-                            if isinstance(sim_res, dict) and sim_res.get('opt_only', False):
-                                context.similarity_opt_only = True
+                            cosmic_key = f"cosmic_{stage_idx + 1}"
+                            cosmic_cached = cache.get('stages', {}).get(cosmic_key, {})
+                            cosmic_res = cosmic_cached.get('result', {})
+                            if isinstance(cosmic_res, dict) and cosmic_res.get('opt_only', False):
+                                context.cosmic_opt_only = True
                         stage_idx = new_idx
-                    # Validate cached refinement+similarity if applicable
+                    # Validate cached refinement+cosmic if applicable
                     elif stage_type == 'refinement':
-                        should_skip, new_idx = validate_cached_refinement_similarity(
+                        should_skip, new_idx = validate_cached_refinement_cosmic(
                             cache, stage, stage_num, stages, stage_idx, cache_file
                         )
                         if not should_skip:
                             stage_idx = new_idx
                             continue
-                        # Restore similarity_opt_only from the skipped similarity cache
+                        # Restore cosmic_opt_only from the skipped cosmic cache
                         if new_idx > stage_idx:
-                            sim_key = f"similarity_{stage_idx + 1}"
-                            sim_cached = cache.get('stages', {}).get(sim_key, {})
-                            sim_res = sim_cached.get('result', {})
-                            if isinstance(sim_res, dict) and sim_res.get('opt_only', False):
-                                context.similarity_opt_only = True
+                            cosmic_key = f"cosmic_{stage_idx + 1}"
+                            cosmic_cached = cache.get('stages', {}).get(cosmic_key, {})
+                            cosmic_res = cosmic_cached.get('result', {})
+                            if isinstance(cosmic_res, dict) and cosmic_res.get('opt_only', False):
+                                context.cosmic_opt_only = True
                         stage_idx = new_idx
                     continue
         
@@ -11443,11 +11443,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 optimization_stage_counter += 1
                 context.optimization_stage_number = optimization_stage_counter
                 
-                # Check if next stage is similarity - if so, handle optimization+similarity with retry
-                next_is_similarity = (stage_idx + 1 < len(stages) and 
-                                     stages[stage_idx + 1]['type'] == 'similarity')
+                # Check if next stage is cosmic - if so, handle optimization+cosmic with retry
+                next_is_cosmic = (stage_idx + 1 < len(stages) and 
+                                     stages[stage_idx + 1]['type'] == 'cosmic')
                 
-                if next_is_similarity:
+                if next_is_cosmic:
                     # Extract redo parameters from optimization stage
                     optimization_args = stage['args']
                     max_redos = 3  # Default: 3 redo attempts for critical structures
@@ -11481,7 +11481,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             elif max_skipped is not None:
                                 print(f"  Stage redo enabled: max {max_redos} redo attempts, target skipped ≤ {max_skipped}%")
                     
-                    # Redo loop for optimization+similarity
+                    # Redo loop for optimization+cosmic
                     # attempt 0 = initial run, attempts 1..max_redos = redo attempts
                     final_attempt = 0
                     initial_critical = None  # Track initial critical % from first attempt
@@ -11494,48 +11494,48 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             print(f"\n{'-' * 60}")
                             print(f"Redo {attempt}/{max_redos}")
                         
-                        # Don't delete similarity folder - we'll update it with corrected calculations
+                        # Don't delete cosmic folder - we'll update it with corrected calculations
                         
-                        # Run calculation (which includes sort step that creates similarity/)
+                        # Run calculation (which includes sort step that creates cosmic/)
                         result = execute_optimization_stage(context, stage)
                         if result != 0:
                             print(f"\nError: Optimization failed with code {result}")
                             return result
                         
-                        # If this is a redo attempt and we have recalculated files, copy them to similarity folder
+                        # If this is a redo attempt and we have recalculated files, copy them to cosmic folder
                         if attempt > 0 and hasattr(context, 'recalculated_files') and context.recalculated_files:
-                            # Get calculation and similarity directories
+                            # Get calculation and cosmic directories
                             optimization_dir_path = getattr(context, 'optimization_stage_dir', 'optimization')
-                            # Get similarity orca output directory
-                            sim_dir = context.similarity_dir if hasattr(context, 'similarity_dir') else "similarity"
+                            # Get cosmic orca output directory
+                            cosmic_dir = context.cosmic_dir if hasattr(context, 'cosmic_dir') else "cosmic"
                             
-                            # Find the orca_out directory in similarity (deterministic target)
-                            sim_orca_dir = None
-                            preferred_sim_folder = getattr(context, 'optimization_sim_folder', None)
-                            if isinstance(preferred_sim_folder, str) and preferred_sim_folder:
-                                preferred_path = os.path.abspath(preferred_sim_folder)
+                            # Find the orca_out directory in cosmic (deterministic target)
+                            cosmic_orca_dir = None
+                            preferred_cosmic_folder = getattr(context, 'optimization_cosmic_folder', None)
+                            if isinstance(preferred_cosmic_folder, str) and preferred_cosmic_folder:
+                                preferred_path = os.path.abspath(preferred_cosmic_folder)
                                 if os.path.isdir(preferred_path) and os.path.basename(preferred_path).startswith('orca_out_'):
-                                    sim_orca_dir = preferred_path
-                            if sim_orca_dir is None:
-                                orca_dirs = sorted(glob.glob(os.path.join(sim_dir, "orca_out*")), key=natural_sort_key)
+                                    cosmic_orca_dir = preferred_path
+                            if cosmic_orca_dir is None:
+                                orca_dirs = sorted(glob.glob(os.path.join(cosmic_dir, "orca_out*")), key=natural_sort_key)
                                 if orca_dirs:
-                                    sim_orca_dir = orca_dirs[-1]
+                                    cosmic_orca_dir = orca_dirs[-1]
 
-                            if sim_orca_dir:
+                            if cosmic_orca_dir:
                                 
-                                # Clean similarity directory BEFORE copying files (keep only orca_out and cache)
-                                if sim_dir and os.path.exists(sim_dir):
+                                # Clean cosmic directory BEFORE copying files (keep only orca_out and cache)
+                                if cosmic_dir and os.path.exists(cosmic_dir):
                                     items_to_remove = [
                                         'dendrogram_images', 'extracted_clusters', 'extracted_data',
                                         'skipped_structures', 'clustering_summary.txt', 'boltzmann_distribution.txt'
                                     ]
                                     # Also remove motifs and umotifs folders
-                                    for item in os.listdir(sim_dir):
+                                    for item in os.listdir(cosmic_dir):
                                         if item.startswith('motifs_') or item.startswith('umotifs_'):
                                             items_to_remove.append(item)
                                     
                                     for item in items_to_remove:
-                                        item_path = os.path.join(sim_dir, item)
+                                        item_path = os.path.join(cosmic_dir, item)
                                         if os.path.exists(item_path):
                                             try:
                                                 if os.path.isdir(item_path):
@@ -11545,47 +11545,47 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                             except Exception as e:
                                                 print(f"    Error removing {item}: {e}")
                                 
-                                # Copy updated .out files from calculation subdirectories to similarity
+                                # Copy updated .out files from calculation subdirectories to cosmic
                                 for basename in context.recalculated_files:
                                     # Find the .out file in calculation subdirectories
                                     calc_subdir = os.path.join(optimization_dir_path, basename)
                                     calc_out_file = os.path.join(calc_subdir, f"{basename}.out")
                                     
                                     if os.path.exists(calc_out_file):
-                                        # Copy to similarity orca directory
-                                        sim_out_file = os.path.join(sim_orca_dir, f"{basename}.out")
-                                        shutil.copy2(calc_out_file, sim_out_file)
+                                        # Copy to cosmic orca directory
+                                        cosmic_out_file = os.path.join(cosmic_orca_dir, f"{basename}.out")
+                                        shutil.copy2(calc_out_file, cosmic_out_file)
                             else:
-                                print(f"\n  Warning: No orca_out directory found in {sim_dir}/")
+                                print(f"\n  Warning: No orca_out directory found in {cosmic_dir}/")
                         
-                        # Run similarity; stage header is only shown in verbose mode.
+                        # Run cosmic; stage header is only shown in verbose mode.
                         if attempt == 0 and context.workflow_verbose_level >= 1:
                             print(f"\n{'-' * 60}")
-                            print(f"[{stage_idx + 2}/{len(stages)}] Similarity")
+                            print(f"[{stage_idx + 2}/{len(stages)}] COSMIC")
                             print('-' * 60)
                         
-                        similarity_stage = stages[stage_idx + 1]
-                        result = execute_similarity_stage(context, similarity_stage)
+                        cosmic_stage = stages[stage_idx + 1]
+                        result = execute_cosmic_stage(context, cosmic_stage)
                         if result != 0:
-                            print(f"\nError: Similarity failed with code {result}")
+                            print(f"\nError: COSMIC failed with code {result}")
                             return result
 
                         # In opt-only mode, no true minima / no critical structures → skip redo.
-                        if getattr(context, 'similarity_opt_only', False):
+                        if getattr(context, 'cosmic_opt_only', False):
                             break
 
-                        # Parse similarity results from clustering_summary.txt
-                        summary_file = os.path.join(context.similarity_dir, "clustering_summary.txt")
+                        # Parse cosmic results from clustering_summary.txt
+                        summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
                         if os.path.exists(summary_file):
-                            critical_pct, skipped_pct = parse_similarity_summary(summary_file)
+                            critical_pct, skipped_pct = parse_cosmic_summary(summary_file)
                             
                             # Capture initial values on first attempt
                             if attempt == 0:
                                 initial_critical = critical_pct
                                 initial_skipped = skipped_pct
                                 # Get counts for initial attempt
-                                sim_dir = context.similarity_dir if context.similarity_dir else "similarity"
-                                init_crit_count, init_skip_count = parse_similarity_output(sim_dir)
+                                cosmic_dir = context.cosmic_dir if context.cosmic_dir else "cosmic"
+                                init_crit_count, init_skip_count = parse_cosmic_output(cosmic_dir)
                                 initial_critical_count = init_crit_count
                                 initial_skipped_count = init_skip_count
                             
@@ -11633,17 +11633,17 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 print("⚠ Warning: Could not find clustering_summary.txt")
                             break
                     
-                    # Get final similarity results for cache
+                    # Get final cosmic results for cache
                     final_critical = None
                     final_skipped = None
-                    summary_file = os.path.join(context.similarity_dir, "clustering_summary.txt")
+                    summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
                     if os.path.exists(summary_file):
-                        final_critical, final_skipped = parse_similarity_summary(summary_file)
+                        final_critical, final_skipped = parse_cosmic_summary(summary_file)
                     
-                    # Update cache for both optimization and similarity stages
+                    # Update cache for both optimization and cosmic stages
                     if use_cache:
                         calc_key = f"optimization_{stage_num}"
-                        sim_key = f"similarity_{stage_num + 1}"
+                        cosmic_key = f"cosmic_{stage_num + 1}"
                         
                         calc_result: Dict[str, Any] = {
                             'attempts': final_attempt,
@@ -11681,94 +11681,94 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         if hasattr(context, 'optimization_total_cpu_time'):
                             calc_result['total_cpu_time'] = context.optimization_total_cpu_time
 
-                        # Add similarity folder info if available
-                        if hasattr(context, 'optimization_sim_folder'):
-                            calc_result['similarity_folder'] = context.optimization_sim_folder
+                        # Add cosmic folder info if available
+                        if hasattr(context, 'optimization_cosmic_folder'):
+                            calc_result['cosmic_folder'] = context.optimization_cosmic_folder
 
                         update_protocol_cache(calc_key, 'completed',
                                             result=calc_result, cache_file=cache_file)
 
-                        sim_result = {}
+                        cosmic_result = {}
 
                         # Store directories for stage memory
-                        sim_dir = context.similarity_dir if context.similarity_dir else "similarity"
+                        cosmic_dir = context.cosmic_dir if context.cosmic_dir else "cosmic"
                         optimization_dir_path = context.optimization_stage_dir if context.optimization_stage_dir else "calculation"
-                        sim_result['input_dir'] = optimization_dir_path  # Read from calculation
-                        sim_result['working_dir'] = sim_dir
+                        cosmic_result['input_dir'] = optimization_dir_path  # Read from calculation
+                        cosmic_result['working_dir'] = cosmic_dir
                         # After calculation: use "motifs" prefix (first level clustering)
-                        sim_result['output_dir'] = os.path.join(sim_dir, "motifs")  # Motifs for opt stage
+                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, "motifs")  # Motifs for opt stage
                         
                         if final_critical is not None:
-                            sim_result['critical_pct'] = final_critical
+                            cosmic_result['critical_pct'] = final_critical
                         if final_skipped is not None:
-                            sim_result['skipped_pct'] = final_skipped
+                            cosmic_result['skipped_pct'] = final_skipped
                         
-                        # Extract critical and skipped counts from similarity output
-                        critical_count, skipped_count = parse_similarity_output(sim_dir)
-                        sim_result['critical_count'] = critical_count
-                        sim_result['skipped_count'] = skipped_count
+                        # Extract critical and skipped counts from cosmic output
+                        critical_count, skipped_count = parse_cosmic_output(cosmic_dir)
+                        cosmic_result['critical_count'] = critical_count
+                        cosmic_result['skipped_count'] = skipped_count
                         
-                        # Extract threshold value from similarity command args
-                        sim_stage = stages[stage_idx + 1] if stage_idx + 1 < len(stages) else {}
-                        sim_args = sim_stage.get('args', [])
-                        for arg in sim_args:
+                        # Extract threshold value from cosmic command args
+                        cosmic_stage = stages[stage_idx + 1] if stage_idx + 1 < len(stages) else {}
+                        cosmic_args = cosmic_stage.get('args', [])
+                        for arg in cosmic_args:
                             if arg.startswith('--th=') or arg.startswith('--threshold='):
                                 threshold_val = float(arg.split('=')[1])
-                                sim_result['threshold'] = threshold_val
+                                cosmic_result['threshold'] = threshold_val
                             elif arg.startswith('--rmsd='):
                                 rmsd_val = float(arg.split('=')[1])
-                                sim_result['rmsd_threshold'] = rmsd_val
+                                cosmic_result['rmsd_threshold'] = rmsd_val
                         
-                        # Add similarity folder and motifs info if available
-                        if hasattr(context, 'sim_folder'):
-                            sim_result['similarity_folder'] = context.sim_folder
-                        if hasattr(context, 'sim_motifs_created'):
-                            sim_result['motifs_created'] = context.sim_motifs_created
+                        # Add cosmic folder and motifs info if available
+                        if hasattr(context, 'cosmic_folder'):
+                            cosmic_result['cosmic_folder'] = context.cosmic_folder
+                        if hasattr(context, 'cosmic_motifs_created'):
+                            cosmic_result['motifs_created'] = context.cosmic_motifs_created
                         
                         # Add initial validation values (from first attempt)
                         if initial_critical is not None:
-                            sim_result['initial_critical'] = initial_critical
+                            cosmic_result['initial_critical'] = initial_critical
                         if initial_skipped is not None:
-                            sim_result['initial_skipped'] = initial_skipped
+                            cosmic_result['initial_skipped'] = initial_skipped
                         if initial_critical_count is not None:
-                            sim_result['initial_critical_count'] = initial_critical_count
+                            cosmic_result['initial_critical_count'] = initial_critical_count
                         if initial_skipped_count is not None:
-                            sim_result['initial_skipped_count'] = initial_skipped_count
+                            cosmic_result['initial_skipped_count'] = initial_skipped_count
                         
                         # Add threshold info and attempts
-                        sim_result['attempts'] = final_attempt
+                        cosmic_result['attempts'] = final_attempt
                         if max_critical is not None:
-                            sim_result['threshold_type'] = 'critical'
-                            sim_result['threshold_value'] = max_critical
-                            sim_result['threshold_met'] = (final_critical is not None and final_critical <= max_critical)
+                            cosmic_result['threshold_type'] = 'critical'
+                            cosmic_result['threshold_value'] = max_critical
+                            cosmic_result['threshold_met'] = (final_critical is not None and final_critical <= max_critical)
                         elif max_skipped is not None:
-                            sim_result['threshold_type'] = 'skipped'
-                            sim_result['threshold_value'] = max_skipped
-                            sim_result['threshold_met'] = (final_skipped is not None and final_skipped <= max_skipped)
+                            cosmic_result['threshold_type'] = 'skipped'
+                            cosmic_result['threshold_value'] = max_skipped
+                            cosmic_result['threshold_met'] = (final_skipped is not None and final_skipped <= max_skipped)
 
                         # Flag opt-only mode so protocol summary suppresses critical/skipped display
-                        if getattr(context, 'similarity_opt_only', False):
-                            sim_result['opt_only'] = True
+                        if getattr(context, 'cosmic_opt_only', False):
+                            cosmic_result['opt_only'] = True
 
-                        update_protocol_cache(sim_key, 'completed',
-                                            result=sim_result, cache_file=cache_file)
+                        update_protocol_cache(cosmic_key, 'completed',
+                                            result=cosmic_result, cache_file=cache_file)
 
                     # Check if workflow should pause after optimization stage
                     if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
                         return 0  # Paused after optimization
                     
-                    # Check if workflow should pause after similarity stage (check next stage for pause marker)
+                    # Check if workflow should pause after cosmic stage (check next stage for pause marker)
                     if stage_idx + 1 < len(stages):
-                        sim_stage = stages[stage_idx + 1]
-                        if not check_workflow_pause(sim_stage, stage_num + 1, len(stages), cache_file, use_cache):
-                            return 0  # Paused after similarity
+                        cosmic_stage = stages[stage_idx + 1]
+                        if not check_workflow_pause(cosmic_stage, stage_num + 1, len(stages), cache_file, use_cache):
+                            return 0  # Paused after cosmic
                     
-                    # Skip both optimization and similarity stages since we handled them
+                    # Skip both optimization and cosmic stages since we handled them
                     stage_idx += 2
                     completed_stage_count = stage_num + 1
                     context.completed_stage_count = completed_stage_count
                 else:
-                    # Standalone optimization without similarity
+                    # Standalone optimization without cosmic
                     result = execute_optimization_stage(context, stage)
                     
                     # Check if workflow should pause after this stage
@@ -11780,9 +11780,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     completed_stage_count = stage_num
                     context.completed_stage_count = completed_stage_count
                     
-            elif stage_type == 'similarity':
-                # Standalone similarity (not after optimization/refinement in combined mode)
-                result = execute_similarity_stage(context, stage)
+            elif stage_type == 'cosmic':
+                # Standalone cosmic (not after optimization/refinement in combined mode)
+                result = execute_cosmic_stage(context, stage)
                 
                 # Check if previous stage was optimization or refinement with threshold requirements
                 if result == 0 and stage_idx > 0:
@@ -11806,10 +11806,10 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         
                         # If thresholds are set and redo is enabled, check results
                         if (max_critical is not None or max_skipped is not None) and max_redos > 1:
-                            summary_file = os.path.join(context.similarity_dir, "clustering_summary.txt")
+                            summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
                             
                             if os.path.exists(summary_file):
-                                critical_pct, skipped_pct = parse_similarity_summary(summary_file)
+                                critical_pct, skipped_pct = parse_cosmic_summary(summary_file)
                                 
                                 if context.workflow_verbose_level >= 1:
                                     print(f"\nResults: {critical_pct:.1f}% critical, {skipped_pct:.1f}% skipped")
@@ -11822,15 +11822,15 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                             print(f"→ Threshold exceeded (critical {critical_pct:.1f}% > {max_critical}%)")
                                         print(f"  Invalidating cache and re-running {prev_stage_type} with redo logic...")
                                         
-                                        # Invalidate both previous stage and similarity stages
+                                        # Invalidate both previous stage and cosmic stages
                                         prev_key = f"{prev_stage_type}_{stage_idx}"  # Previous stage
-                                        sim_key = f"similarity_{stage_num}"          # Current stage
+                                        cosmic_key = f"cosmic_{stage_num}"          # Current stage
                                         
                                         if use_cache and 'stages' in cache:
                                             if prev_key in cache['stages']:
                                                 del cache['stages'][prev_key]
-                                            if sim_key in cache['stages']:
-                                                del cache['stages'][sim_key]
+                                            if cosmic_key in cache['stages']:
+                                                del cache['stages'][cosmic_key]
                                             
                                             # Save updated cache
                                             with open(cache_file, 'wb') as f:
@@ -11850,15 +11850,15 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                             print(f"→ Threshold exceeded (skipped {skipped_pct:.1f}% > {max_skipped}%)")
                                         print(f"  Invalidating cache and re-running {prev_stage_type} with redo logic...")
                                         
-                                        # Invalidate both previous stage and similarity stages
+                                        # Invalidate both previous stage and cosmic stages
                                         prev_key = f"{prev_stage_type}_{stage_idx}"
-                                        sim_key = f"similarity_{stage_num}"
+                                        cosmic_key = f"cosmic_{stage_num}"
                                         
                                         if use_cache and 'stages' in cache:
                                             if prev_key in cache['stages']:
                                                 del cache['stages'][prev_key]
-                                            if sim_key in cache['stages']:
-                                                del cache['stages'][sim_key]
+                                            if cosmic_key in cache['stages']:
+                                                del cache['stages'][cosmic_key]
                                             
                                             # Save updated cache
                                             with open(cache_file, 'wb') as f:
@@ -11871,17 +11871,17 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                         if context.workflow_verbose_level >= 1:
                                             print(f"→ Threshold met (skipped ≤ {max_skipped}%)")
                 
-                # Save similarity result to cache
+                # Save cosmic result to cache
                 if result == 0 and use_cache:
                     from datetime import datetime as dt_sim
-                    sim_key = f"similarity_{stage_num}"
-                    sim_result: Dict[str, Any] = {
+                    cosmic_key = f"cosmic_{stage_num}"
+                    cosmic_result: Dict[str, Any] = {
                         'status': 'completed',
                         'end_time': dt_sim.now().isoformat()
                     }
                     
                     # Store directories for stage memory
-                    sim_dir = context.similarity_dir if context.similarity_dir else "similarity"
+                    cosmic_dir = context.cosmic_dir if context.cosmic_dir else "cosmic"
                     
                     # Determine input directory and output prefix based on previous stage
                     # Check if previous stage was refinement or optimization
@@ -11890,53 +11890,53 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     if prev_was_opt:
                         # After refinement: input from refinement dir, output to umotifs
                         opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "refinement"
-                        sim_result['input_dir'] = opt_dir
-                        sim_result['output_dir'] = os.path.join(sim_dir, "umotifs")
+                        cosmic_result['input_dir'] = opt_dir
+                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, "umotifs")
                     else:
                         # After optimization: input from optimization dir, output to motifs
                         optimization_dir_path = context.optimization_stage_dir if context.optimization_stage_dir else "calculation"
-                        sim_result['input_dir'] = optimization_dir_path
-                        sim_result['output_dir'] = os.path.join(sim_dir, "motifs")
+                        cosmic_result['input_dir'] = optimization_dir_path
+                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, "motifs")
                     
-                    sim_result['working_dir'] = sim_dir
+                    cosmic_result['working_dir'] = cosmic_dir
                     
-                    # Add similarity folder and motifs info if available
-                    if hasattr(context, 'sim_folder') and context.sim_folder:
-                        sim_result['similarity_folder'] = context.sim_folder
-                    if hasattr(context, 'sim_motifs_created') and context.sim_motifs_created is not None:
-                        sim_result['motifs_created'] = context.sim_motifs_created
-                    sim_stage_num_s = stage_num
-                    input_cnt_s = getattr(context, 'similarity_stage_input_counts', {}).get(sim_stage_num_s)
+                    # Add cosmic folder and motifs info if available
+                    if hasattr(context, 'cosmic_folder') and context.cosmic_folder:
+                        cosmic_result['cosmic_folder'] = context.cosmic_folder
+                    if hasattr(context, 'cosmic_motifs_created') and context.cosmic_motifs_created is not None:
+                        cosmic_result['motifs_created'] = context.cosmic_motifs_created
+                    cosmic_stage_num_s = stage_num
+                    input_cnt_s = getattr(context, 'cosmic_stage_input_counts', {}).get(cosmic_stage_num_s)
                     if input_cnt_s:
-                        sim_result['input_count'] = input_cnt_s
+                        cosmic_result['input_count'] = input_cnt_s
                     
                     # Extract critical and skipped percentages and counts
-                    summary_file = os.path.join(sim_dir, "clustering_summary.txt")
+                    summary_file = os.path.join(cosmic_dir, "clustering_summary.txt")
                     if os.path.exists(summary_file):
-                        critical_pct, skipped_pct = parse_similarity_summary(summary_file)
+                        critical_pct, skipped_pct = parse_cosmic_summary(summary_file)
                         if critical_pct is not None:
-                            sim_result['critical_pct'] = critical_pct
+                            cosmic_result['critical_pct'] = critical_pct
                         if skipped_pct is not None:
-                            sim_result['skipped_pct'] = skipped_pct
+                            cosmic_result['skipped_pct'] = skipped_pct
                         
-                        critical_count, skipped_count = parse_similarity_output(sim_dir)
-                        sim_result['critical_count'] = critical_count
-                        sim_result['skipped_count'] = skipped_count
+                        critical_count, skipped_count = parse_cosmic_output(cosmic_dir)
+                        cosmic_result['critical_count'] = critical_count
+                        cosmic_result['skipped_count'] = skipped_count
                     
                     # Extract threshold value from command args
-                    sim_args = stage.get('args', [])
-                    for arg in sim_args:
+                    cosmic_args = stage.get('args', [])
+                    for arg in cosmic_args:
                         if arg.startswith('--th=') or arg.startswith('--threshold='):
                             threshold_val = float(arg.split('=')[1])
-                            sim_result['threshold'] = threshold_val
+                            cosmic_result['threshold'] = threshold_val
                             break
 
                     # Flag opt-only mode so protocol summary suppresses critical/skipped display
-                    if getattr(context, 'similarity_opt_only', False):
-                        sim_result['opt_only'] = True
+                    if getattr(context, 'cosmic_opt_only', False):
+                        cosmic_result['opt_only'] = True
 
-                    update_protocol_cache(sim_key, 'completed',
-                                        result=sim_result, cache_file=cache_file)
+                    update_protocol_cache(cosmic_key, 'completed',
+                                        result=cosmic_result, cache_file=cache_file)
 
                 # Check if workflow should pause after this stage
                 if result == 0:
@@ -11948,11 +11948,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 context.completed_stage_count = completed_stage_count
                 
             elif stage_type == 'refinement':
-                # Check if next stage is similarity - if so, handle opt+similarity with retry
-                next_is_similarity = (stage_idx + 1 < len(stages) and 
-                                     stages[stage_idx + 1]['type'] == 'similarity')
+                # Check if next stage is cosmic - if so, handle opt+cosmic with retry
+                next_is_cosmic = (stage_idx + 1 < len(stages) and 
+                                     stages[stage_idx + 1]['type'] == 'cosmic')
                 
-                if next_is_similarity:
+                if next_is_cosmic:
                     # Extract redo parameters from opt stage
                     opt_args = stage['args']
                     max_redos = 3  # Default: 3 redo attempts for critical structures
@@ -11986,7 +11986,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             elif max_skipped is not None:
                                 print(f"  Stage redo enabled: max {max_redos} redo attempts, target skipped ≤ {max_skipped}%")
                     
-                    # Redo loop for opt+similarity
+                    # Redo loop for opt+cosmic
                     # attempt 0 = initial run, attempts 1..max_redos = redo attempts
                     final_attempt = 0
                     initial_critical = None  # Track initial critical % from first attempt
@@ -11999,7 +11999,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             print(f"\n{'-' * 60}")
                             print(f"Redo {attempt}/{max_redos}")
                         
-                        # Run refinement (includes organizing/copying files to similarity)
+                        # Run refinement (includes organizing/copying files to cosmic)
                         result = execute_refinement_stage(context, stage)
                         if result != 0:
                             print(f"\nError: Refinement failed with code {result}")
@@ -12012,50 +12012,50 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 print(f"  Cache invalidated for stage {stage_num}")
                             return result
                         
-                        # If this is a redo attempt and we have recalculated files, copy them to similarity folder
+                        # If this is a redo attempt and we have recalculated files, copy them to cosmic folder
                         if attempt > 0 and hasattr(context, 'recalculated_files') and context.recalculated_files:
-                            # Get optimization and similarity directories
+                            # Get optimization and cosmic directories
                             opt_dir = getattr(context, 'refinement_stage_dir', 'optimization') or 'optimization'
-                            # Get similarity orca output directory
-                            sim_dir = context.refinement_sim_folder if hasattr(context, 'refinement_sim_folder') else context.similarity_dir
+                            # Get cosmic orca output directory
+                            cosmic_dir = context.refinement_cosmic_folder if hasattr(context, 'refinement_cosmic_folder') else context.cosmic_dir
                             
-                            # Strip orca_out suffix if present - we want the BASE similarity directory
-                            base_sim_dir = sim_dir
-                            if base_sim_dir and 'orca_out' in base_sim_dir:
-                                base_sim_dir = os.path.dirname(base_sim_dir)
+                            # Strip orca_out suffix if present - we want the BASE cosmic directory
+                            base_cosmic_dir = cosmic_dir
+                            if base_cosmic_dir and 'orca_out' in base_cosmic_dir:
+                                base_cosmic_dir = os.path.dirname(base_cosmic_dir)
                             
-                            # Find the orca_out directory in similarity (deterministic target)
-                            sim_orca_dir = None
-                            preferred_sim_folder = getattr(context, 'refinement_sim_folder', None)
-                            if isinstance(preferred_sim_folder, str) and preferred_sim_folder:
-                                preferred_path = os.path.abspath(preferred_sim_folder)
+                            # Find the orca_out directory in cosmic (deterministic target)
+                            cosmic_orca_dir = None
+                            preferred_cosmic_folder = getattr(context, 'refinement_cosmic_folder', None)
+                            if isinstance(preferred_cosmic_folder, str) and preferred_cosmic_folder:
+                                preferred_path = os.path.abspath(preferred_cosmic_folder)
                                 if os.path.isdir(preferred_path) and os.path.basename(preferred_path).startswith('orca_out_'):
-                                    sim_orca_dir = preferred_path
+                                    cosmic_orca_dir = preferred_path
 
-                            if sim_orca_dir is None:
-                                # Check if sim_dir already includes an out folder path
-                                if sim_dir and ('orca_out' in sim_dir or 'gaussian_out' in sim_dir):
-                                    sim_orca_dir = sim_dir
-                                elif sim_dir:
-                                    # sim_dir is base folder, search for orca_out subdirectory
-                                    orca_dirs = sorted(glob.glob(os.path.join(sim_dir, "orca_out*")), key=natural_sort_key)
+                            if cosmic_orca_dir is None:
+                                # Check if cosmic_dir already includes an out folder path
+                                if cosmic_dir and ('orca_out' in cosmic_dir or 'gaussian_out' in cosmic_dir):
+                                    cosmic_orca_dir = cosmic_dir
+                                elif cosmic_dir:
+                                    # cosmic_dir is base folder, search for orca_out subdirectory
+                                    orca_dirs = sorted(glob.glob(os.path.join(cosmic_dir, "orca_out*")), key=natural_sort_key)
                                     if orca_dirs:
-                                        sim_orca_dir = orca_dirs[-1]
+                                        cosmic_orca_dir = orca_dirs[-1]
                             
-                            if sim_orca_dir:
-                                # Clean similarity directory BEFORE copying files (keep only orca_out and cache)
-                                if base_sim_dir and os.path.exists(base_sim_dir):
+                            if cosmic_orca_dir:
+                                # Clean cosmic directory BEFORE copying files (keep only orca_out and cache)
+                                if base_cosmic_dir and os.path.exists(base_cosmic_dir):
                                     items_to_remove = [
                                         'dendrogram_images', 'extracted_clusters', 'extracted_data',
                                         'skipped_structures', 'clustering_summary.txt', 'boltzmann_distribution.txt'
                                     ]
                                     # Also remove motifs and umotifs folders
-                                    for item in os.listdir(base_sim_dir):
+                                    for item in os.listdir(base_cosmic_dir):
                                         if item.startswith('motifs_') or item.startswith('umotifs_'):
                                             items_to_remove.append(item)
                                     
                                     for item in items_to_remove:
-                                        item_path = os.path.join(base_sim_dir, item)
+                                        item_path = os.path.join(base_cosmic_dir, item)
                                         if os.path.exists(item_path):
                                             try:
                                                 if os.path.isdir(item_path):
@@ -12065,7 +12065,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                             except Exception:
                                                 pass
                                 
-                                # Copy updated .out files from optimization subdirectories to similarity
+                                # Copy updated .out files from optimization subdirectories to cosmic
                                 for basename in context.recalculated_files:
                                     # For optimization, files are grouped by shortened base name (motif_01_opt -> motif_01/)
                                     short_name = basename.replace('_opt', '').replace('_calc', '')
@@ -12073,40 +12073,40 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                     opt_out_file = os.path.join(opt_subdir, f"{basename}.out")
                                     
                                     if os.path.exists(opt_out_file):
-                                        # Copy to similarity orca directory
-                                        sim_out_file = os.path.join(sim_orca_dir, f"{basename}.out")
-                                        shutil.copy2(opt_out_file, sim_out_file)
+                                        # Copy to cosmic orca directory
+                                        cosmic_out_file = os.path.join(cosmic_orca_dir, f"{basename}.out")
+                                        shutil.copy2(opt_out_file, cosmic_out_file)
                             else:
-                                print(f"\n  Warning: No orca_out directory found (sim_dir={sim_dir})")
+                                print(f"\n  Warning: No orca_out directory found (cosmic_dir={cosmic_dir})")
                         
-                        # Run similarity; stage header is only shown in verbose mode.
+                        # Run cosmic; stage header is only shown in verbose mode.
                         if attempt == 0 and context.workflow_verbose_level >= 1:
                             print(f"\n{'-' * 60}")
-                            print(f"[{stage_idx + 2}/{len(stages)}] Similarity")
+                            print(f"[{stage_idx + 2}/{len(stages)}] COSMIC")
                             print('-' * 60)
                         
-                        similarity_stage = stages[stage_idx + 1]
-                        result = execute_similarity_stage(context, similarity_stage)
+                        cosmic_stage = stages[stage_idx + 1]
+                        result = execute_cosmic_stage(context, cosmic_stage)
                         if result != 0:
-                            print(f"\nError: Similarity failed with code {result}")
+                            print(f"\nError: COSMIC failed with code {result}")
                             return result
 
                         # In opt-only mode, no true minima / no critical structures → skip redo.
-                        if getattr(context, 'similarity_opt_only', False):
+                        if getattr(context, 'cosmic_opt_only', False):
                             break
 
-                        # Parse similarity results from clustering_summary.txt
-                        summary_file = os.path.join(context.similarity_dir, "clustering_summary.txt")
+                        # Parse cosmic results from clustering_summary.txt
+                        summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
                         if os.path.exists(summary_file):
-                            critical_pct, skipped_pct = parse_similarity_summary(summary_file)
+                            critical_pct, skipped_pct = parse_cosmic_summary(summary_file)
                             
                             # Capture initial values on first attempt
                             if attempt == 0:
                                 initial_critical = critical_pct
                                 initial_skipped = skipped_pct
                                 # Get counts for initial attempt
-                                sim_dir = context.similarity_dir if context.similarity_dir else "similarity_2"
-                                init_crit_count, init_skip_count = parse_similarity_output(sim_dir)
+                                cosmic_dir = context.cosmic_dir if context.cosmic_dir else "cosmic_2"
+                                init_crit_count, init_skip_count = parse_cosmic_output(cosmic_dir)
                                 initial_critical_count = init_crit_count
                                 initial_skipped_count = init_skip_count
                             
@@ -12150,17 +12150,17 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 print("⚠ Warning: Could not find clustering_summary.txt")
                             break
                     
-                    # Get final similarity results for cache
+                    # Get final cosmic results for cache
                     final_critical = None
                     final_skipped = None
-                    summary_file = os.path.join(context.similarity_dir, "clustering_summary.txt")
+                    summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
                     if os.path.exists(summary_file):
-                        final_critical, final_skipped = parse_similarity_summary(summary_file)
+                        final_critical, final_skipped = parse_cosmic_summary(summary_file)
                     
-                    # Update cache for both refinement and similarity stages
+                    # Update cache for both refinement and cosmic stages
                     if use_cache:
                         opt_key = f"refinement_{stage_num}"
-                        sim_key = f"similarity_{stage_num + 1}"
+                        cosmic_key = f"cosmic_{stage_num + 1}"
                         
                         # Build result data
                         opt_result: Dict[str, Any] = {
@@ -12169,10 +12169,10 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         }
                         
                         # Store directories for stage memory
-                        # Get input dir from previous similarity stage
-                        motifs_dir = context.get_previous_stage_output_dir('similarity')
+                        # Get input dir from previous cosmic stage
+                        motifs_dir = context.get_previous_stage_output_dir('cosmic')
                         if not motifs_dir:
-                            motifs_dir = "similarity/motifs"  # Fallback
+                            motifs_dir = "cosmic/motifs"  # Fallback
                         
                         opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "refinement"
                         opt_result['input_dir'] = motifs_dir
@@ -12199,101 +12199,101 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         if hasattr(context, 'refinement_total_cpu_time'):
                             opt_result['total_cpu_time'] = context.refinement_total_cpu_time
 
-                        # Add similarity folder info if available
-                        if hasattr(context, 'refinement_sim_folder') and context.refinement_sim_folder:
-                            opt_result['similarity_folder'] = context.refinement_sim_folder
+                        # Add cosmic folder info if available
+                        if hasattr(context, 'refinement_cosmic_folder') and context.refinement_cosmic_folder:
+                            opt_result['cosmic_folder'] = context.refinement_cosmic_folder
 
                         update_protocol_cache(opt_key, 'completed', result=opt_result, cache_file=cache_file)
                         
-                        sim_result = {}
+                        cosmic_result = {}
                         
                         # Store directories for stage memory
-                        sim_dir = context.similarity_dir if context.similarity_dir else "similarity_2"
+                        cosmic_dir = context.cosmic_dir if context.cosmic_dir else "cosmic_2"
                         opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "refinement"
-                        sim_result['input_dir'] = opt_dir  # Read from refinement
-                        sim_result['working_dir'] = sim_dir
+                        cosmic_result['input_dir'] = opt_dir  # Read from refinement
+                        cosmic_result['working_dir'] = cosmic_dir
                         # After optimization: use "umotifs" prefix (unique motifs, second level)
-                        sim_result['output_dir'] = os.path.join(sim_dir, "umotifs")  # Unique motifs
+                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, "umotifs")  # Unique motifs
                         
                         if final_critical is not None:
-                            sim_result['critical_pct'] = final_critical
+                            cosmic_result['critical_pct'] = final_critical
                         if final_skipped is not None:
-                            sim_result['skipped_pct'] = final_skipped
+                            cosmic_result['skipped_pct'] = final_skipped
                         
-                        # Extract critical and skipped counts from similarity output
-                        critical_count, skipped_count = parse_similarity_output(sim_dir)
-                        sim_result['critical_count'] = critical_count
-                        sim_result['skipped_count'] = skipped_count
+                        # Extract critical and skipped counts from cosmic output
+                        critical_count, skipped_count = parse_cosmic_output(cosmic_dir)
+                        cosmic_result['critical_count'] = critical_count
+                        cosmic_result['skipped_count'] = skipped_count
                         
-                        # Extract threshold value from similarity command args
-                        sim_stage = stages[stage_idx + 1] if stage_idx + 1 < len(stages) else {}
-                        sim_args = sim_stage.get('args', [])
-                        for arg in sim_args:
+                        # Extract threshold value from cosmic command args
+                        cosmic_stage = stages[stage_idx + 1] if stage_idx + 1 < len(stages) else {}
+                        cosmic_args = cosmic_stage.get('args', [])
+                        for arg in cosmic_args:
                             if arg.startswith('--th=') or arg.startswith('--threshold='):
                                 threshold_val = float(arg.split('=')[1])
-                                sim_result['threshold'] = threshold_val
+                                cosmic_result['threshold'] = threshold_val
                             elif arg.startswith('--rmsd='):
                                 rmsd_val = float(arg.split('=')[1])
-                                sim_result['rmsd_threshold'] = rmsd_val
+                                cosmic_result['rmsd_threshold'] = rmsd_val
                         
-                        # Add similarity folder and motifs info if available
-                        if hasattr(context, 'sim_folder'):
-                            sim_result['similarity_folder'] = context.sim_folder
-                        if hasattr(context, 'sim_motifs_created'):
-                            sim_result['motifs_created'] = context.sim_motifs_created
-                        ref_sim_stage_num = stage_num + 1
-                        input_cnt_r = getattr(context, 'similarity_stage_input_counts', {}).get(ref_sim_stage_num)
+                        # Add cosmic folder and motifs info if available
+                        if hasattr(context, 'cosmic_folder'):
+                            cosmic_result['cosmic_folder'] = context.cosmic_folder
+                        if hasattr(context, 'cosmic_motifs_created'):
+                            cosmic_result['motifs_created'] = context.cosmic_motifs_created
+                        ref_cosmic_stage_num = stage_num + 1
+                        input_cnt_r = getattr(context, 'cosmic_stage_input_counts', {}).get(ref_cosmic_stage_num)
                         if input_cnt_r:
-                            sim_result['input_count'] = input_cnt_r
+                            cosmic_result['input_count'] = input_cnt_r
 
                         # Add initial validation values (from first attempt)
                         if initial_critical is not None:
-                            sim_result['initial_critical'] = initial_critical
+                            cosmic_result['initial_critical'] = initial_critical
                         if initial_skipped is not None:
-                            sim_result['initial_skipped'] = initial_skipped
+                            cosmic_result['initial_skipped'] = initial_skipped
                         if initial_critical_count is not None:
-                            sim_result['initial_critical_count'] = initial_critical_count
+                            cosmic_result['initial_critical_count'] = initial_critical_count
                         if initial_skipped_count is not None:
-                            sim_result['initial_skipped_count'] = initial_skipped_count
+                            cosmic_result['initial_skipped_count'] = initial_skipped_count
                         
                         # Add threshold info and attempts
-                        sim_result['attempts'] = final_attempt
+                        cosmic_result['attempts'] = final_attempt
                         if max_critical is not None:
-                            sim_result['threshold_type'] = 'critical'
-                            sim_result['threshold_value'] = max_critical
-                            sim_result['threshold_met'] = (final_critical is not None and final_critical <= max_critical)
+                            cosmic_result['threshold_type'] = 'critical'
+                            cosmic_result['threshold_value'] = max_critical
+                            cosmic_result['threshold_met'] = (final_critical is not None and final_critical <= max_critical)
                         elif max_skipped is not None:
-                            sim_result['threshold_type'] = 'skipped'
-                            sim_result['threshold_value'] = max_skipped
-                            sim_result['threshold_met'] = (final_skipped is not None and final_skipped <= max_skipped)
+                            cosmic_result['threshold_type'] = 'skipped'
+                            cosmic_result['threshold_value'] = max_skipped
+                            cosmic_result['threshold_met'] = (final_skipped is not None and final_skipped <= max_skipped)
 
                         # Flag opt-only mode so protocol summary suppresses critical/skipped display
-                        if getattr(context, 'similarity_opt_only', False):
-                            sim_result['opt_only'] = True
+                        if getattr(context, 'cosmic_opt_only', False):
+                            cosmic_result['opt_only'] = True
 
-                        update_protocol_cache(sim_key, 'completed', result=sim_result, cache_file=cache_file)
+                        update_protocol_cache(cosmic_key, 'completed', result=cosmic_result, cache_file=cache_file)
 
                     # Check if workflow should pause after refinement stage
                     if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
                         return 0  # Paused after refinement
                     
-                    # Check if workflow should pause after similarity stage (check next stage for pause marker)
+                    # Check if workflow should pause after cosmic stage (check next stage for pause marker)
                     if stage_idx + 1 < len(stages):
-                        sim_stage = stages[stage_idx + 1]
-                        if not check_workflow_pause(sim_stage, stage_num + 1, len(stages), cache_file, use_cache):
-                            return 0  # Paused after similarity
+                        cosmic_stage = stages[stage_idx + 1]
+                        if not check_workflow_pause(cosmic_stage, stage_num + 1, len(stages), cache_file, use_cache):
+                            return 0  # Paused after cosmic
                     
-                    # Skip the similarity stage (already executed)
+                    # Skip the cosmic stage (already executed)
                     stage_idx += 2
                     completed_stage_count = stage_num + 1
                     context.completed_stage_count = completed_stage_count
                     continue
                 else:
-                    # No similarity after refinement - just run it once
+                    # No cosmic after refinement - just run it once
                     result = execute_refinement_stage(context, stage)
                 
                 # Build and save refinement result if successful (for standalone refinement)
-                if result == 0 and use_cache and not next_is_similarity:
+                if result == 0 and use_cache and not next_is_cosmic:
                     opt_key = f"refinement_{stage_num}"
                     
                     # Extract optimization parameters from stage
@@ -12321,8 +12321,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     if hasattr(context, 'refinement_total') and context.refinement_total is not None:
                         opt_result['total'] = context.refinement_total
                     
-                    if hasattr(context, 'refinement_sim_folder') and context.refinement_sim_folder:
-                        opt_result['similarity_folder'] = context.refinement_sim_folder
+                    if hasattr(context, 'refinement_cosmic_folder') and context.refinement_cosmic_folder:
+                        opt_result['cosmic_folder'] = context.refinement_cosmic_folder
                     
                     # Save to cache
                     update_protocol_cache(opt_key, 'completed', 
@@ -12356,14 +12356,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     else:
         render_final_workflow_summary()
 
-    # Export final ensemble at root directory from the last similarity stage.
+    # Export final ensemble at root directory from the last cosmic stage.
     copy_final_ensemble_to_root()
     
     # Clean up temporary folders from retry attempts (final safety cleanup)
     temp_calc_folders = glob.glob("calculation_tmp_*")
-    temp_sim_folders = glob.glob("similarity_tmp_*")
+    temp_cosmic_folders = glob.glob("cosmic_tmp_*")
     retry_input = ["retry_input"] if os.path.exists("retry_input") else []
-    all_temp = temp_calc_folders + temp_sim_folders + retry_input
+    all_temp = temp_calc_folders + temp_cosmic_folders + retry_input
     
     if all_temp:
         if context.workflow_verbose_level >= 1:
@@ -12729,7 +12729,7 @@ def find_out_file_in_subdirs(base_dir: str, basename: str):
 
 def process_redo_structures(context: WorkflowContext, stage_dir: str, template_file: str, concurrent_jobs: int = 1) -> bool:
     """
-    Process structures that need recalculation (from similarity stage).
+    Process structures that need recalculation (from cosmic stage).
     Regenerates input files using new geometries and deletes old output files.
 
     Args:
@@ -12741,37 +12741,37 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
     Returns:
         bool: True if any structures were processed, False otherwise
     """
-    # Determine similarity directory (check context or default)
-    sim_dir = getattr(context, 'similarity_dir', None)
+    # Determine cosmic directory (check context or default)
+    cosmic_dir = getattr(context, 'cosmic_dir', None)
     workflow_concise = getattr(context, 'is_workflow', False) and getattr(context, 'workflow_verbose_level', 0) < 1
 
     def _redo_log(*args, **kwargs):
         if not workflow_concise:
             print(*args, **kwargs)
 
-    if not sim_dir:
-        # For optimization stages, check for similarity_2, similarity_3, etc.
-        # For optimization stages, use similarity
+    if not cosmic_dir:
+        # For optimization stages, check for cosmic_2, cosmic_3, etc.
+        # For optimization stages, use cosmic
         if 'optimization' in stage_dir.lower():
-            # Check for similarity_2 first (most common for first optimization)
-            if os.path.exists('similarity_2'):
-                sim_dir = 'similarity_2'
-            elif os.path.exists('similarity_3'):
-                sim_dir = 'similarity_3'
-            elif os.path.exists('similarity_4'):
-                sim_dir = 'similarity_4'
+            # Check for cosmic_2 first (most common for first optimization)
+            if os.path.exists('cosmic_2'):
+                cosmic_dir = 'cosmic_2'
+            elif os.path.exists('cosmic_3'):
+                cosmic_dir = 'cosmic_3'
+            elif os.path.exists('cosmic_4'):
+                cosmic_dir = 'cosmic_4'
             else:
-                # Fallback to similarity if none found
-                sim_dir = 'similarity'
+                # Fallback to cosmic if none found
+                cosmic_dir = 'cosmic'
         else:
-            # Calculation stage - use similarity
-            sim_dir = 'similarity'
+            # Calculation stage - use cosmic
+            cosmic_dir = 'cosmic'
     
-    if not os.path.exists(sim_dir):
+    if not os.path.exists(cosmic_dir):
         return False
         
-    need_recalc_dir = os.path.join(sim_dir, "skipped_structures", "need_recalculation")
-    critical_non_conv_dir = os.path.join(sim_dir, "skipped_structures", "critical_non_converged")
+    need_recalc_dir = os.path.join(cosmic_dir, "skipped_structures", "need_recalculation")
+    critical_non_conv_dir = os.path.join(cosmic_dir, "skipped_structures", "critical_non_converged")
     
     # Check if either directory exists
     has_need_recalc = os.path.exists(need_recalc_dir)
@@ -12804,7 +12804,7 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
         return False
     
     # Determine display directory
-    display_dir = os.path.join(sim_dir, "skipped_structures")
+    display_dir = os.path.join(cosmic_dir, "skipped_structures")
     _redo_log(f"\nProcessing redo structures from: {display_dir}")
     _redo_log(f"\nFound {len(need_recalc_basenames)} structure(s) to retry")
 
@@ -12919,12 +12919,12 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                     out_file = os.path.join(subdir_path, f"{basename}.out.backup")
                     break
             
-            # If still not found, check similarity directory (where files are moved after stage completion)
-            if not out_file and sim_dir and os.path.exists(sim_dir):
-                # Check for orca_out_*/gaussian_out_*/calc_out_* directories in similarity folder
-                for item in os.listdir(sim_dir):
+            # If still not found, check cosmic directory (where files are moved after stage completion)
+            if not out_file and cosmic_dir and os.path.exists(cosmic_dir):
+                # Check for orca_out_*/gaussian_out_*/calc_out_* directories in cosmic folder
+                for item in os.listdir(cosmic_dir):
                     if item.startswith('orca_out_') or item.startswith('gaussian_out_') or item.startswith('calc_out_'):
-                        out_dir = os.path.join(sim_dir, item)
+                        out_dir = os.path.join(cosmic_dir, item)
                         if os.path.isdir(out_dir):
                             if os.path.exists(os.path.join(out_dir, f"{basename}.out")):
                                 out_file = os.path.join(out_dir, f"{basename}.out")
@@ -13003,8 +13003,8 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                         except Exception as e:
                             _redo_log(f"    {basename}: non-converged (max iter), using final geometry (error: {e})")
                     else:
-                        # Fallback to similarity XYZ
-                        _redo_log(f"    {basename}: non-converged (max iter), using similarity XYZ", end='')
+                        # Fallback to cosmic XYZ
+                        _redo_log(f"    {basename}: non-converged (max iter), using cosmic XYZ", end='')
                         if os.path.exists(xyz_file):
                             with open(xyz_file, 'r') as f:
                                 new_geometry = f.readlines()[2:]
@@ -13018,7 +13018,7 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                         new_geometry = xyz_lines[2:]
                         _redo_log(f"    {basename}: non-converged (max iter), using final geometry ✓")
                     else:
-                        _redo_log(f"    {basename}: non-converged (max iter), using similarity XYZ", end='')
+                        _redo_log(f"    {basename}: non-converged (max iter), using cosmic XYZ", end='')
                         if os.path.exists(xyz_file):
                             with open(xyz_file, 'r') as f:
                                 new_geometry = f.readlines()[2:]
@@ -13026,14 +13026,14 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                         else:
                             _redo_log(f" ✗")
                 else:
-                    # Converged with no imaginary freqs - use similarity XYZ
-                    _redo_log(f"    {basename}: No imaginary freqs, using similarity XYZ", end='')
+                    # Converged with no imaginary freqs - use cosmic XYZ
+                    _redo_log(f"    {basename}: No imaginary freqs, using cosmic XYZ", end='')
                     if os.path.exists(xyz_file):
                         with open(xyz_file, 'r') as f:
                             new_geometry = f.readlines()[2:]
                         _redo_log(f" ✓")
                     else:
-                        _redo_log(f" ✗ (similarity XYZ not found)")
+                        _redo_log(f" ✗ (cosmic XYZ not found)")
         else:
             # No .out file found - check if from critical_non_converged (needs rescue hessian)
             if is_critical_non_converged and xyz_file and os.path.exists(xyz_file):
@@ -13069,13 +13069,13 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                 else:
                     _redo_log(f"    {basename}: critical non-converged, using XYZ geometry (no rescue method)")
             elif xyz_file and os.path.exists(xyz_file):
-                # Regular case - just use XYZ from similarity
-                _redo_log(f"    {basename}: No .out file, using similarity XYZ", end='')
+                # Regular case - just use XYZ from cosmic
+                _redo_log(f"    {basename}: No .out file, using cosmic XYZ", end='')
                 with open(xyz_file, 'r') as f:
                     new_geometry = f.readlines()[2:]
                 _redo_log(f" ✓")
             else:
-                _redo_log(f"    {basename}: No .out file, similarity XYZ not found ✗")
+                _redo_log(f"    {basename}: No .out file, cosmic XYZ not found ✗")
         
         # Regenerate input file with new geometry
         if new_geometry:
@@ -13254,7 +13254,7 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                     else:
                         _redo_log(f"    {task_basename}: Hessian restart failed ✗")
         
-        # Store recalculated basenames in context for similarity cache update
+        # Store recalculated basenames in context for cosmic cache update
         context.recalculated_files = processed_basenames
         
         # RENAME (not delete) output files for structures needing recalculation
@@ -13309,40 +13309,40 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
 def process_optimization_redo(context: WorkflowContext, stage_dir: str, template_file: str, concurrent_jobs: int = 1) -> bool:
     """
     Specialized redo processing for optimization stage.
-    Handles the specific directory structure of optimization/similarity interactions.
+    Handles the specific directory structure of optimization/cosmic interactions.
     """
-    # 1. Determine Similarity Directory
-    # For optimization, we look for the similarity folder that THIS optimization feeds into.
-    # Usually similarity_2, similarity_3, etc.
-    # Use refinement_sim_folder (the dedicated variable for optimization outputs)
-    sim_dir = getattr(context, 'refinement_sim_folder', None)
+    # 1. Determine COSMIC Directory
+    # For optimization, we look for the cosmic folder that THIS optimization feeds into.
+    # Usually cosmic_2, cosmic_3, etc.
+    # Use refinement_cosmic_folder (the dedicated variable for optimization outputs)
+    cosmic_dir = getattr(context, 'refinement_cosmic_folder', None)
     workflow_concise = getattr(context, 'is_workflow', False) and getattr(context, 'workflow_verbose_level', 0) < 1
 
     def _redo_log(*args, **kwargs):
         if not workflow_concise:
             print(*args, **kwargs)
     
-    if not sim_dir:
+    if not cosmic_dir:
         # Try to guess based on existence
-        if os.path.exists('similarity_2'):
-            sim_dir = 'similarity_2'
-        elif os.path.exists('similarity_3'):
-            sim_dir = 'similarity_3'
-        elif os.path.exists('similarity_4'):
-            sim_dir = 'similarity_4'
+        if os.path.exists('cosmic_2'):
+            cosmic_dir = 'cosmic_2'
+        elif os.path.exists('cosmic_3'):
+            cosmic_dir = 'cosmic_3'
+        elif os.path.exists('cosmic_4'):
+            cosmic_dir = 'cosmic_4'
         else:
             return False
     
-    # CRITICAL: If sim_dir includes orca_out_X subdirectory, strip it
-    # organize step sets context.refinement_sim_folder to "similarity_2/orca_out_5_1"
-    # but skipped_structures is at "similarity_2/skipped_structures/"
-    if '/' in sim_dir and ('orca_out_' in sim_dir or 'gaussian_out_' in sim_dir):
-        sim_dir = _sim_base_name(sim_dir)
+    # CRITICAL: If cosmic_dir includes orca_out_X subdirectory, strip it
+    # organize step sets context.refinement_cosmic_folder to "cosmic_2/orca_out_5_1"
+    # but skipped_structures is at "cosmic_2/skipped_structures/"
+    if '/' in cosmic_dir and ('orca_out_' in cosmic_dir or 'gaussian_out_' in cosmic_dir):
+        cosmic_dir = _cosmic_base_name(cosmic_dir)
     
     # 2. Locate need_recalculation directory and optionally clustered_with_minima
-    need_recalc_dir = os.path.join(sim_dir, "skipped_structures", "need_recalculation")
-    clustered_dir = os.path.join(sim_dir, "skipped_structures", "clustered_with_minima")
-    critical_non_conv_dir = os.path.join(sim_dir, "skipped_structures", "critical_non_converged")
+    need_recalc_dir = os.path.join(cosmic_dir, "skipped_structures", "need_recalculation")
+    clustered_dir = os.path.join(cosmic_dir, "skipped_structures", "clustered_with_minima")
+    critical_non_conv_dir = os.path.join(cosmic_dir, "skipped_structures", "critical_non_converged")
     
     # Check threshold mode from context
     # --critical: only use need_recalculation (structures with imaginary freqs)
@@ -13457,8 +13457,8 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
         # Optimization outputs are tricky. They could be in:
         # - optimization/umotif_XX_opt.out (root)
         # - optimization/umotif_XX_opt/umotif_XX_opt.out (subdir)
-        # - similarity_2/orca_out_X/umotif_XX_opt.out (moved there)
-        # - need_recalc_dir/umotif_XX_opt.out (copied there by similarity script)
+        # - cosmic_2/orca_out_X/umotif_XX_opt.out (moved there)
+        # - need_recalc_dir/umotif_XX_opt.out (copied there by cosmic script)
         
         out_file = None
         
@@ -13480,16 +13480,16 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
             if os.path.exists(check_path):
                 out_file = check_path
         
-        # Priority 3: Check similarity output folders (if not found in optimization yet)
-        if not out_file and os.path.exists(sim_dir):
-            for item in os.listdir(sim_dir):
+        # Priority 3: Check cosmic output folders (if not found in optimization yet)
+        if not out_file and os.path.exists(cosmic_dir):
+            for item in os.listdir(cosmic_dir):
                 if item.startswith('orca_out_') or item.startswith('gaussian_out_') or item.startswith('calc_out_'):
-                    check_path = os.path.join(sim_dir, item, f"{basename}.out")
+                    check_path = os.path.join(cosmic_dir, item, f"{basename}.out")
                     if os.path.exists(check_path):
                         out_file = check_path
                         break
         
-        # Priority 4: Check need_recalc_dir or critical_non_converged (similarity script copy - ONLY for reading geometry)
+        # Priority 4: Check need_recalc_dir or critical_non_converged (cosmic script copy - ONLY for reading geometry)
         if not out_file:
             check_path = os.path.join(need_recalc_dir, f"{basename}.out")
             if os.path.exists(check_path):
@@ -13555,7 +13555,7 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
                         except Exception as e:
                             _redo_log(f"    {basename}: non-converged (max iter), using final geometry (error: {e})")
                     else:
-                        _redo_log(f"    {basename}: non-converged (max iter), using similarity XYZ", end='')
+                        _redo_log(f"    {basename}: non-converged (max iter), using cosmic XYZ", end='')
                 elif conv_status['status'] == 'not_converged':
                     # Non-converged but no rescue method - use final geometry
                     xyz_lines = extract_final_geometry(out_file, os.path.dirname(out_file))
@@ -13563,10 +13563,10 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
                         new_geometry = xyz_lines[2:]
                         _redo_log(f"    {basename}: non-converged (max iter), using final geometry ✓")
                     else:
-                        _redo_log(f"    {basename}: non-converged (max iter), using similarity XYZ", end='')
+                        _redo_log(f"    {basename}: non-converged (max iter), using cosmic XYZ", end='')
                 else:
-                    # Converged with no imaginary freqs - use similarity XYZ
-                    _redo_log(f"    {basename}: No imaginary freqs, using similarity XYZ", end='')
+                    # Converged with no imaginary freqs - use cosmic XYZ
+                    _redo_log(f"    {basename}: No imaginary freqs, using cosmic XYZ", end='')
         else:
             # No .out file found - check if from critical_non_converged (needs rescue hessian)
             if is_critical_non_converged and os.path.exists(xyz_file):
@@ -13602,8 +13602,8 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
                 else:
                     _redo_log(f"    {basename}: critical non-converged, using XYZ geometry (no rescue method)")
             else:
-                # Regular case - just use XYZ from similarity
-                _redo_log(f"    {basename}: No .out file, using similarity XYZ", end='')
+                # Regular case - just use XYZ from cosmic
+                _redo_log(f"    {basename}: No .out file, using cosmic XYZ", end='')
         
         # Fallback to XYZ file
         if not new_geometry:
@@ -14010,7 +14010,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
     # Parse flags - defaults for when flags are not explicitly provided
     max_critical = 0      # default: 0% critical structures allowed (strict)
     max_skipped = None    # Not set by default (only --critical is used unless --skipped specified)
-    max_stage_redos = 3   # default: 3 stage redos (--redo: redo entire optimization+similarity)
+    max_stage_redos = 3   # default: 3 stage redos (--redo: redo entire optimization+cosmic)
     concurrent_jobs = 4   # default: 4 concurrent QM jobs for optimization
     # Note: --retry removed; launch failures auto-retry up to 10 times (hardcoded)
     auto_select = 'combined'  # Workflow mode defaults to combining files (like -c flag)
@@ -14070,19 +14070,19 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
     
     context.max_tries = max_stage_redos  # For compatibility with existing code
 
-    # Pin optimization output to a deterministic similarity base folder for this cycle.
-    # This prevents redo/resume runs from drifting to similarity_3, similarity_4, etc.
+    # Pin optimization output to a deterministic cosmic base folder for this cycle.
+    # This prevents redo/resume runs from drifting to cosmic_3, cosmic_4, etc.
     optimization_cycle = getattr(context, 'optimization_stage_number', 1)
     if optimization_cycle <= 1:
-        fixed_opt_sim_base = "similarity"
+        fixed_opt_cosmic_base = "cosmic"
     else:
-        fixed_opt_sim_base = f"similarity_{optimization_cycle}"
+        fixed_opt_cosmic_base = f"cosmic_{optimization_cycle}"
 
-    context.similarity_dir = fixed_opt_sim_base
-    context.pending_similarity_folder = fixed_opt_sim_base
+    context.cosmic_dir = fixed_opt_cosmic_base
+    context.pending_cosmic_folder = fixed_opt_cosmic_base
     
     # Process redo structures at the START of the stage (if need_recalculation exists)
-    # This ensures that when the workflow restarts this stage after a similarity failure,
+    # This ensures that when the workflow restarts this stage after a cosmic failure,
     # we immediately regenerate inputs and delete old outputs before checking completion
     optimization_dir_path = getattr(context, 'optimization_stage_dir', 'optimization')
     if not optimization_dir_path:  # Handle empty string
@@ -14161,13 +14161,13 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                             except Exception:
                                 pass
         
-        # 2. Check similarity/orca_out_* folders (files moved there after sorting)
+        # 2. Check cosmic/orca_out_* folders (files moved there after sorting)
         # This is CRITICAL for showing correct counts (e.g. 11/11) when resuming
-        sim_dir = getattr(context, 'similarity_dir', 'similarity')
-        if os.path.exists(sim_dir):
-            for item in os.listdir(sim_dir):
+        cosmic_dir = getattr(context, 'cosmic_dir', 'cosmic')
+        if os.path.exists(cosmic_dir):
+            for item in os.listdir(cosmic_dir):
                 if item.startswith('orca_out_') or item.startswith('gaussian_out_') or item.startswith('calc_out_'):
-                    out_dir = os.path.join(sim_dir, item)
+                    out_dir = os.path.join(cosmic_dir, item)
                     if os.path.isdir(out_dir):
                         files_in_subdir = os.listdir(out_dir)
                         for f in files_in_subdir:
@@ -14188,15 +14188,15 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                                         except:
                                             pass
         
-        # Also check for similarity_2, similarity_3, etc.
-        # This is needed if we have multiple similarity stages
+        # Also check for cosmic_2, cosmic_3, etc.
+        # This is needed if we have multiple cosmic stages
         parent_dir = os.getcwd()
         for item in os.listdir(parent_dir):
-            if item.startswith('similarity_') and os.path.isdir(item):
-                sim_dir_n = item
-                for subitem in os.listdir(sim_dir_n):
+            if item.startswith('cosmic_') and os.path.isdir(item):
+                cosmic_dir_n = item
+                for subitem in os.listdir(cosmic_dir_n):
                     if subitem.startswith('orca_out_') or subitem.startswith('gaussian_out_') or subitem.startswith('calc_out_'):
-                        out_dir = os.path.join(sim_dir_n, subitem)
+                        out_dir = os.path.join(cosmic_dir_n, subitem)
                         if os.path.isdir(out_dir):
                             for f in os.listdir(out_dir):
                                 if f.endswith('.out') or f.endswith('.log'):
@@ -14536,7 +14536,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                     if not workflow_concise:
                         print(f"All calculations completed successfully")
                 elif total_completed < num_inputs:
-                    # Continue - don't stop workflow, similarity will handle quality control
+                    # Continue - don't stop workflow, cosmic will handle quality control
                     pass # Status line already printed above
                 
                 # Sort output files by energy (only in workflow mode)
@@ -14544,21 +14544,21 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                 if total_completed > 0 and context.is_workflow:
                     saved_cwd = os.getcwd()
                     try:
-                        # Pin this stage to a deterministic similarity base folder so redo attempts
-                        # and resumes do not create extra folders (similarity_3, similarity_4, ...).
-                        # Similarity folder lives inside the project directory (cwd), not its parent.
+                        # Pin this stage to a deterministic cosmic base folder so redo attempts
+                        # and resumes do not create extra folders (cosmic_3, cosmic_4, ...).
+                        # COSMIC folder lives inside the project directory (cwd), not its parent.
                         project_dir = os.getcwd()
 
-                        target_sim_base = fixed_opt_sim_base
+                        target_cosmic_base = fixed_opt_cosmic_base
 
-                        already_organized = os.path.exists(os.path.join(project_dir, target_sim_base))
+                        already_organized = os.path.exists(os.path.join(project_dir, target_cosmic_base))
 
                         if already_organized:
                             if not workflow_concise:
                                 print("\n✓ Files already organized (resuming from cache)")
-                            # Reuse this optimization cycle's fixed similarity folder.
-                            context.optimization_sim_folder = target_sim_base
-                            context.pending_similarity_folder = target_sim_base
+                            # Reuse this optimization cycle's fixed cosmic folder.
+                            context.optimization_cosmic_folder = target_cosmic_base
+                            context.pending_cosmic_folder = target_cosmic_base
                         else:
                             # Merge good structures back if they exist (from retry)
                             if os.path.exists("good_structures"):
@@ -14586,10 +14586,10 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
 
                                 # Reuse stage folder for redo/resume and write into fixed target folder.
                                 is_redo = hasattr(context, 'recalculated_files') and bool(context.recalculated_files)
-                                reuse_folder = is_redo or os.path.exists(os.path.join(project_dir, target_sim_base))
-                                similarity_folder = collect_out_files_with_tracking(
+                                reuse_folder = is_redo or os.path.exists(os.path.join(project_dir, target_cosmic_base))
+                                cosmic_folder = collect_out_files_with_tracking(
                                     reuse_existing=reuse_folder,
-                                    target_sim_folder=target_sim_base
+                                    target_cosmic_folder=target_cosmic_base
                                 )
 
                             # Extract key info from output
@@ -14603,25 +14603,25 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                             if context.workflow_verbose_level >= 1:
                                 if 'Summary written to' in output:
                                     print("\nSummary file(s) generated")
-                            if similarity_folder:
-                                context.optimization_sim_folder = similarity_folder
-                                sim_base = _sim_base_name(similarity_folder)
-                                context.pending_similarity_folder = sim_base
-                            # Look for similarity folder reference
-                            if 'Copied' in output and 'similarity' in output:
+                            if cosmic_folder:
+                                context.optimization_cosmic_folder = cosmic_folder
+                                cosmic_base = _cosmic_base_name(cosmic_folder)
+                                context.pending_cosmic_folder = cosmic_base
+                            # Look for cosmic folder reference
+                            if 'Copied' in output and 'cosmic' in output:
                                 for line in output.split('\n'):
                                     if 'Copied' in line and '.out files to' in line:
                                         if context.workflow_verbose_level >= 1:
                                             print(line)
-                                        # Extract similarity folder name (e.g., "similarity/orca_out_3")
+                                        # Extract cosmic folder name (e.g., "cosmic/orca_out_3")
                                         import re
-                                        match = re.search(r'to\s+(similarity[^\s]*)', line)
+                                        match = re.search(r'to\s+(cosmic[^\s]*)', line)
                                         if match:
-                                            sim_folder = match.group(1)
-                                            context.optimization_sim_folder = sim_folder
-                                            # Also set as pending for next similarity stage
-                                            sim_base = _sim_base_name(sim_folder)
-                                            context.pending_similarity_folder = sim_base
+                                            cosmic_folder = match.group(1)
+                                            context.optimization_cosmic_folder = cosmic_folder
+                                            # Also set as pending for next cosmic stage
+                                            cosmic_base = _cosmic_base_name(cosmic_folder)
+                                            context.pending_cosmic_folder = cosmic_base
                                         break
 
                             if context.workflow_verbose_level >= 1:
@@ -14667,17 +14667,17 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
     
     return 0
 
-def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int:
+def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int:
     """
-    Execute similarity analysis stage.
-    Runs from the similarity/ folder which contains orca_out_N/ subfolders.
-    Supports both similarity/ (first run) and similarity_2/ (after optimization).
+    Execute cosmic analysis stage.
+    Runs from the cosmic/ folder which contains orca_out_N/ subfolders.
+    Supports both cosmic/ (first run) and cosmic_2/ (after optimization).
     """
-    def _count_latest_similarity_representatives(sim_dir: str) -> Tuple[Optional[int], Optional[int]]:
+    def _count_latest_cosmic_representatives(cosmic_dir: str) -> Tuple[Optional[int], Optional[int]]:
         """Return counts for latest motifs_* and umotifs_* representative xyz files."""
         try:
-            motif_dirs = sorted(glob.glob(os.path.join(sim_dir, "motifs_*")))
-            umotif_dirs = sorted(glob.glob(os.path.join(sim_dir, "umotifs_*")))
+            motif_dirs = sorted(glob.glob(os.path.join(cosmic_dir, "motifs_*")))
+            umotif_dirs = sorted(glob.glob(os.path.join(cosmic_dir, "umotifs_*")))
 
             motif_count: Optional[int] = None
             umotif_count: Optional[int] = None
@@ -14696,86 +14696,86 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
 
     update_list_file: Optional[str] = None
 
-    # Determine which similarity folder to use dynamically based on the most recent stage
-    # Priority: use the most recently set similarity folder (from optimization/refinement that just ran)
-    similarity_base = None
+    # Determine which cosmic folder to use dynamically based on the most recent stage
+    # Priority: use the most recently set cosmic folder (from optimization/refinement that just ran)
+    cosmic_base = None
     
-    # Check if there's a pending_similarity_folder (set by optimization/refinement organize step)
-    if hasattr(context, 'pending_similarity_folder') and context.pending_similarity_folder:
-        pending_sim = context.pending_similarity_folder
-        pending_base = _sim_base_name(pending_sim)
+    # Check if there's a pending_cosmic_folder (set by optimization/refinement organize step)
+    if hasattr(context, 'pending_cosmic_folder') and context.pending_cosmic_folder:
+        pending_cosmic = context.pending_cosmic_folder
+        pending_base = _cosmic_base_name(pending_cosmic)
         if os.path.isdir(pending_base):
-            similarity_base = pending_base
+            cosmic_base = pending_base
         elif getattr(context, 'workflow_verbose_level', 0) >= 1:
-            print(f"Warning: Pending similarity folder '{pending_base}' not found. Using fallback selection.")
+            print(f"Warning: Pending cosmic folder '{pending_base}' not found. Using fallback selection.")
         # Clear it after checking so stale values don't affect later stages
-        context.pending_similarity_folder = None
+        context.pending_cosmic_folder = None
 
-    # Fallback: check what optimization_sim_folder or refinement_sim_folder were set
-    if not similarity_base:
-        # If refinement_sim_folder is more recent (set after optimization_sim_folder), prefer it
-        if hasattr(context, 'refinement_sim_folder') and context.refinement_sim_folder:
-            opt_base = _sim_base_name(context.refinement_sim_folder)
+    # Fallback: check what optimization_cosmic_folder or refinement_cosmic_folder were set
+    if not cosmic_base:
+        # If refinement_cosmic_folder is more recent (set after optimization_cosmic_folder), prefer it
+        if hasattr(context, 'refinement_cosmic_folder') and context.refinement_cosmic_folder:
+            opt_base = _cosmic_base_name(context.refinement_cosmic_folder)
             if os.path.exists(opt_base):
-                similarity_base = opt_base
+                cosmic_base = opt_base
 
-        # Otherwise use optimization_sim_folder
-        if not similarity_base and hasattr(context, 'optimization_sim_folder') and context.optimization_sim_folder:
-            calc_base = _sim_base_name(context.optimization_sim_folder)
+        # Otherwise use optimization_cosmic_folder
+        if not cosmic_base and hasattr(context, 'optimization_cosmic_folder') and context.optimization_cosmic_folder:
+            calc_base = _cosmic_base_name(context.optimization_cosmic_folder)
             if os.path.exists(calc_base):
-                similarity_base = calc_base
+                cosmic_base = calc_base
     
-    # Final fallback: pick the latest similarity folder if present.
-    if not similarity_base:
-        similarity_candidates = [
+    # Final fallback: pick the latest cosmic folder if present.
+    if not cosmic_base:
+        cosmic_candidates = [
             d for d in os.listdir('.')
-            if d.startswith('similarity') and os.path.isdir(d)
+            if d.startswith('cosmic') and os.path.isdir(d)
         ]
-        if similarity_candidates:
-            def _sim_sort_key(name: str) -> int:
-                if name == 'similarity':
+        if cosmic_candidates:
+            def _cosmic_sort_key(name: str) -> int:
+                if name == 'cosmic':
                     return 1
-                match = re.search(r'^similarity_(\d+)$', name)
+                match = re.search(r'^cosmic_(\d+)$', name)
                 return int(match.group(1)) if match else 0
 
-            similarity_base = sorted(similarity_candidates, key=_sim_sort_key)[-1]
+            cosmic_base = sorted(cosmic_candidates, key=_cosmic_sort_key)[-1]
         else:
-            print("Warning: similarity folder not found")
+            print("Warning: cosmic folder not found")
             if getattr(context, 'is_workflow', False):
                 return 1
             return 0
 
     # Final guard in case a stale/non-existent folder name slipped through selection logic.
-    if not os.path.isdir(similarity_base):
-        similarity_candidates = [
+    if not os.path.isdir(cosmic_base):
+        cosmic_candidates = [
             d for d in os.listdir('.')
-            if d.startswith('similarity') and os.path.isdir(d)
+            if d.startswith('cosmic') and os.path.isdir(d)
         ]
-        if similarity_candidates:
-            def _sim_sort_key(name: str) -> int:
-                if name == 'similarity':
+        if cosmic_candidates:
+            def _cosmic_sort_key(name: str) -> int:
+                if name == 'cosmic':
                     return 1
-                match = re.search(r'^similarity_(\d+)$', name)
+                match = re.search(r'^cosmic_(\d+)$', name)
                 return int(match.group(1)) if match else 0
 
-            similarity_base = sorted(similarity_candidates, key=_sim_sort_key)[-1]
+            cosmic_base = sorted(cosmic_candidates, key=_cosmic_sort_key)[-1]
         else:
-            print(f"Warning: similarity folder not found ({similarity_base})")
+            print(f"Warning: cosmic folder not found ({cosmic_base})")
             if getattr(context, 'is_workflow', False):
                 return 1
             return 0
     
-    # Store similarity folder for protocol summary
-    context.sim_folder = similarity_base
-    # CRITICAL: Also update similarity_dir so redo logic uses correct folder
-    context.similarity_dir = similarity_base
+    # Store cosmic folder for protocol summary
+    context.cosmic_folder = cosmic_base
+    # CRITICAL: Also update cosmic_dir so redo logic uses correct folder
+    context.cosmic_dir = cosmic_base
     
-    # Clean old similarity results before re-running (but keep orca_out and cache)
+    # Clean old cosmic results before re-running (but keep orca_out and cache)
     # This is CRITICAL to prevent reusing stale skipped_structures from previous runs
     # Check if this is a re-run by looking for existing clustering results
     has_old_results = (
-        os.path.exists(os.path.join(similarity_base, "clustering_summary.txt")) or
-        os.path.exists(os.path.join(similarity_base, "skipped_structures"))
+        os.path.exists(os.path.join(cosmic_base, "clustering_summary.txt")) or
+        os.path.exists(os.path.join(cosmic_base, "skipped_structures"))
     )
     
     if has_old_results:
@@ -14785,12 +14785,12 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             'skipped_structures', 'clustering_summary.txt', 'boltzmann_distribution.txt'
         ]
         # Also remove motifs and umotifs folders
-        for item in os.listdir(similarity_base):
+        for item in os.listdir(cosmic_base):
             if item.startswith('motifs_') or item.startswith('umotifs_'):
                 items_to_remove.append(item)
         
         for item in items_to_remove:
-            item_path = os.path.join(similarity_base, item)
+            item_path = os.path.join(cosmic_base, item)
             if os.path.exists(item_path):
                 try:
                     if os.path.isdir(item_path):
@@ -14802,49 +14802,49 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     
     # Verify output subfolder exists and count input structures.
     out_candidates = []
-    for item in sorted(os.listdir(similarity_base)):
+    for item in sorted(os.listdir(cosmic_base)):
         if item.startswith("orca_out_") or item.startswith("opt_out_") or item.startswith("gaussian_out_"):
             out_candidates.append(item)
 
     out_folder_found = len(out_candidates) > 0
-    sim_input_count = 0
+    cosmic_input_count = 0
     if out_folder_found:
         if getattr(context, 'is_workflow', False) and len(out_candidates) > 1:
             print(
-                f"Error: Multiple output folders found in {similarity_base}/: {', '.join(out_candidates)}. "
+                f"Error: Multiple output folders found in {cosmic_base}/: {', '.join(out_candidates)}. "
                 "Workflow mode requires a single deterministic folder."
             )
             return 1
 
         selected_out = out_candidates[0]
-        out_dir = os.path.join(similarity_base, selected_out)
-        sim_input_count = (
+        out_dir = os.path.join(cosmic_base, selected_out)
+        cosmic_input_count = (
             len(glob.glob(os.path.join(out_dir, "*.out")))
             + len(glob.glob(os.path.join(out_dir, "*.log")))
         )
     
     if not out_folder_found:
-        print(f"Warning: No orca_out_*, gaussian_out_*, or opt_out_* folder found in {similarity_base}/")
+        print(f"Warning: No orca_out_*, gaussian_out_*, or opt_out_* folder found in {cosmic_base}/")
         if getattr(context, 'is_workflow', False):
             return 1
         return 0
     
     args = stage['args']
     
-    # Find similarity script
-    similarity_script = None
+    # Find cosmic script
+    cosmic_script = None
     other_args = []
     
     for arg in args:
-        if arg.endswith('.py') and 'similarity' in arg.lower():
-            similarity_script = arg
+        if arg.endswith('.py') and 'cosmic' in arg.lower():
+            cosmic_script = arg
         else:
             other_args.append(arg)
     
-    if not similarity_script:
-        similarity_script = find_similarity_script()
-        if not similarity_script:
-            print("Warning: similarity-v01.py script not found")
+    if not cosmic_script:
+        cosmic_script = find_cosmic_script()
+        if not cosmic_script:
+            print("Warning: cosmic-v01.py script not found")
             if getattr(context, 'is_workflow', False):
                 return 1
             return 0  # Not an error
@@ -14854,11 +14854,11 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     verbose = False
     
     if verbose:
-        print(f"\nRunning similarity analysis...")
-        print(f"Using similarity script: {os.path.basename(similarity_script)}")
+        print(f"\nRunning cosmic analysis...")
+        print(f"Using cosmic script: {os.path.basename(cosmic_script)}")
     
     # Build command - pass '1' via stdin to auto-select the first folder
-    cmd = [sys.executable, similarity_script] + other_args
+    cmd = [sys.executable, cosmic_script] + other_args
     
     # Add --cores if not already specified and user explicitly set ascec_parallel_cores in input file
     # (ascec_parallel_cores > 0 means it was explicitly set)
@@ -14867,11 +14867,11 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         cmd.extend(['--cores', str(context.ascec_parallel_cores)])
 
     # If user provides --th/--threshold, pass it through; otherwise
-    # similarity uses statistical consensus cutting (no threshold needed).
+    # cosmic uses statistical consensus cutting (no threshold needed).
     
-    # No need to specify motif prefix - similarity script auto-detects from filenames:
+    # No need to specify motif prefix - cosmic script auto-detects from filenames:
     # conf_* files → creates motifs_*/ folder (after calculation)
-    # motif_* files → creates motifs_*/ folder (first similarity)
+    # motif_* files → creates motifs_*/ folder (first cosmic)
     # umotif_* files → creates umotifs_*/ folder (after optimization)
     
     # If this is a redo and we have a list of recalculated files, pass them for incremental update
@@ -14886,13 +14886,13 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     
     if verbose:
         print(f"{' '.join(cmd)}\n")
-        print(f"Working directory: {similarity_base}\n")
+        print(f"Working directory: {cosmic_base}\n")
     try:
         # Auto-select folder 1 by providing '1\n' as stdin
         # Stream output to avoid pipe buffer deadlock on large outputs
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, 
                                stderr=subprocess.STDOUT, text=True, bufsize=1, 
-                               cwd=similarity_base, universal_newlines=True)
+                               cwd=cosmic_base, universal_newlines=True)
         
         # Send input and close stdin immediately
         if proc.stdin:
@@ -14908,7 +14908,7 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             'Processing ',
             'folder(s) for files matching',
             'Created motifs dendrogram',
-            'SIMILARITY_OPT_ONLY_MODE'
+            'COSMIC_OPT_ONLY_MODE'
         ]
         
         # Lines that should have blank line BEFORE them
@@ -14944,11 +14944,11 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                     match = re.search(r'Processing folder:\s+(\S+)', line)
                     if match:
                         folder_name = match.group(1)
-                        context.sim_folder = f"{similarity_base}/{folder_name}"
+                        context.cosmic_folder = f"{cosmic_base}/{folder_name}"
 
                 # Detect opt-only mode (no frequency calculations in dataset)
-                if 'SIMILARITY_OPT_ONLY_MODE' in line:
-                    context.similarity_opt_only = True
+                if 'COSMIC_OPT_ONLY_MODE' in line:
+                    context.cosmic_opt_only = True
 
                 # Skip printing in non-verbose mode (but still collect lines)
                 if not verbose:
@@ -14993,41 +14993,41 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             if 'Motifs created:' in line and 'representatives' in line:
                 match = re.search(r'(\d+)\s+representatives', line)
                 if match:
-                    context.sim_motifs_created = int(match.group(1))
+                    context.cosmic_motifs_created = int(match.group(1))
 
         # Persist latest motif/umotif counts for compact workflow progress display.
-        motif_count, umotif_count = _count_latest_similarity_representatives(similarity_base)
-        context.last_similarity_motif_count = motif_count
-        context.last_similarity_umotif_count = umotif_count
-        context.last_similarity_input_count = sim_input_count if sim_input_count > 0 else None
+        motif_count, umotif_count = _count_latest_cosmic_representatives(cosmic_base)
+        context.last_cosmic_motif_count = motif_count
+        context.last_cosmic_umotif_count = umotif_count
+        context.last_cosmic_input_count = cosmic_input_count if cosmic_input_count > 0 else None
         stage_total = (motif_count or 0) + (umotif_count or 0)
         if stage_total > 0:
-            # Keep summary count stage-local to avoid carrying over previous similarity values.
-            context.sim_motifs_created = stage_total
+            # Keep summary count stage-local to avoid carrying over previous cosmic values.
+            context.cosmic_motifs_created = stage_total
         stage_key = getattr(context, 'current_stage_key', '')
-        match = re.search(r'^similarity_(\d+)$', stage_key)
+        match = re.search(r'^cosmic_(\d+)$', stage_key)
         if match:
             stage_num = int(match.group(1))
-            context.similarity_stage_counts[stage_num] = stage_total
-            if sim_input_count > 0:
-                context.similarity_stage_input_counts[stage_num] = sim_input_count
+            context.cosmic_stage_counts[stage_num] = stage_total
+            if cosmic_input_count > 0:
+                context.cosmic_stage_input_counts[stage_num] = cosmic_input_count
         else:
-            # Combined mode runs similarity while current_stage_key is still optimization/refinement.
+            # Combined mode runs cosmic while current_stage_key is still optimization/refinement.
             prev_match = re.search(r'^(optimization|refinement)_(\d+)$', stage_key)
             if prev_match:
                 stage_num = int(prev_match.group(2)) + 1
-                context.similarity_stage_counts[stage_num] = stage_total
-                if sim_input_count > 0:
-                    context.similarity_stage_input_counts[stage_num] = sim_input_count
+                context.cosmic_stage_counts[stage_num] = stage_total
+                if cosmic_input_count > 0:
+                    context.cosmic_stage_input_counts[stage_num] = cosmic_input_count
         
         if verbose:
-            print("\n✓ Similarity analysis completed")
+            print("\n✓ COSMIC analysis completed")
         
         # Check if files were saved to need_recalculation directory
         # This happens when structures with imaginary frequencies need to be recalculated
-        need_recalc_dir = os.path.join(similarity_base, "skipped_structures", "need_recalculation")
-        clustered_with_minima_dir = os.path.join(similarity_base, "skipped_structures", "clustered_with_minima")
-        critical_non_conv_dir = os.path.join(similarity_base, "skipped_structures", "critical_non_converged")
+        need_recalc_dir = os.path.join(cosmic_base, "skipped_structures", "need_recalculation")
+        clustered_with_minima_dir = os.path.join(cosmic_base, "skipped_structures", "clustered_with_minima")
+        critical_non_conv_dir = os.path.join(cosmic_base, "skipped_structures", "critical_non_converged")
         
         recalc_basenames = []
         
@@ -15073,8 +15073,8 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             # Store in context for the optimization stage to use
             context.recalculated_files = recalc_basenames
         
-        # Store similarity directory for context
-        context.similarity_dir = similarity_base
+        # Store cosmic directory for context
+        context.cosmic_dir = cosmic_base
         
         # Cleanup temp file if created (but DON'T clear recalculated_files - it's needed for the redo loop!)
         if update_list_file and os.path.exists(update_list_file):
@@ -15088,7 +15088,7 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         return 0
         
     except subprocess.CalledProcessError as e:
-        print(f"Error: Similarity analysis failed with code {e.returncode}")
+        print(f"Error: COSMIC analysis failed with code {e.returncode}")
         if e.stderr:
             print(f"Error output: {e.stderr}")
         # Cleanup temp file if it exists
@@ -15104,18 +15104,18 @@ def execute_similarity_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                 os.remove(update_list_file)
             except Exception:
                 pass
-        print(f"Error running similarity analysis: {e}")
+        print(f"Error running cosmic analysis: {e}")
         return 1
 
 def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int:
-    """Execute refinement stage (for motifs from similarity clustering)."""
-    # Very similar to optimization stage, but uses motifs from similarity analysis
+    """Execute refinement stage (for motifs from cosmic clustering)."""
+    # Very similar to optimization stage, but uses motifs from cosmic analysis
     
     # Store context globally for helper functions
     sys._current_workflow_context = context  # type: ignore[attr-defined]
     
     # Parse arguments - defaults for when flags are not explicitly provided
-    max_stage_redos = 3   # --redo: redo entire opt+similarity
+    max_stage_redos = 3   # --redo: redo entire opt+cosmic
     max_critical = 0      # default: 0% critical structures allowed (strict)
     max_skipped = None
     concurrent_jobs = 1   # default: 1 concurrent job for refinement (serial)
@@ -15178,38 +15178,38 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             print("Error: No launcher script provided and could not auto-detect ORCA")
             return 1
     
-    # CRITICAL: Optimization needs to READ motifs from calculation's similarity folder
-    # The optimization stage created motifs in similarity/motifs_XX/ (or umotifs in similarity_N/)
-    # Optimization will READ from similarity/ and WRITE outputs to similarity_2/ (or next numbered)
-    # The subsequent similarity will create umotifs_YY/ (since input came from optimization)
+    # CRITICAL: Optimization needs to READ motifs from calculation's cosmic folder
+    # The optimization stage created motifs in cosmic/motifs_XX/ (or umotifs in cosmic_N/)
+    # Optimization will READ from cosmic/ and WRITE outputs to cosmic_2/ (or next numbered)
+    # The subsequent cosmic will create umotifs_YY/ (since input came from optimization)
     
-    # Step 1: Find where the MOTIFS are (from calculation's similarity stage)
+    # Step 1: Find where the MOTIFS are (from calculation's cosmic stage)
     motifs_source_folder = None
     
-    # Check if optimization stage set a similarity folder
-    if hasattr(context, 'optimization_sim_folder') and context.optimization_sim_folder:
-        # Extract base folder (e.g., "similarity" from "similarity/orca_out_10")
-        calc_base = _sim_base_name(context.optimization_sim_folder)
+    # Check if optimization stage set a cosmic folder
+    if hasattr(context, 'optimization_cosmic_folder') and context.optimization_cosmic_folder:
+        # Extract base folder (e.g., "cosmic" from "cosmic/orca_out_10")
+        calc_base = _cosmic_base_name(context.optimization_cosmic_folder)
         motifs_source_folder = calc_base
     else:
-        # Fallback: search for existing similarity folders with motifs
+        # Fallback: search for existing cosmic folders with motifs
         parent_dir = os.getcwd()
         existing_sims = []
         for item in os.listdir(parent_dir):
-            if item.startswith("similarity") and os.path.isdir(item):
+            if item.startswith("cosmic") and os.path.isdir(item):
                 existing_sims.append(item)
         
         if existing_sims:
             # Sort numerically
             existing_sims.sort(key=lambda x: (int(m.group(1)) if (m := re.search(r'_(\d+)', x)) else 0))
             # Find the first one with motifs or umotifs
-            for sim_folder in existing_sims:
-                if glob.glob(os.path.join(sim_folder, "motifs_*/")) or glob.glob(os.path.join(sim_folder, "umotifs_*/")):
-                    motifs_source_folder = sim_folder
+            for cosmic_folder in existing_sims:
+                if glob.glob(os.path.join(cosmic_folder, "motifs_*/")) or glob.glob(os.path.join(cosmic_folder, "umotifs_*/")):
+                    motifs_source_folder = cosmic_folder
                     break
     
     if not motifs_source_folder:
-        motifs_source_folder = "similarity"  # Default
+        motifs_source_folder = "cosmic"  # Default
     
     # Step 2: Find motifs or umotifs in the source folder (prefer umotifs if both exist)
     umotif_dirs = glob.glob(os.path.join(motifs_source_folder, "umotifs_*/"))
@@ -15228,66 +15228,66 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     motif_dir = motif_dirs[-1]
     
     # Step 3: Determine where optimization OUTPUTS will go
-    # This is typically the next similarity folder (similarity_2, similarity_3, etc.)
+    # This is typically the next cosmic folder (cosmic_2, cosmic_3, etc.)
     # Always prefer the expected folder from motifs_source_folder and only reuse cached
-    # refinement_sim_folder if it matches; this prevents stale folder drift.
-    if motifs_source_folder == "similarity":
-        expected_sim_folder: str = "similarity_2"
+    # refinement_cosmic_folder if it matches; this prevents stale folder drift.
+    if motifs_source_folder == "cosmic":
+        expected_cosmic_folder: str = "cosmic_2"
     else:
         # Extract number and increment
-        match = re.search(r'similarity_(\d+)', motifs_source_folder)
+        match = re.search(r'cosmic_(\d+)', motifs_source_folder)
         if match:
             next_num = int(match.group(1)) + 1
-            expected_sim_folder = f"similarity_{next_num}"
+            expected_cosmic_folder = f"cosmic_{next_num}"
         else:
-            expected_sim_folder = "similarity_2"
+            expected_cosmic_folder = "cosmic_2"
 
-    existing_ref_sim_raw = getattr(context, 'refinement_sim_folder', None)
+    existing_ref_sim_raw = getattr(context, 'refinement_cosmic_folder', None)
     existing_ref_sim: Optional[str] = existing_ref_sim_raw if isinstance(existing_ref_sim_raw, str) else None
-    existing_ref_base: Optional[str] = _sim_base_name(existing_ref_sim) if existing_ref_sim else existing_ref_sim
-    if isinstance(existing_ref_base, str) and existing_ref_base == expected_sim_folder:
-        used_sim_folder: str = str(existing_ref_base)
+    existing_ref_base: Optional[str] = _cosmic_base_name(existing_ref_sim) if existing_ref_sim else existing_ref_sim
+    if isinstance(existing_ref_base, str) and existing_ref_base == expected_cosmic_folder:
+        used_cosmic_folder: str = str(existing_ref_base)
     else:
-        used_sim_folder = str(expected_sim_folder)
+        used_cosmic_folder = str(expected_cosmic_folder)
     
-    # Store in refinement_sim_folder (optimization's dedicated variable)
-    context.refinement_sim_folder = used_sim_folder
-    # Also update similarity_dir so the similarity stage knows where to look
-    context.similarity_dir = used_sim_folder
-    context.pending_similarity_folder = used_sim_folder
+    # Store in refinement_cosmic_folder (optimization's dedicated variable)
+    context.refinement_cosmic_folder = used_cosmic_folder
+    # Also update cosmic_dir so the cosmic stage knows where to look
+    context.cosmic_dir = used_cosmic_folder
+    context.pending_cosmic_folder = used_cosmic_folder
     
     # Store motifs source in context
     context.refinement_motifs_source = motif_dir
     
-    # CRITICAL: When resuming optimization stage (with -i flag), clean the OUTPUT similarity folder
+    # CRITICAL: When resuming optimization stage (with -i flag), clean the OUTPUT cosmic folder
     # This must happen BEFORE process_optimization_redo() checks for skipped_structures
-    # This ensures we don't reuse stale skipped_structures from previous similarity runs
-    # Only delete the OUTPUT folder (used_sim_folder), NOT the INPUT folder (motifs_source_folder)
+    # This ensures we don't reuse stale skipped_structures from previous cosmic runs
+    # Only delete the OUTPUT folder (used_cosmic_folder), NOT the INPUT folder (motifs_source_folder)
     cache_file = getattr(context, 'cache_file', 'protocol_cache.pkl')
     cache = load_protocol_cache(cache_file) if os.path.exists(cache_file) else {}
     stage_key = getattr(context, 'current_stage_key', '')
     stage_was_started = stage_key in cache.get('stages', {})
     
     if stage_was_started:
-        output_sim_folder: str = str(used_sim_folder)
-        if os.path.exists(output_sim_folder):
+        output_cosmic_folder: str = str(used_cosmic_folder)
+        if os.path.exists(output_cosmic_folder):
             # Verify this is NOT the motifs source folder (don't delete our input!)
-            if output_sim_folder != motifs_source_folder:
-                # CRITICAL: Check if this similarity folder has skipped_structures for redo
+            if output_cosmic_folder != motifs_source_folder:
+                # CRITICAL: Check if this cosmic folder has skipped_structures for redo
                 # If skipped_structures exists, we're in a redo scenario - do NOT delete!
-                skipped_dir = os.path.join(output_sim_folder, "skipped_structures")
+                skipped_dir = os.path.join(output_cosmic_folder, "skipped_structures")
                 if os.path.exists(skipped_dir):
-                    # Redo mode - preserve the similarity folder with skipped structures
+                    # Redo mode - preserve the cosmic folder with skipped structures
                     pass
                 else:
                     # No skipped structures - safe to delete and rebuild
                     try:
-                        shutil.rmtree(output_sim_folder)
+                        shutil.rmtree(output_cosmic_folder)
                     except Exception:
                         pass
     
     # Process redo structures at the START of the stage (if need_recalculation exists)
-    # This ensures that when the workflow restarts this stage after a similarity failure,
+    # This ensures that when the workflow restarts this stage after a cosmic failure,
     # we immediately regenerate inputs and delete old outputs before checking completion
     opt_dir = getattr(context, 'refinement_stage_dir', 'optimization')
     if not opt_dir:  # Handle empty string
@@ -15620,45 +15620,45 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                             except Exception:
                                 pass
         
-        # 2. Check similarity_X/orca_out_* folders (files moved there after sorting)
+        # 2. Check cosmic_X/orca_out_* folders (files moved there after sorting)
         # This is CRITICAL for showing correct counts when resuming
-        # IMPORTANT: Only check the optimization's OWN similarity folder, not all similarity folders
-        # (to avoid counting calculation results from similarity/ as optimization results)
+        # IMPORTANT: Only check the optimization's OWN cosmic folder, not all cosmic folders
+        # (to avoid counting calculation results from cosmic/ as optimization results)
         parent_dir = os.getcwd()
         
-        # Determine which similarity folder belongs to THIS optimization stage
-        refinement_sim_folder = getattr(context, 'refinement_sim_folder', None)
+        # Determine which cosmic folder belongs to THIS optimization stage
+        refinement_cosmic_folder = getattr(context, 'refinement_cosmic_folder', None)
         
         # CRITICAL: Strip orca_out_X suffix if present
-        # organize step may set refinement_sim_folder to "similarity_2/orca_out_5"
-        # but we need just "similarity_2" to scan for orca_out subdirectories
-        if refinement_sim_folder and '/' in refinement_sim_folder:
-            refinement_sim_folder = _sim_base_name(refinement_sim_folder)
+        # organize step may set refinement_cosmic_folder to "cosmic_2/orca_out_5"
+        # but we need just "cosmic_2" to scan for orca_out subdirectories
+        if refinement_cosmic_folder and '/' in refinement_cosmic_folder:
+            refinement_cosmic_folder = _cosmic_base_name(refinement_cosmic_folder)
         
-        if not refinement_sim_folder:
+        if not refinement_cosmic_folder:
             # Calculate the expected folder based on motifs source
             if hasattr(context, 'refinement_motifs_source'):
                 motifs_source = context.refinement_motifs_source
-                # Extract base folder (e.g., "similarity" from "similarity/motifs_03/")
-                calc_base = _sim_base_name(motifs_source)
+                # Extract base folder (e.g., "cosmic" from "cosmic/motifs_03/")
+                calc_base = _cosmic_base_name(motifs_source)
                 
-                # Optimization outputs go to the NEXT similarity folder
-                if calc_base == "similarity":
-                    refinement_sim_folder = "similarity_2"
+                # Optimization outputs go to the NEXT cosmic folder
+                if calc_base == "cosmic":
+                    refinement_cosmic_folder = "cosmic_2"
                 else:
                     # Extract number and increment
-                    match = re.search(r'similarity_(\d+)', calc_base)
+                    match = re.search(r'cosmic_(\d+)', calc_base)
                     if match:
                         next_num = int(match.group(1)) + 1
-                        refinement_sim_folder = f"similarity_{next_num}"
+                        refinement_cosmic_folder = f"cosmic_{next_num}"
                     else:
-                        refinement_sim_folder = "similarity_2"
+                        refinement_cosmic_folder = "cosmic_2"
         
-        # Only check the optimization's designated similarity folder
-        if refinement_sim_folder and os.path.isdir(refinement_sim_folder):
-            for subitem in os.listdir(refinement_sim_folder):
+        # Only check the optimization's designated cosmic folder
+        if refinement_cosmic_folder and os.path.isdir(refinement_cosmic_folder):
+            for subitem in os.listdir(refinement_cosmic_folder):
                 if subitem.startswith('orca_out_') or subitem.startswith('gaussian_out_') or subitem.startswith('calc_out_'):
-                    out_dir = os.path.join(refinement_sim_folder, subitem)
+                    out_dir = os.path.join(refinement_cosmic_folder, subitem)
                     if os.path.isdir(out_dir):
                         for f in os.listdir(out_dir):
                             if f.endswith('.out') or f.endswith('.log'):
@@ -15857,25 +15857,25 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             # Organize results - run full sort/organize for both redo and normal mode
             saved_cwd = os.getcwd()
             try:
-                # Determine similarity folder - use refinement_sim_folder (set earlier in this function)
-                if hasattr(context, 'refinement_sim_folder') and context.refinement_sim_folder:
+                # Determine cosmic folder - use refinement_cosmic_folder (set earlier in this function)
+                if hasattr(context, 'refinement_cosmic_folder') and context.refinement_cosmic_folder:
                     # Use the folder determined at the start of execute_optimization_stage
-                    sim_base = _sim_base_name(context.refinement_sim_folder)
+                    cosmic_base = _cosmic_base_name(context.refinement_cosmic_folder)
                 else:
-                    # Calculate next similarity folder
+                    # Calculate next cosmic folder
                     root_dir = os.getcwd()
-                    base_name = "similarity"
+                    base_name = "cosmic"
                     counter = 2
-                    sim_base = base_name
+                    cosmic_base = base_name
                     
-                    if os.path.exists(os.path.join(root_dir, sim_base)):
+                    if os.path.exists(os.path.join(root_dir, cosmic_base)):
                         while True:
-                            sim_base = f"{base_name}_{counter}"
-                            if not os.path.exists(os.path.join(root_dir, sim_base)):
+                            cosmic_base = f"{base_name}_{counter}"
+                            if not os.path.exists(os.path.join(root_dir, cosmic_base)):
                                 break
                             counter += 1
                     
-                    context.similarity_dir = sim_base
+                    context.cosmic_dir = cosmic_base
                 
                 os.chdir(opt_dir)
                 
@@ -15894,7 +15894,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                     create_combined_mol()
                     create_summary_with_tracking(".", actual_wall_time=_ref_actual_wall)
 
-                    # Collect output files - reuse existing similarity folder in redo mode
+                    # Collect output files - reuse existing cosmic folder in redo mode
                     # But first, we need to temporarily filter excluded files
                     # Save original find_out_files function
                     original_find_out_files = find_out_files
@@ -15920,18 +15920,18 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                     try:
                         # Check if we should reuse existing folder:
                         # - True if redo mode (recalculated_files exist)
-                        # - Also True if resuming and similarity folder already has orca_out folder
+                        # - Also True if resuming and cosmic folder already has orca_out folder
                         reuse_folder = is_redo
-                        if not reuse_folder and os.path.exists(os.path.join(os.path.dirname(os.getcwd()), sim_base)):
-                            # Check if orca_out folder already exists in similarity
-                            sim_full_path = os.path.join(os.path.dirname(os.getcwd()), sim_base)
-                            existing_orca = glob.glob(os.path.join(sim_full_path, "orca_out_*"))
+                        if not reuse_folder and os.path.exists(os.path.join(os.path.dirname(os.getcwd()), cosmic_base)):
+                            # Check if orca_out folder already exists in cosmic
+                            cosmic_full_path = os.path.join(os.path.dirname(os.getcwd()), cosmic_base)
+                            existing_orca = glob.glob(os.path.join(cosmic_full_path, "orca_out_*"))
                             if existing_orca:
                                 reuse_folder = True
                         
-                        similarity_folder = collect_out_files_with_tracking(
+                        cosmic_folder = collect_out_files_with_tracking(
                             reuse_existing=reuse_folder,
-                            target_sim_folder=sim_base
+                            target_cosmic_folder=cosmic_base
                         )
                     finally:
                         # Restore original function
@@ -15942,24 +15942,24 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                 if context.workflow_verbose_level >= 1:
                     if 'Summary written to' in output:
                         print("\nSummary file(s) generated")
-                if similarity_folder:
-                    context.refinement_sim_folder = similarity_folder
-                    sim_base = _sim_base_name(similarity_folder)
-                    context.pending_similarity_folder = sim_base
-                if 'Copied' in output and 'similarity' in output:
-                    # Extract the copy message and similarity folder
+                if cosmic_folder:
+                    context.refinement_cosmic_folder = cosmic_folder
+                    cosmic_base = _cosmic_base_name(cosmic_folder)
+                    context.pending_cosmic_folder = cosmic_base
+                if 'Copied' in output and 'cosmic' in output:
+                    # Extract the copy message and cosmic folder
                     for line in output.split('\n'):
                         if 'Copied' in line and '.out files to' in line:
                             if context.workflow_verbose_level >= 1:
                                 print(line)
-                            # Extract similarity folder name
-                            match = re.search(r'to\s+(similarity[^\s]*)', line)
+                            # Extract cosmic folder name
+                            match = re.search(r'to\s+(cosmic[^\s]*)', line)
                             if match:
-                                sim_folder = match.group(1)
-                                context.refinement_sim_folder = sim_folder
-                                # Also set as pending for next similarity stage
-                                sim_base = _sim_base_name(sim_folder)
-                                context.pending_similarity_folder = sim_base
+                                cosmic_folder = match.group(1)
+                                context.refinement_cosmic_folder = cosmic_folder
+                                # Also set as pending for next cosmic stage
+                                cosmic_base = _cosmic_base_name(cosmic_folder)
+                                context.pending_cosmic_folder = cosmic_base
                             break
                 
                 # Note: File update messages are now handled within collect_out_files_with_tracking
@@ -16223,9 +16223,9 @@ def main_ascec_integrated():
             print(".asc,")
             print("r1 --box10,")
             print("opt -c --redo=3 ../preopt_input.inp ../launcher_orca.sh,")
-            print("similarity --th=2")
+            print("cosmic --th=2")
             print("\nFlag meanings:")
-            print("  --redo=N: Redo entire stage (opt/ref + similarity) up to N times")
+            print("  --redo=N: Redo entire stage (opt/ref + cosmic) up to N times")
             print("\nNote: Launch failures are automatically retried up to 10 times.")
             print("\nStage restart:")
             print("  ascec04 input.asc protocol opt    - Restart optimization stage (deletes files)")
@@ -16413,20 +16413,20 @@ def main_ascec_integrated():
                         # Delete directories based on stage type
                         # Map of directories to delete based on restart stage
                         if 'calculation' in [k.split('_')[0] for k in stages_to_restart]:
-                            # Restarting calculation: delete calculation/, similarity/, optimization/
-                            for dir_name in ['calculation', 'similarity', 'optimization']:
+                            # Restarting calculation: delete calculation/, cosmic/, optimization/
+                            for dir_name in ['calculation', 'cosmic', 'optimization']:
                                 if os.path.exists(dir_name):
                                     print(f"     Removing {dir_name}/")
                                     shutil.rmtree(dir_name)
                             # Also remove numbered variants
-                            for pattern in ['calculation_*', 'similarity_*', 'optimization_*']:
+                            for pattern in ['calculation_*', 'cosmic_*', 'optimization_*']:
                                 for dir_path in glob.glob(pattern):
                                     if os.path.isdir(dir_path):
                                         print(f"     Removing {dir_path}/")
                                         shutil.rmtree(dir_path)
                         
                         elif 'optimization' in [k.split('_')[0] for k in stages_to_restart]:
-                            # Restarting optimization: delete optimization/ and later similarity/
+                            # Restarting optimization: delete optimization/ and later cosmic/
                             for dir_name in ['optimization']:
                                 if os.path.exists(dir_name):
                                     print(f"     Removing {dir_name}/")
@@ -16437,17 +16437,17 @@ def main_ascec_integrated():
                                     if os.path.isdir(dir_path):
                                         print(f"     Removing {dir_path}/")
                                         shutil.rmtree(dir_path)
-                            # Remove similarity folders that come after optimization
-                            similarity_dirs = sorted(glob.glob('similarity*'))
-                            for sim_dir in similarity_dirs:
-                                if os.path.isdir(sim_dir):
-                                    # Check if it's similarity_N where N > optimization-stage similarity index
-                                    if '_' in sim_dir:
+                            # Remove cosmic folders that come after optimization
+                            cosmic_dirs = sorted(glob.glob('cosmic*'))
+                            for cosmic_dir in cosmic_dirs:
+                                if os.path.isdir(cosmic_dir):
+                                    # Check if it's cosmic_N where N > optimization-stage cosmic index
+                                    if '_' in cosmic_dir:
                                         try:
-                                            sim_num = int(sim_dir.split('_')[1])
-                                            if sim_num > min_restart_num:
-                                                print(f"     Removing {sim_dir}/")
-                                                shutil.rmtree(sim_dir)
+                                            cosmic_num = int(cosmic_dir.split('_')[1])
+                                            if cosmic_num > min_restart_num:
+                                                print(f"     Removing {cosmic_dir}/")
+                                                shutil.rmtree(cosmic_dir)
                                         except:
                                             pass
                     
@@ -16543,8 +16543,8 @@ def main_ascec_integrated():
         # First argument should be input file
         if len(sys.argv) < 4:  # Need at least: script, input, ,, stage
             print("Error: Workflow mode requires input file and at least one stage")
-            print("Usage: ascec04 input.asc , r3 , opt template.inp launcher.sh , similarity --th=2")
-            print("   or: ascec04 input.asc then r3 then opt template.inp launcher.sh then similarity --th=2")
+            print("Usage: ascec04 input.asc , r3 , opt template.inp launcher.sh , cosmic --th=2")
+            print("   or: ascec04 input.asc then r3 then opt template.inp launcher.sh then cosmic --th=2")
             sys.exit(1)
         
         input_file = sys.argv[1]
@@ -16559,8 +16559,8 @@ def main_ascec_integrated():
         
         if not stages:
             print("Error: No valid workflow stages found")
-            print("Usage: ascec04 input.asc , r3 , opt template.inp launcher.sh , similarity --th=2")
-            print("   or: ascec04 input.asc then r3 then opt template.inp launcher.sh then similarity --th=2")
+            print("Usage: ascec04 input.asc , r3 , opt template.inp launcher.sh , cosmic --th=2")
+            print("   or: ascec04 input.asc then r3 then opt template.inp launcher.sh then cosmic --th=2")
             sys.exit(1)
         
         # Execute workflow
@@ -16589,7 +16589,7 @@ COMMANDS:
         opt TEMPLATE LAUNCHER       Generate optimization inputs from results
         ref TEMPLATE LAUNCHER       Generate refinement inputs from motifs
     sort [--nosum|--justsum]    Organize outputs and generate summary reports
-    simil [OPTIONS]             Clustering analysis (see: ascec simil --help)
+    cosmic [OPTIONS]             Clustering analysis (see: ascec cosmic --help)
   
   Utilities:
     diagram [--scaled]          Generate energy evolution plots
@@ -16606,7 +16606,7 @@ WORKFLOW:
     3. ascec opt T.inp L.sh     → generate QM input files
     4. [Execute quantum evaluations externally]
     5. ascec sort               → organize results and generate summaries
-    6. ascec simil --th=0.9     → cluster structures by similarity
+    6. ascec cosmic --th=0.9     → cluster structures by cosmic
 
   Automated workflow:
     ascec input.asc protocol    → executes all stages automatically
@@ -16621,7 +16621,7 @@ WORKFLOW:
     ascec input.asc protocol 2 -i    → resume interactively
 
     Pipeline stages:
-    1. Annealing → 2. Optimization → 3. Similarity → 4. Refinement → 5. Similarity(2)
+    1. Annealing → 2. Optimization → 3. COSMIC → 4. Refinement → 5. COSMIC(2)
 
   Excluding problematic structures:
     For resumable protocols, exclude structures that cause errors:
@@ -16649,12 +16649,12 @@ PROTOCOL FLAGS (optional):
     it will not be retried regardless of exit code.
 
   Example protocol with custom flags:
-    opt template.inp launcher.sh , similarity --th=0.9 , \\
+    opt template.inp launcher.sh , cosmic --th=0.9 , \\
     opt --critical=5 template.inp launcher.sh
 
   Launcher file is OPTIONAL:
     If omitted, ASCEC auto-detects ORCA from PATH and generates a launcher.
-    Example: opt template.inp , similarity --th=0.9
+    Example: opt template.inp , cosmic --th=0.9
 
 TEMPLATE DIRECTIVES:
   Add these comments to your ORCA template (.inp) for rescue hessian behavior:
@@ -16692,7 +16692,7 @@ EXAMPLES:
   ascec diagram --scaled              Generate auto-scaled energy diagrams
     ascec opt opt.inp launcher.sh       Create inputs with launcher script
   ascec sort                          Organize results with summary
-  ascec simil --th=0.95 --rmsd=0.5    Cluster with 0.95 th similarity + RMSD
+  ascec cosmic --th=0.95 --rmsd=0.5    Cluster with 0.95 th cosmic + RMSD
 
 REFERENCE:
   For comprehensive documentation including theoretical background,
@@ -16703,11 +16703,11 @@ CITATION:
   Manuel, G.; Sara, G.; Albeiro, R. Universidad de Antioquia (2026)
 
 MORE INFORMATION:
-  Repository: https://github.com/manuel2gl/qft-ascec-similarity
+  Repository: https://github.com/manuel2gl/qft-ascec-cosmic
   Support:    Química Física Teórica - Universidad de Antioquia
 """)
     parser.add_argument("command", metavar="COMMAND", 
-                       help="Input file or command (opt, ref, sort, simil, diagram, etc.)")
+                       help="Input file or command (opt, ref, sort, cosmic, diagram, etc.)")
     parser.add_argument("arg1", nargs='?', default=None, metavar="ARG1",
                        help="Command-specific argument (e.g., template file, mode)")
     parser.add_argument("arg2", nargs='?', default=None, metavar="ARG2",
@@ -16746,11 +16746,11 @@ MORE INFORMATION:
         parser.print_help()
         return
     
-    # Check if similarity analysis mode is requested
-    if args.command.lower() == "simil":
-        # Pass all remaining arguments to similarity script
-        similarity_args = sys.argv[2:]  # Skip 'ascec-v04.py' and 'simil'
-        execute_similarity_analysis(*similarity_args)
+    # Check if cosmic analysis mode is requested
+    if args.command.lower() == "cosmic":
+        # Pass all remaining arguments to cosmic script
+        cosmic_args = sys.argv[2:]  # Skip 'ascec-v04.py' and 'cosmic'
+        execute_cosmic_analysis(*cosmic_args)
         return
     
     # Check if sort mode is requested
@@ -16758,10 +16758,10 @@ MORE INFORMATION:
         if args.justsum:
             execute_summary_only()
         else:
-            # Check for target similarity folder argument
-            target_sim = getattr(args, 'target_sim_folder', None)
+            # Check for target cosmic folder argument
+            target_sim = getattr(args, 'target_cosmic_folder', None)
             reuse = getattr(args, 'reuse_existing', False)
-            execute_sort_command(include_summary=not args.nosum, target_sim_folder=target_sim, reuse_existing=reuse)
+            execute_sort_command(include_summary=not args.nosum, target_cosmic_folder=target_sim, reuse_existing=reuse)
         return
     
     # Check if box analysis mode is requested
@@ -16845,22 +16845,22 @@ MORE INFORMATION:
         
         # Legacy _tmp_ folders (no longer created, but might exist from old runs)
         temp_calc_folders = glob.glob("calculation_tmp_*")
-        temp_sim_folders = glob.glob("similarity_tmp_*")
+        temp_cosmic_folders = glob.glob("cosmic_tmp_*")
         
         # Current temporary folders
         retry_input = ["retry_input"] if os.path.exists("retry_input") else []
         good_structures = ["good_structures"] if os.path.exists("good_structures") else []
         
-        all_temp = temp_calc_folders + temp_sim_folders + retry_input + good_structures
+        all_temp = temp_calc_folders + temp_cosmic_folders + retry_input + good_structures
         
         # Refactored optimization redo logic:
         # Instead of creating _tmp_ folders, we now unsort existing folders.
         # This means the "optimization redo block" is effectively removed,
         # and the cleanup now just handles the remaining temporary folders.
-        # The "similarity spacing" fix is applied here as a general print spacing.
+        # The "cosmic spacing" fix is applied here as a general print spacing.
         
         if all_temp:
-            if temp_calc_folders or temp_sim_folders:
+            if temp_calc_folders or temp_cosmic_folders:
                 print("\n  Note: Found legacy _tmp_ folders from old runs")
                 print("  (Current redo logic unsorts folders instead of creating _tmp_ copies)\n")
             
