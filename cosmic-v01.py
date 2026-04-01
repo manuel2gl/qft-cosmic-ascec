@@ -44,7 +44,7 @@ HARTREE_TO_EV = 27.211386245988  # eV per Hartree
 BOHR_TO_ANGSTROM = 0.529177210903  # Angstrom per Bohr
 
 # Script version
-version = "* Similarity-v01: Feb-2026 *"
+version = "* COSMIC-v01: Feb-2026 *"
 
 def print_version_banner():
     """Print the ASCII art banner with UDEA logo and version information."""
@@ -52,7 +52,7 @@ def print_version_banner():
 ===========================================================================
 
                         ***************************                        
-                          * S I M I L A R I T Y *                          
+                          * C O S M I C *                          
                         ***************************                        
 
                              √≈≠==≈                                  
@@ -449,6 +449,81 @@ def calculate_radius_of_gyration(atomnos, atomcoords):
     except Exception as e:
         print(f"Error in calculate_radius_of_gyration: {e}")
         return None
+
+def calculate_rotational_constants(atomnos, atomcoords):
+    """
+    Calculate rotational constants (A, B, C) from the moment of inertia tensor.
+
+    Uses the principal moments of inertia Ia <= Ib <= Ic (in amu*Å²)
+    and converts to rotational constants A >= B >= C (in GHz) via:
+
+        X = h / (8 π² Ix)
+
+    where h is Planck's constant and Ix is a principal moment.
+
+    Args:
+        atomnos (array): Atomic numbers.
+        atomcoords (array): Atomic coordinates (N, 3) in Angstroms.
+
+    Returns:
+        numpy.ndarray of shape (3,) with [A, B, C] in GHz, or None on error.
+    """
+    try:
+        symbols = [atomic_number_to_symbol(n) for n in atomnos]
+        masses = np.array([element_masses.get(s, 0.0) for s in symbols])
+
+        coords = np.asarray(atomcoords, dtype=float)
+        if coords.ndim != 2 or coords.shape[1] != 3:
+            return None
+
+        total_mass = np.sum(masses)
+        if total_mass == 0.0:
+            return None
+
+        # Centre of mass
+        com = np.sum(coords.T * masses, axis=1) / total_mass
+        r = coords - com  # centred coordinates
+
+        # Inertia tensor (amu·Å²)
+        Ixx = np.sum(masses * (r[:, 1]**2 + r[:, 2]**2))
+        Iyy = np.sum(masses * (r[:, 0]**2 + r[:, 2]**2))
+        Izz = np.sum(masses * (r[:, 0]**2 + r[:, 1]**2))
+        Ixy = -np.sum(masses * r[:, 0] * r[:, 1])
+        Ixz = -np.sum(masses * r[:, 0] * r[:, 2])
+        Iyz = -np.sum(masses * r[:, 1] * r[:, 2])
+
+        inertia_tensor = np.array([
+            [Ixx, Ixy, Ixz],
+            [Ixy, Iyy, Iyz],
+            [Ixz, Iyz, Izz]
+        ])
+
+        # Principal moments (ascending)
+        eigenvalues = np.linalg.eigvalsh(inertia_tensor)
+
+        # Conversion factor: amu·Å² → kg·m²
+        # 1 amu = 1.66053906660e-27 kg, 1 Å = 1e-10 m
+        amu_ang2_to_kg_m2 = 1.66053906660e-27 * (1e-10)**2  # 1.66053906660e-47
+
+        # h / (8 π²) in SI (J·s / rad²) → divide by I in kg·m² → Hz → GHz
+        h = 6.62607015e-34  # J·s
+        factor = h / (8.0 * np.pi**2)  # J·s / rad²
+
+        rot_consts = []
+        for I_val in eigenvalues:
+            if I_val <= 0.0:
+                rot_consts.append(0.0)
+            else:
+                I_si = I_val * amu_ang2_to_kg_m2
+                freq_hz = factor / I_si
+                rot_consts.append(freq_hz * 1e-9)  # Hz → GHz
+
+        # Convention: A >= B >= C
+        rot_consts.sort(reverse=True)
+        return np.array(rot_consts, dtype=float)
+    except Exception:
+        return None
+
 
 def detect_hydrogen_bonds(atomnos, atomcoords):
     """
@@ -925,11 +1000,11 @@ def extract_properties_with_cclib(logfile_path):
         # --- Conditional GIBBS FREE ENERGY EXTRACTION based on file type ---
         if file_extension == '.out':
             # ORCA .out specific parsing for Gibbs Free Energy
+            # Iterate all lines and keep the LAST value (multi-step jobs)
             for line in lines:
                 if "Final Gibbs free energy" in line:
                     try:
                         extracted_props['gibbs_free_energy'] = float(line.split()[-2])
-                        break
                     except (ValueError, IndexError):
                         pass
         elif file_extension == '.log':
@@ -945,6 +1020,7 @@ def extract_properties_with_cclib(logfile_path):
         # --- Conditional DIPOLE MOMENT EXTRACTION based on file type ---
         if file_extension == '.out':
             # ORCA .out specific parsing (regex)
+            # Iterate all lines and keep the LAST dipole (multi-step jobs)
             dipole_re = re.compile(r"Total Dipole Moment\s*:\s*(-?\d+\.\d+)\s*(-?\d+\.\d+)\s*(-?\d+\.\d+)")
             for line in lines:
                 match = dipole_re.search(line)
@@ -954,7 +1030,6 @@ def extract_properties_with_cclib(logfile_path):
                         y = float(match.group(2))
                         z = float(match.group(3))
                         extracted_props['dipole_moment'] = np.linalg.norm([x, y, z])
-                        break
                     except ValueError:
                         pass
         elif file_extension == '.log':
@@ -1009,13 +1084,13 @@ def extract_properties_with_cclib(logfile_path):
 
         # Custom parsing for HOMO-LUMO Gap if cclib fails for .out files (e.g., semiempirical)
         if extracted_props['homo_lumo_gap'] is None and file_extension == '.out':
-            homo_lumo_gap_re = re.compile(r":: HOMO-LUMO gap\s*(-?\d+\.\d+)\s*(-?\d+\.\d+)\s*eV\s*::") # Adjusted regex
+            # Iterate all lines and keep the LAST gap value (multi-step jobs)
+            homo_lumo_gap_re = re.compile(r":: HOMO-LUMO gap\s*(-?\d+\.\d+)\s*(-?\d+\.\d+)\s*eV\s*::")
             for line in lines:
                 match = homo_lumo_gap_re.search(line)
                 if match:
                     try:
                         extracted_props['homo_lumo_gap'] = float(match.group(1))
-                        break
                     except ValueError:
                         pass
 
@@ -1057,6 +1132,7 @@ def extract_properties_with_cclib(logfile_path):
 
         # Fallback to custom parsing for .out files if cclib fails
         if extracted_props['rotational_constants'] is None and file_extension == '.out':
+            # Iterate all lines and keep the LAST rotational constants (multi-step jobs)
             rot_const_re = re.compile(r"Rotational constants in cm-1:\s*(-?\d+\.\d+)\s*(-?\d+\.\d+)\s*(-?\d+\.\d+)")
             for line in lines:
                 match = rot_const_re.search(line)
@@ -1065,11 +1141,21 @@ def extract_properties_with_cclib(logfile_path):
                         extracted_props['rotational_constants'] = np.array([float(match.group(1)),
                                                                              float(match.group(2)),
                                                                              float(match.group(3))])
-                        break
                     except ValueError:
                         pass
         # --- END Conditional ROTATIONAL CONSTANTS EXTRACTION ---
 
+        # Fallback: compute rotational constants from geometry if not available from output
+        if extracted_props['rotational_constants'] is None and \
+           extracted_props['final_geometry_atomnos'] is not None and \
+           extracted_props['final_geometry_coords'] is not None and \
+           len(extracted_props['final_geometry_atomnos']) > 0:
+            computed_rc = calculate_rotational_constants(
+                extracted_props['final_geometry_atomnos'],
+                extracted_props['final_geometry_coords']
+            )
+            if computed_rc is not None:
+                extracted_props['rotational_constants'] = computed_rc
 
         if extracted_props['final_geometry_atomnos'] is not None and extracted_props['final_geometry_coords'] is not None:
             if len(extracted_props['final_geometry_atomnos']) > 0 and extracted_props['final_geometry_coords'].shape[0] > 0:
@@ -1077,7 +1163,6 @@ def extract_properties_with_cclib(logfile_path):
                     radius_gyr = calculate_radius_of_gyration(extracted_props['final_geometry_atomnos'], extracted_props['final_geometry_coords'])
                     extracted_props['radius_of_gyration'] = radius_gyr
                 except Exception:
-                    # Silently skip if calculation fails (expected for incomplete data)
                     pass
             # Silently skip if empty atomnos or coords (expected for incomplete calculations)
 
@@ -1397,7 +1482,19 @@ def extract_properties_with_opi(logfile_path):
         
         # --- Rotational constants from text ---
         extracted_props['rotational_constants'] = _extract_rotconsts_from_file_opi(lines)
-        
+
+        # Fallback: compute rotational constants from geometry if not available from output
+        if extracted_props['rotational_constants'] is None and \
+           extracted_props['final_geometry_atomnos'] is not None and \
+           extracted_props['final_geometry_coords'] is not None and \
+           len(extracted_props['final_geometry_atomnos']) > 0:
+            computed_rc = calculate_rotational_constants(
+                extracted_props['final_geometry_atomnos'],
+                extracted_props['final_geometry_coords']
+            )
+            if computed_rc is not None:
+                extracted_props['rotational_constants'] = computed_rc
+
         # --- Calculate radius of gyration ---
         if extracted_props['final_geometry_atomnos'] is not None and extracted_props['final_geometry_coords'] is not None:
             if len(extracted_props['final_geometry_atomnos']) > 0 and extracted_props['final_geometry_coords'].shape[0] > 0:
@@ -1780,7 +1877,7 @@ def filter_imaginary_freq_structures(clusters_list, output_base_dir, input_sourc
         summary_lines.append("=" * 75)
         summary_lines.append("")
         summary_lines.append(center_text_skipped("***************************"))
-        summary_lines.append(center_text_skipped("* S I M I L A R I T Y *"))
+        summary_lines.append(center_text_skipped("* C O S M I C *"))
         summary_lines.append(center_text_skipped("***************************"))
         summary_lines.append("")
         summary_lines.append("                             √≈≠==≈                                  ")
@@ -2071,19 +2168,21 @@ def filter_imaginary_freq_structures(clusters_list, output_base_dir, input_sourc
 def _is_non_converged_structure(mol_data, dataset_has_freq=True):
     """Return True when a structure should be treated as non-converged/critical.
 
-    When *dataset_has_freq* is False (opt-only dataset), the concept of
-    "non-converged" does not apply — there are no true minima to compare
-    against. All structures with a valid electronic energy are treated as
-    usable for clustering.
+    With dynamic vector clustering, reduced-vector structures that were
+    successfully matched to a fullest-tier cluster are NOT treated as
+    non-converged.  Only structures explicitly flagged as unmatched
+    (``_reduced_unmatched``) or lacking essential data are critical.
     """
-    if dataset_has_freq:
-        # Full-freq mode: require Gibbs and full feature vector
-        if mol_data.get('gibbs_free_energy') is None:
-            return True
-        # Reduced feature vectors are treated as non-converged for workflow safety.
-        if not mol_data.get('_is_full_feature', True):
-            return True
-    # Opt-only mode: no critical flagging — cluster whatever is available.
+    # Structures explicitly flagged as unmatched reduced → critical
+    if mol_data.get('_reduced_unmatched', False):
+        return True
+    # In freq mode, structures missing Gibbs energy that are NOT absorbed
+    # reduced-vector matches are still critical
+    if dataset_has_freq and not mol_data.get('_is_full_feature', True):
+        # But if it was matched (absorbed), it's fine
+        if mol_data.get('_initial_cluster_label') is not None and not mol_data.get('_reduced_unmatched', False):
+            return False
+        return True
     return False
 
 
@@ -2387,13 +2486,9 @@ def write_cluster_dat_file(dat_file_prefix, cluster_members_data, output_base_di
 
         # 5. Deviation Analysis (ONLY for clusters with >1 configuration)
         if num_configurations > 1:
-            # Features excluded from the vector
-            _freq_excluded = {'gibbs_free_energy', 'first_vib_freq', 'last_vib_freq'}
-            # Features with weight=0.0 are also excluded from the vector
+            # Dynamically detect which features are NOT available in all cluster members
             _zero_weight = {k for k, v in (weights or {}).items() if v == 0.0}
-            _all_excluded = (_freq_excluded if not _DATASET_HAS_FREQ else set()) | _zero_weight
 
-            # --- Deviation lines ---
             # All deviation entries: (display_name, data_extractor, feature_key_for_filter)
             _deviation_entries = [
                 ("Electronic Energy (Hartree)", lambda d: d.get('final_electronic_energy'), "electronic_energy"),
@@ -2412,35 +2507,41 @@ def write_cluster_dat_file(dat_file_prefix, cluster_members_data, output_base_di
                 ("Average H-Bond Angle (°)", lambda d: d.get('average_hbond_angle'), "average_hbond_angle"),
             ]
 
-            # Build excluded features message
-            _excluded_names = []
-            if not _DATASET_HAS_FREQ:
-                _excluded_names.append("Gibbs Free Energy, First Vibrational Frequency, Last Vibrational Frequency")
-            if _zero_weight:
-                _zw_display = {
-                    'dipole_moment': 'Dipole Moment', 'lumo_energy': 'LUMO Energy',
-                    'rotational_constants_A': 'Rotational Constant A',
-                    'rotational_constants_B': 'Rotational Constant B',
-                    'rotational_constants_C': 'Rotational Constant C',
-                    'average_hbond_distance': 'Average H-Bond Distance',
-                    'average_hbond_angle': 'Average H-Bond Angle',
-                    'electronic_energy': 'Electronic Energy', 'homo_energy': 'HOMO Energy',
-                    'homo_lumo_gap': 'HOMO-LUMO Gap', 'radius_of_gyration': 'Radius of Gyration',
-                }
-                _excluded_names.append(', '.join(_zw_display.get(k, k) for k in sorted(_zero_weight)))
+            # Dynamically detect features not available in all cluster members
+            _feat_display_map = {
+                'electronic_energy': 'Electronic Energy', 'gibbs_free_energy': 'Gibbs Free Energy',
+                'homo_energy': 'HOMO Energy', 'lumo_energy': 'LUMO Energy',
+                'homo_lumo_gap': 'HOMO-LUMO Gap', 'dipole_moment': 'Dipole Moment',
+                'radius_of_gyration': 'Radius of Gyration',
+                'rotational_constants_A': 'Rotational Constant A',
+                'rotational_constants_B': 'Rotational Constant B',
+                'rotational_constants_C': 'Rotational Constant C',
+                'first_vib_freq': 'First Vibrational Frequency',
+                'last_vib_freq': 'Last Vibrational Frequency',
+                'average_hbond_distance': 'Average H-Bond Distance',
+                'average_hbond_angle': 'Average H-Bond Angle',
+            }
+            _missing_features = set()
+            for _, extractor, feat_key in _deviation_entries:
+                values = [extractor(d) for d in cluster_members_data]
+                if not all(v is not None for v in values):
+                    _missing_features.add(feat_key)
+            _all_excluded = _missing_features | _zero_weight
 
-            if not _DATASET_HAS_FREQ or _zero_weight:
-                _mode_label = "Reduced feature vector"
-                if not _DATASET_HAS_FREQ:
-                    _mode_label += " (opt-only mode)"
-                f.write(f"\n{_mode_label}.\n")
-                f.write(f"Features not used: {'; '.join(_excluded_names)}\n")
+            if _all_excluded:
+                _excluded_display = [_feat_display_map.get(k, k) for k in sorted(_all_excluded)]
+                f.write(f"\nDynamic reduced feature vector.\n")
+                f.write(f"Features not used: {', '.join(_excluded_display)}\n")
 
             f.write("\nDeviation Analysis (Max-Min / |Mean|):\n")
             for display_name, extractor, feat_key in _deviation_entries:
-                if feat_key in _all_excluded:
+                if feat_key in _zero_weight:
                     continue
-                write_deviation_line(f, display_name, [extractor(d) for d in cluster_members_data])
+                values = [extractor(d) for d in cluster_members_data]
+                if feat_key in _missing_features:
+                    f.write(f"  {display_name} %Dev: N/A\n")
+                else:
+                    write_deviation_line(f, display_name, values)
 
             # --- Weights and tolerances display order ---
             weight_display_order = [
@@ -2726,6 +2827,8 @@ def create_unique_motifs_folder(all_clusters_data, output_base_dir, openbabel_al
             continue
         
         # CRITICAL: No motif can have imaginary frequencies or non-converged data.
+        # Representatives must come from the fullest-tier structures only.
+        # Reduced-vector structures absorbed into a cluster cannot be representatives.
         if dataset_has_freq:
             valid_members = [
                 m for m in cluster_members
@@ -2734,11 +2837,10 @@ def create_unique_motifs_folder(all_clusters_data, output_base_dir, openbabel_al
                 and m.get('_is_full_feature', True)
             ]
         else:
-            # Opt-only mode: require electronic energy only — the reduced vector IS the
-            # expected feature set, so _is_full_feature filtering is not needed.
             valid_members = [
                 m for m in cluster_members
                 if m.get('final_electronic_energy') is not None
+                and m.get('_is_full_feature', True)
             ]
         
         if not valid_members:
@@ -3231,6 +3333,143 @@ def select_complete_group_scalar_features(group_data, candidate_features):
     return active_features, dropped_features
 
 
+def _build_feature_vectors(mols, scalar_features, use_rotconsts, weights):
+    """Build raw feature vectors for a list of molecules using given features.
+    Returns (vectors_list, ordered_feature_names)."""
+    vectors = []
+    feature_names = []
+    for mol in mols:
+        vec = []
+        names = []
+        for feat in scalar_features:
+            if weights.get(feat, 1.0) != 0.0:
+                key = FEATURE_MAPPING.get(feat, feat)
+                vec.append(mol.get(key))
+                names.append(feat)
+        if use_rotconsts:
+            rc = mol.get('rotational_constants')
+            for i, rc_name in enumerate(['rotational_constants_A', 'rotational_constants_B', 'rotational_constants_C']):
+                if weights.get(rc_name, 1.0) != 0.0:
+                    vec.append(rc[i] if rc is not None and len(rc) > i else None)
+                    names.append(rc_name)
+        vectors.append(vec)
+        if not feature_names:
+            feature_names = names
+    return vectors, feature_names
+
+
+def _zscore_scale(raw_np, feature_names, min_std_threshold, abs_tolerances):
+    """Z-score standardize a feature matrix column-wise.  Returns scaled array."""
+    from sklearn.preprocessing import StandardScaler
+    scaled = np.zeros_like(raw_np)
+    for col in range(raw_np.shape[1]):
+        col_data = raw_np[:, col]
+        fname = feature_names[col]
+        max_diff = np.max(col_data) - np.min(col_data)
+        if fname in abs_tolerances and max_diff < abs_tolerances[fname]:
+            scaled[:, col] = 0.0
+        else:
+            std = np.std(col_data)
+            if std < min_std_threshold:
+                scaled[:, col] = 0.0
+            else:
+                scaler = StandardScaler()
+                scaled[:, col] = scaler.fit_transform(col_data.reshape(-1, 1)).flatten()
+    return scaled
+
+
+def _match_reduced_to_clusters(
+    reduced_mols, fullest_mols, cluster_labels_fullest,
+    primary_scalar_features, use_primary_rotconsts,
+    weights, threshold, min_std_threshold, abs_tolerances
+):
+    """Match reduced-vector structures against existing clusters from the fullest tier.
+
+    For each group of reduced structures sharing the same available features,
+    builds a combined Z-score–standardized matrix (fullest tier + reduced) using
+    only the shared features, then checks if each reduced structure falls within
+    *threshold* distance of a cluster representative.
+
+    Returns (matched_by_label, unmatched):
+        matched_by_label: dict {cluster_label: [mol, ...]}
+        unmatched: list of mols that didn't match any cluster
+    """
+    from collections import defaultdict
+
+    if not reduced_mols:
+        return {}, []
+
+    # Build cluster → members mapping and pick representatives
+    clusters = defaultdict(list)
+    for mol, lbl in zip(fullest_mols, cluster_labels_fullest):
+        clusters[lbl].append(mol)
+    representatives = {}
+    for lbl, members in clusters.items():
+        representatives[lbl] = min(members, key=lambda x: (_sorting_energy(x), x['filename']))
+
+    # Index fullest mols for quick lookup
+    fullest_idx = {id(mol): i for i, mol in enumerate(fullest_mols)}
+
+    # Group reduced mols by their available feature set
+    reduced_by_features = defaultdict(list)
+    for mol in reduced_mols:
+        key = frozenset(mol['_available_features'])
+        reduced_by_features[key].append(mol)
+
+    matched_by_label = defaultdict(list)
+    unmatched = []
+
+    all_primary_features = set(primary_scalar_features)
+    if use_primary_rotconsts:
+        all_primary_features.update(['rotational_constants_A', 'rotational_constants_B', 'rotational_constants_C'])
+
+    for feat_set, tier_mols in reduced_by_features.items():
+        # Shared scalar features (preserving order)
+        shared_scalar = [f for f in primary_scalar_features if f in feat_set]
+        use_shared_rot = (
+            use_primary_rotconsts
+            and 'rotational_constants_A' in feat_set
+            and 'rotational_constants_B' in feat_set
+            and 'rotational_constants_C' in feat_set
+        )
+
+        if not shared_scalar and not use_shared_rot:
+            unmatched.extend(tier_mols)
+            continue
+
+        # Build combined matrix: fullest + reduced tier
+        combined = list(fullest_mols) + tier_mols
+        n_fullest = len(fullest_mols)
+
+        raw_vecs, feat_names = _build_feature_vectors(
+            combined, shared_scalar, use_shared_rot, weights
+        )
+        if not feat_names:
+            unmatched.extend(tier_mols)
+            continue
+
+        raw_np = np.array(raw_vecs, dtype=float)
+        scaled = _zscore_scale(raw_np, feat_names, min_std_threshold, abs_tolerances)
+
+        # Match each reduced structure to nearest representative
+        for idx, mol in enumerate(tier_mols):
+            mol_vec = scaled[n_fullest + idx]
+            best_dist = float('inf')
+            best_label = None
+            for lbl, rep in representatives.items():
+                rep_pos = fullest_idx[id(rep)]
+                dist = np.linalg.norm(mol_vec - scaled[rep_pos])
+                if dist < best_dist:
+                    best_dist = dist
+                    best_label = lbl
+            if best_dist <= threshold:
+                matched_by_label[best_label].append(mol)
+            else:
+                unmatched.append(mol)
+
+    return dict(matched_by_label), unmatched
+
+
 def extract_homo_lumo_from_orca_text(lines):
     last_section = None
     current_section = []
@@ -3302,11 +3541,11 @@ def preprocess_j_argument(argv):
     """
     Preprocesses command line arguments:
     - Handle -j8 format (no space) by converting it to -j 8.
-    - Extract boolean flags (--loose, --verbose, etc.) that appear after --compare
+    - Extract boolean flags (--verbose, etc.) that appear after --compare
       so they are not consumed as file arguments by nargs='+'.
     """
     # First pass: extract standalone boolean flags that could be trapped by --compare nargs='+'
-    _bool_flags = {'--loose', '-v', '--verbose', '-r', '--reprocess-files', '-V', '--version'}
+    _bool_flags = {'-v', '--verbose', '-r', '--reprocess-files', '-V', '--version'}
     extracted_flags = []
     remaining = []
     for arg in argv:
@@ -3474,7 +3713,7 @@ def plot_annotated_dendrogram(linkage_matrix, optimal_k, cut_height,
 
 
 # Modified to accept rmsd_threshold and output_base_dir
-def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, loose=False, group_hb=False):
+def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False):
     """
     Performs hierarchical clustering and comprehensive analysis on molecular structures.
     This is the main analysis function that orchestrates the entire clustering workflow.
@@ -3855,39 +4094,6 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
     global _DATASET_HAS_FREQ
     _DATASET_HAS_FREQ = _dataset_has_freq
 
-    # --- Loose mode: relax weights for geometry-sensitive features (opt-only) ---
-    # Loose optimizations produce noisy geometry-dependent properties (dipole,
-    # rotational constants, LUMO, H-bond geometry).  Reducing their weights lets
-    # clustering focus on the more robust descriptors (electronic energy, HOMO,
-    # gap, radius of gyration).  Only applies in opt-only mode.
-    if loose and not _dataset_has_freq:
-        # Loose optimizations produce noisy geometry-dependent properties.
-        # Setting weight=0.0 fully excludes them from the feature vector,
-        # keeping only the three most robust descriptors: electronic energy,
-        # HOMO-LUMO gap, and radius of gyration.
-        _loose_excluded = [
-            'homo_energy',
-            'lumo_energy',
-            'dipole_moment',
-            'rotational_constants_A',
-            'rotational_constants_B',
-            'rotational_constants_C',
-            'average_hbond_distance',
-            'average_hbond_angle',
-        ]
-        # Apply loose defaults only for features the user didn't explicitly set via --weights
-        for feat in _loose_excluded:
-            if feat not in _user_explicit_weights:
-                weights[feat] = 0.0
-        _kept = [f for f in _loose_excluded if weights.get(f, 0.0) != 0.0]
-        print("Loose opt-only mode: clustering with minimal robust feature set")
-        print("  Active:   electronic_energy, homo_lumo_gap, radius_of_gyration")
-        print("  Excluded: homo, lumo, dipole, rotational_constants, hbond_distance, hbond_angle")
-        if _kept:
-            print(f"  User override kept: {', '.join(_kept)}")
-    elif loose and _dataset_has_freq:
-        print("NOTE: --loose flag ignored (dataset has frequency data, loose mode only applies to opt-only)")
-
     # --- H-bond grouping decision ---
     # By default, all structures go into a single pool and property-based
     # clustering decides the grouping.  H-bond detection is sensitive to small
@@ -3942,11 +4148,11 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
     def center_text(text, width=75):
         return text.center(width)
     
-    # Add ASCII art header similar to ASCEC but for Similarity
+    # Add ASCII art header similar to ASCEC but for COSMIC
     summary_file_content_lines.append("=" * 75)
     summary_file_content_lines.append("")
     summary_file_content_lines.append(center_text("***************************"))
-    summary_file_content_lines.append(center_text("* S I M I L A R I T Y *"))
+    summary_file_content_lines.append(center_text("* C O S M I C *"))
     summary_file_content_lines.append(center_text("***************************"))
     summary_file_content_lines.append("")
     summary_file_content_lines.append("                             √≈≠==≈                                  ")
@@ -3979,11 +4185,11 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
     else:
         summary_file_content_lines.append(f"Clustering Results for: {os.path.basename(input_source)}")
     
-    # Conditional similarity threshold display
+    # Conditional cosmic threshold display
     if is_compare_mode:
-        summary_file_content_lines.append(f"Similarity threshold (distance): N/A")
+        summary_file_content_lines.append(f"COSMIC threshold (distance): N/A")
     else:
-        summary_file_content_lines.append(f"Similarity threshold (distance): {threshold}")
+        summary_file_content_lines.append(f"COSMIC threshold (distance): {threshold}")
     
     if rmsd_threshold is not None:
         summary_file_content_lines.append(f"RMSD validation threshold: {rmsd_threshold:.3f} Å")
@@ -4020,138 +4226,128 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
     all_skipped_need_recalc = []
     all_non_converged_critical = []
 
-    # Features that require frequency calculations
-    _freq_dependent_features = {'gibbs_free_energy', 'first_vib_freq', 'last_vib_freq'}
-
-    # --- Feature completeness summary (printed once, before clustering output) ---
+    # --- Dynamic feature vector: all 14 features are always candidates ---
+    # Per-structure availability determines the actual vector used.
     _all_scalar_features = [
         'electronic_energy', 'gibbs_free_energy', 'homo_energy', 'lumo_energy',
         'radius_of_gyration', 'dipole_moment', 'homo_lumo_gap',
         'first_vib_freq', 'last_vib_freq', 'average_hbond_distance', 'average_hbond_angle'
     ]
-    # In opt-only mode, the effective feature set excludes freq-dependent features
-    if _dataset_has_freq:
-        _scalar_features = _all_scalar_features
-    else:
-        _scalar_features = [f for f in _all_scalar_features if f not in _freq_dependent_features]
-        vprint("Opt-only dataset detected: using reduced feature vector (no freq-dependent features)")
+    _scalar_features = list(_all_scalar_features)
 
+    # Compute available features per structure
     _vector_size_hist = {}
-    _total_feature_dims = len(_scalar_features) + 3
     for _mol in clean_data_for_clustering:
-        _scalar_count = 0
+        _available = set()
         for _fname in _scalar_features:
             _key = FEATURE_MAPPING.get(_fname, _fname)
             if is_valid_scalar(_mol.get(_key)):
-                _scalar_count += 1
+                _available.add(_fname)
+        if has_valid_rotational_constants(_mol):
+            _available.update(['rotational_constants_A', 'rotational_constants_B', 'rotational_constants_C'])
+        _mol['_available_features'] = _available
+        _mol['_feature_vector_size'] = len(_available)
+        _vector_size_hist[_mol['_feature_vector_size']] = _vector_size_hist.get(_mol['_feature_vector_size'], 0) + 1
 
-        _rot_count = 3 if has_valid_rotational_constants(_mol) else 0
-        _vector_size = _scalar_count + _rot_count
-        _mol['_feature_vector_size'] = _vector_size
-        _mol['_is_full_feature'] = (_vector_size == _total_feature_dims)
+    # The "full" vector is the maximum feature count found in the pool
+    _pool_max_features = max(_mol['_feature_vector_size'] for _mol in clean_data_for_clustering)
+    for _mol in clean_data_for_clustering:
+        _mol['_is_full_feature'] = (_mol['_feature_vector_size'] == _pool_max_features)
 
-        _vector_size_hist[_vector_size] = _vector_size_hist.get(_vector_size, 0) + 1
-
-    _full_count = _vector_size_hist.get(_total_feature_dims, 0)
-    _non_converged_count = len(clean_data_for_clustering) - _full_count
-    print(f"Converged: {_full_count} with all features ({_total_feature_dims}/{_total_feature_dims})")
-    if _non_converged_count > 0:
-        print(f"  non-converged: {_non_converged_count}")
-        for _vec_size in sorted([k for k in _vector_size_hist.keys() if k < _total_feature_dims], reverse=True):
+    _full_count = sum(1 for _mol in clean_data_for_clustering if _mol['_is_full_feature'])
+    _non_full_count = len(clean_data_for_clustering) - _full_count
+    print(f"Full-feature structures: {_full_count} ({_pool_max_features} features)")
+    if _non_full_count > 0:
+        print(f"  Reduced-vector structures: {_non_full_count}")
+        for _vec_size in sorted([k for k in _vector_size_hist.keys() if k < _pool_max_features], reverse=True):
             _count = _vector_size_hist[_vec_size]
-            print(f"    - {_count} with reduced vector ({_vec_size}/{_total_feature_dims})")
+            print(f"    - {_count} with {_vec_size} features")
 
     # --- Boltzmann Population Calculation (based on initial property clusters) ---
     all_initial_property_clusters = []
     pseudo_global_cluster_id_counter = 1 # This counter is for assigning unique IDs to initial clusters for Boltzmann calc
 
+    # Track reduced structures that could not match any fullest-tier cluster
+    all_reduced_unmatched = []
+
     for hbond_count, group_data in sorted(hbond_groups.items()):
         if len(group_data) < 2 or not group_has_any_clustering_feature_data(group_data):
-            # For singletons or groups without enough numerical features, treat each as a separate initial cluster
             for single_mol_data in group_data:
-                single_mol_data['_initial_cluster_label'] = hbond_count # This is a dummy label for singletons
-                single_mol_data['_parent_global_cluster_id'] = pseudo_global_cluster_id_counter # Assign unique ID
+                single_mol_data['_initial_cluster_label'] = hbond_count
+                single_mol_data['_parent_global_cluster_id'] = pseudo_global_cluster_id_counter
                 all_initial_property_clusters.append([single_mol_data])
                 pseudo_global_cluster_id_counter += 1
         else:
-            filenames_base = [os.path.splitext(item['filename'])[0] for item in group_data]
+            # --- Tier-based dynamic vector clustering ---
+            # Separate fullest-tier from reduced-tier structures
+            fullest_tier = [m for m in group_data if m['_is_full_feature']]
+            reduced_tier = [m for m in group_data if not m['_is_full_feature']]
 
-            # Use the effective scalar features based on freq availability
-            all_potential_numerical_features = list(_scalar_features)
-            active_numerical_features_for_group, dropped_scalar_features = select_complete_group_scalar_features(group_data, all_potential_numerical_features)
-            use_rotational_constants = all(has_valid_rotational_constants(molecule_data) for molecule_data in group_data)
-            if dropped_scalar_features:
-                vprint(f"  Reduced scalar feature set due to missing values in some structures: {', '.join(dropped_scalar_features)}")
-            if not use_rotational_constants:
-                vprint(f"  Reduced vector excludes rotational constants because they are not available for all structures")
+            # If no fullest tier structures, promote the local maximum
+            if not fullest_tier:
+                _local_max = max(m['_feature_vector_size'] for m in group_data)
+                fullest_tier = [m for m in group_data if m['_feature_vector_size'] == _local_max]
+                reduced_tier = [m for m in group_data if m['_feature_vector_size'] < _local_max]
 
-            features_for_scaling_raw = []
-            ordered_feature_names_for_scaling = []
+            # If fullest tier too small to cluster, treat all as singletons
+            if len(fullest_tier) < 2:
+                for mol in fullest_tier + reduced_tier:
+                    mol['_initial_cluster_label'] = hbond_count
+                    mol['_parent_global_cluster_id'] = pseudo_global_cluster_id_counter
+                    all_initial_property_clusters.append([mol])
+                    pseudo_global_cluster_id_counter += 1
+                continue
 
-            for d in group_data:
-                mol_feature_vector = []
-                current_mol_ordered_feature_names = []
-                for feature_name_user_friendly in active_numerical_features_for_group:
-                    internal_key = FEATURE_MAPPING.get(feature_name_user_friendly, feature_name_user_friendly)
-                    if weights.get(feature_name_user_friendly, 1.0) != 0.0:
-                        value = d.get(internal_key)
-                        mol_feature_vector.append(value)
-                        current_mol_ordered_feature_names.append(feature_name_user_friendly)
-                
-                if use_rotational_constants:
-                    rc_temp = d.get('rotational_constants')
-                    if weights.get('rotational_constants_A', 1.0) != 0.0:
-                        mol_feature_vector.append(rc_temp[0])
-                        current_mol_ordered_feature_names.append('rotational_constants_A')
-                    if weights.get('rotational_constants_B', 1.0) != 0.0:
-                        mol_feature_vector.append(rc_temp[1])
-                        current_mol_ordered_feature_names.append('rotational_constants_B')
-                    if weights.get('rotational_constants_C', 1.0) != 0.0:
-                        mol_feature_vector.append(rc_temp[2])
-                        current_mol_ordered_feature_names.append('rotational_constants_C')
+            # Feature selection on fullest tier only
+            active_numerical_features_for_group, dropped_scalar_features = select_complete_group_scalar_features(fullest_tier, list(_scalar_features))
+            use_rotational_constants = all(has_valid_rotational_constants(m) for m in fullest_tier)
 
-                features_for_scaling_raw.append(mol_feature_vector)
-                if not ordered_feature_names_for_scaling:
-                    ordered_feature_names_for_scaling = current_mol_ordered_feature_names
-            
+            # Build vectors for fullest tier
+            features_for_scaling_raw, ordered_feature_names_for_scaling = _build_feature_vectors(
+                fullest_tier, active_numerical_features_for_group, use_rotational_constants, weights
+            )
+
             if not features_for_scaling_raw or all(len(f) == 0 for f in features_for_scaling_raw):
-                for single_mol_data in group_data:
-                    single_mol_data['_initial_cluster_label'] = hbond_count
-                    single_mol_data['_parent_global_cluster_id'] = pseudo_global_cluster_id_counter
-                    all_initial_property_clusters.append([single_mol_data])
+                for mol in fullest_tier + reduced_tier:
+                    mol['_initial_cluster_label'] = hbond_count
+                    mol['_parent_global_cluster_id'] = pseudo_global_cluster_id_counter
+                    all_initial_property_clusters.append([mol])
                     pseudo_global_cluster_id_counter += 1
                 continue
 
             features_for_scaling_raw_np = np.array(features_for_scaling_raw, dtype=float)
-            features_scaled = np.zeros_like(features_for_scaling_raw_np)
-            for col_idx in range(features_for_scaling_raw_np.shape[1]):
-                col_data = features_for_scaling_raw_np[:, col_idx]
-                feature_name = ordered_feature_names_for_scaling[col_idx]
-                max_abs_diff = np.max(col_data) - np.min(col_data)
-                
-                if feature_name in abs_tolerances and max_abs_diff < abs_tolerances[feature_name]:
-                    features_scaled[:, col_idx] = 0.0
-                else:
-                    std_dev = np.std(col_data)
-                    if std_dev < min_std_threshold:
-                        features_scaled[:, col_idx] = 0.0
-                    else:
-                        scaler = StandardScaler()
-                        features_scaled[:, col_idx] = scaler.fit_transform(col_data.reshape(-1, 1)).flatten()
+            features_scaled = _zscore_scale(features_for_scaling_raw_np, ordered_feature_names_for_scaling, min_std_threshold, abs_tolerances)
 
             linkage_matrix = linkage(features_scaled, method='average', metric='euclidean')
-
             initial_cluster_labels = fcluster(linkage_matrix, t=threshold, criterion='distance')
 
+            # Build cluster data from fullest tier
             initial_clusters_data = {}
             for i, label in enumerate(initial_cluster_labels):
-                group_data[i]['_initial_cluster_label'] = label
-                # The _parent_global_cluster_id should already be set for these from the Boltzmann calculation setup
-                initial_clusters_data.setdefault(label, []).append(group_data[i])
+                fullest_tier[i]['_initial_cluster_label'] = label
+                initial_clusters_data.setdefault(label, []).append(fullest_tier[i])
+
+            # Match reduced-tier structures against fullest-tier clusters
+            if reduced_tier:
+                matched, unmatched = _match_reduced_to_clusters(
+                    reduced_tier, fullest_tier, initial_cluster_labels,
+                    active_numerical_features_for_group, use_rotational_constants,
+                    weights, threshold, min_std_threshold, abs_tolerances
+                )
+                for label, mols in matched.items():
+                    for mol in mols:
+                        mol['_initial_cluster_label'] = label
+                    initial_clusters_data.setdefault(label, []).extend(mols)
+                # Unmatched reduced structures → singletons flagged as critical
+                for mol in unmatched:
+                    mol['_reduced_unmatched'] = True
+                    mol['_initial_cluster_label'] = hbond_count
+                    mol['_parent_global_cluster_id'] = pseudo_global_cluster_id_counter
+                    all_initial_property_clusters.append([mol])
+                    all_reduced_unmatched.append(mol)
+                    pseudo_global_cluster_id_counter += 1
 
             initial_clusters_list_unsorted = list(initial_clusters_data.values())
-
-            # Sort these initial clusters by their lowest energy representative
             initial_clusters_list_sorted_by_energy = sorted(
                 initial_clusters_list_unsorted,
                 key=lambda cluster: (min(_sorting_energy(m) for m in cluster),
@@ -4161,9 +4357,9 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
             for initial_prop_cluster in initial_clusters_list_sorted_by_energy:
                 parent_id = pseudo_global_cluster_id_counter
                 for member_conf in initial_prop_cluster:
-                    member_conf['_parent_global_cluster_id'] = parent_id 
-                all_initial_property_clusters.append(initial_prop_cluster) # Add to the list for Boltzmann calculation
-                pseudo_global_cluster_id_counter += 1 
+                    member_conf['_parent_global_cluster_id'] = parent_id
+                all_initial_property_clusters.append(initial_prop_cluster)
+                pseudo_global_cluster_id_counter += 1
 
     boltzmann_g1_data = {}
     global_min_gibbs_energy = None
@@ -4260,94 +4456,63 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
                 single_mol_data['_rmsd_pass_origin'] = 'first_pass_validated' 
                 current_hbond_group_clusters_for_final_output.append([single_mol_data]) 
 
-        else: # Proceed with actual clustering for normal mode or if more than 2 files in a group
-            filenames_base = [os.path.splitext(item['filename'])[0] for item in group_data]
+        else: # Proceed with actual clustering
+            # --- Tier-based dynamic vector clustering ---
+            # In compare mode, use all structures together (common features);
+            # otherwise, cluster fullest tier first, then match reduced structures.
+            if is_compare_mode:
+                _clustering_pool = group_data
+                _reduced_pool = []
+            else:
+                _clustering_pool = [m for m in group_data if m['_is_full_feature']]
+                _reduced_pool = [m for m in group_data if not m['_is_full_feature']]
+                if not _clustering_pool:
+                    _local_max = max(m['_feature_vector_size'] for m in group_data)
+                    _clustering_pool = [m for m in group_data if m['_feature_vector_size'] == _local_max]
+                    _reduced_pool = [m for m in group_data if m['_feature_vector_size'] < _local_max]
 
-            # Use the effective scalar features based on freq availability
-            all_potential_numerical_features = list(_scalar_features)
-            active_numerical_features_for_group, dropped_scalar_features = select_complete_group_scalar_features(group_data, all_potential_numerical_features)
-            use_rotational_constants = all(has_valid_rotational_constants(molecule_data) for molecule_data in group_data)
+            # If clustering pool is too small, treat everything as singletons
+            if len(_clustering_pool) < 2:
+                for mol in group_data:
+                    mol['_rmsd_pass_origin'] = 'first_pass_validated'
+                    current_hbond_group_clusters_for_final_output.append([mol])
+                    if not mol['_is_full_feature']:
+                        mol['_reduced_unmatched'] = True
+                        all_reduced_unmatched.append(mol)
+                continue
 
-            features_for_scaling_raw = []
-            ordered_feature_names_for_scaling = [] # To keep track of the order for weights
+            filenames_base = [os.path.splitext(item['filename'])[0] for item in _clustering_pool]
 
-            for d in group_data:
-                mol_feature_vector = []
-                current_mol_ordered_feature_names = []
-                for feature_name_user_friendly in active_numerical_features_for_group:
-                    internal_key = FEATURE_MAPPING.get(feature_name_user_friendly, feature_name_user_friendly)
-                    # Only add to feature vector if the weight is not 0.0
-                    if weights.get(feature_name_user_friendly, 1.0) != 0.0:
-                        value = d.get(internal_key)
-                        mol_feature_vector.append(value)
-                        current_mol_ordered_feature_names.append(feature_name_user_friendly)
-                
-                if use_rotational_constants:
-                    # Only add rotational constants if their weights are not 0.0
-                    rc_temp = d.get('rotational_constants')
-                    if weights.get('rotational_constants_A', 1.0) != 0.0:
-                        val = rc_temp[0]
-                        mol_feature_vector.append(val)
-                        current_mol_ordered_feature_names.append('rotational_constants_A')
-                    if weights.get('rotational_constants_B', 1.0) != 0.0:
-                        val = rc_temp[1]
-                        mol_feature_vector.append(val)
-                        current_mol_ordered_feature_names.append('rotational_constants_B')
-                    if weights.get('rotational_constants_C', 1.0) != 0.0:
-                        val = rc_temp[2]
-                        mol_feature_vector.append(val)
-                        current_mol_ordered_feature_names.append('rotational_constants_C')
+            # Feature selection on clustering pool (fullest tier or all in compare mode)
+            active_numerical_features_for_group, dropped_scalar_features = select_complete_group_scalar_features(_clustering_pool, list(_scalar_features))
+            use_rotational_constants = all(has_valid_rotational_constants(m) for m in _clustering_pool)
 
-                features_for_scaling_raw.append(mol_feature_vector)
-                if not ordered_feature_names_for_scaling:
-                    ordered_feature_names_for_scaling = current_mol_ordered_feature_names
-            
-            # Check if there are any features left to scale after applying weights
+            # Build feature vectors for the clustering pool
+            features_for_scaling_raw, ordered_feature_names_for_scaling = _build_feature_vectors(
+                _clustering_pool, active_numerical_features_for_group, use_rotational_constants, weights
+            )
+
             if not features_for_scaling_raw or all(len(f) == 0 for f in features_for_scaling_raw):
                 vprint(f"  WARNING: No numerical features left for clustering after applying weights. Treating each as a single-configuration cluster.")
                 print_step(f"{len(group_data)} config(s) - no features for clustering")
-                for single_mol_data in group_data:
-                    single_mol_data['_rmsd_pass_origin'] = 'first_pass_validated' 
-                    current_hbond_group_clusters_for_final_output.append([single_mol_data]) 
-                continue # Skip to next hbond group
-            
-            # Announce clustering start for this group
+                for mol in group_data:
+                    mol['_rmsd_pass_origin'] = 'first_pass_validated'
+                    current_hbond_group_clusters_for_final_output.append([mol])
+                continue
+
+            # Announce clustering
             _hb_tag = f" (H-bonds={hbond_count})" if group_hb else ""
-            print_step(f"Clustering {len(group_data)} configurations{_hb_tag}...")
-            
-            # Show information about reduced vibrational frequency weights (only once)
-            vib_freq_features = ['first_vib_freq', 'last_vib_freq']
-            reduced_weights = [f for f in vib_freq_features if f in ordered_feature_names_for_scaling and weights.get(f, 1.0) < 1.0]
-            if reduced_weights:
-                weight_info = ", ".join([f"{f}: {weights.get(f, 1.0)}" for f in reduced_weights])
-                vprint(f"  NOTE: Using reduced weights for vibrational frequencies ({weight_info}) due to computational sensitivity")
+            _tier_info = f" (fullest tier: {len(_clustering_pool)}/{len(group_data)})" if _reduced_pool else ""
+            print_step(f"Clustering {len(_clustering_pool)} configurations{_hb_tag}{_tier_info}...")
 
-            # Convert to numpy array for easier column-wise operations
+            if dropped_scalar_features:
+                vprint(f"  Reduced scalar feature set due to missing values: {', '.join(dropped_scalar_features)}")
+            if not use_rotational_constants:
+                vprint(f"  Reduced vector excludes rotational constants (not available for all structures)")
+
+            # Z-score scaling
             features_for_scaling_raw_np = np.array(features_for_scaling_raw, dtype=float)
-            
-            # Apply conditional scaling with absolute tolerance
-            features_scaled = np.zeros_like(features_for_scaling_raw_np)
-            for col_idx in range(features_for_scaling_raw_np.shape[1]):
-                col_data = features_for_scaling_raw_np[:, col_idx]
-                feature_name = ordered_feature_names_for_scaling[col_idx]
-                
-                # Check for absolute tolerance first
-                max_abs_diff = np.max(col_data) - np.min(col_data)
-                
-                if feature_name in abs_tolerances and max_abs_diff < abs_tolerances[feature_name]:
-                    # If max difference is below absolute tolerance, treat as constant (0.0)
-                    features_scaled[:, col_idx] = 0.0
-                    vprint(f"  NOTE: Feature '{feature_name}' (column {col_idx}) has max abs diff {max_abs_diff:.2e} < abs tolerance {abs_tolerances[feature_name]:.2e}. Treating as constant (0.0).")
-                else:
-
-                    std_dev = np.std(col_data)
-                    if std_dev < min_std_threshold:
-                        features_scaled[:, col_idx] = 0.0
-                        vprint(f"  NOTE: Feature '{feature_name}' (column {col_idx}) has std dev {std_dev:.2e} < min std threshold {min_std_threshold:.2e}. Treating as constant (0.0).")
-                    else:
-                        scaler = StandardScaler()
-                        features_scaled[:, col_idx] = scaler.fit_transform(col_data.reshape(-1, 1)).flatten()
-                        vprint(f"  NOTE: Feature '{feature_name}' (column {col_idx}) scaled normally.")
+            features_scaled = _zscore_scale(features_for_scaling_raw_np, ordered_feature_names_for_scaling, min_std_threshold, abs_tolerances)
 
             linkage_matrix = linkage(features_scaled, method='average', metric='euclidean')
 
@@ -4356,7 +4521,6 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
             _main_optimal_k = len(set(initial_cluster_labels))
             _main_cut_height = threshold
 
-            # Compute Mojena diagnostic threshold (for comparison plot only)
             _mojena_t, _mojena_k = compute_mojena_threshold(linkage_matrix, verbose=VERBOSE)
 
             # --- Extract configuration labels for dendrogram ---
@@ -4369,7 +4533,6 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
                 else:
                     conf_labels.append(filename)
 
-            # --- Dendrogram title and filename ---
             if is_compare_mode:
                 dendrogram_title_suffix = "Comparison"
             elif group_hb:
@@ -4382,7 +4545,6 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
             else:
                 dendrogram_filename = os.path.join(dendrogram_images_folder, f"dendrogram.png")
 
-            # --- Generate annotated dendrogram + diagnostic plot ---
             plot_annotated_dendrogram(
                 linkage_matrix, _main_optimal_k, _main_cut_height,
                 dendrogram_filename, title_suffix=dendrogram_title_suffix,
@@ -4390,23 +4552,32 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
                 mojena_threshold=_mojena_t, mojena_k=_mojena_k)
             vprint(f"Dendrogram saved as '{os.path.basename(dendrogram_filename)}'")
 
-            if is_compare_mode and len(group_data) >= 2:
-                # For comparison mode, after generating the dendrogram,
-                # we force the two files into a single output cluster.
-                # The 'threshold' and 'fcluster' are not used to determine the output clusters here.
-                print("  Comparison mode: Overriding clustering to output a single combined cluster.")
+            # --- Match reduced-tier structures against fullest-tier clusters ---
+            _matched_reduced = {}
+            _unmatched_reduced = []
+            if _reduced_pool:
+                _matched_reduced, _unmatched_reduced = _match_reduced_to_clusters(
+                    _reduced_pool, _clustering_pool, initial_cluster_labels,
+                    active_numerical_features_for_group, use_rotational_constants,
+                    weights, threshold, min_std_threshold, abs_tolerances
+                )
+                if _matched_reduced:
+                    _total_matched = sum(len(v) for v in _matched_reduced.values())
+                    print(f"  Reduced-vector matching: {_total_matched} matched, {len(_unmatched_reduced)} unmatched (critical)")
+                if _unmatched_reduced:
+                    all_reduced_unmatched.extend(_unmatched_reduced)
 
-                # Manually set cluster properties for the forced cluster
-                for i, member in enumerate(group_data): # group_data is already sorted by energy
-                    member['_initial_cluster_label'] = 1 # Always label as 1 for comparison
-                    member['_parent_global_cluster_id'] = 1 # Always label as 1 for comparison
-                    member['_rmsd_pass_origin'] = 'first_pass_validated' # Mark as validated
+            if is_compare_mode and len(group_data) >= 2:
+                print("  Comparison mode: Overriding clustering to output a single combined cluster.")
+                for i, member in enumerate(group_data):
+                    member['_initial_cluster_label'] = 1
+                    member['_parent_global_cluster_id'] = 1
+                    member['_rmsd_pass_origin'] = 'first_pass_validated'
                     member['_second_rmsd_sub_cluster_id'] = None
                     member['_second_rmsd_context_listing'] = None
                     member['_second_rmsd_rep_filename'] = None
 
-                # Populate _first_rmsd_context_listing for the forced cluster
-                prop_rep_conf = group_data[0] # Lowest energy is the representative
+                prop_rep_conf = group_data[0]
                 first_rmsd_listing = []
                 for member_conf in group_data:
                     if member_conf == prop_rep_conf:
@@ -4414,7 +4585,6 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
                     elif prop_rep_conf.get('final_geometry_coords') is not None and prop_rep_conf.get('final_geometry_atomnos') is not None and \
                          member_conf.get('final_geometry_coords') is not None and \
                          member_conf.get('final_geometry_atomnos') is not None:
-
                         rmsd_val = calculate_rmsd(
                             prop_rep_conf['final_geometry_atomnos'], prop_rep_conf['final_geometry_coords'],
                             member_conf['final_geometry_atomnos'], member_conf['final_geometry_coords']
@@ -4426,49 +4596,52 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
                 for member_conf in group_data:
                     member_conf['_first_rmsd_context_listing'] = first_rmsd_listing
 
-                current_hbond_group_clusters_for_final_output.append(group_data) # Add the single combined cluster
+                current_hbond_group_clusters_for_final_output.append(group_data)
             else:
-                # Normal clustering: labels already computed above
-
+                # Normal clustering: build cluster data from fullest tier + absorbed reduced
                 initial_clusters_data = {}
                 for i, label in enumerate(initial_cluster_labels):
-                    group_data[i]['_initial_cluster_label'] = label 
-                    # The _parent_global_cluster_id should already be set for these from the Boltzmann calculation setup
-                    initial_clusters_data.setdefault(label, []).append(group_data[i])
-                
-                initial_clusters_list_unsorted = list(initial_clusters_data.values())
+                    _clustering_pool[i]['_initial_cluster_label'] = label
+                    initial_clusters_data.setdefault(label, []).append(_clustering_pool[i])
 
+                # Absorb matched reduced structures into their clusters
+                for label, mols in _matched_reduced.items():
+                    for mol in mols:
+                        mol['_initial_cluster_label'] = label
+                    initial_clusters_data.setdefault(label, []).extend(mols)
+
+                # Unmatched reduced → singleton clusters flagged as critical
+                for mol in _unmatched_reduced:
+                    mol['_reduced_unmatched'] = True
+                    mol['_rmsd_pass_origin'] = 'first_pass_validated'
+                    current_hbond_group_clusters_for_final_output.append([mol])
+
+                initial_clusters_list_unsorted = list(initial_clusters_data.values())
                 initial_clusters_list_sorted_by_energy = sorted(
                     initial_clusters_list_unsorted,
-                    key=lambda cluster: (min(_sorting_energy(m) for m in cluster), 
-                                         min(m['filename'] for m in cluster)) 
+                    key=lambda cluster: (min(_sorting_energy(m) for m in cluster),
+                                         min(m['filename'] for m in cluster))
                 )
 
-                # Assign _parent_global_cluster_id if not already assigned (e.g., for singletons or groups without features)
-                # This part is now handled in the Boltzmann calculation setup, ensuring IDs are unique and consistent.
-                # We just need to ensure the _parent_global_cluster_id is present for all members here.
                 for initial_prop_cluster in initial_clusters_list_sorted_by_energy:
                     if initial_prop_cluster and initial_prop_cluster[0].get('_parent_global_cluster_id') is None:
-                        # This case should ideally not happen if the Boltzmann setup is done correctly
-                        # but as a fallback, assign a new ID.
-                        parent_id = pseudo_global_cluster_id_counter 
+                        parent_id = pseudo_global_cluster_id_counter
                         for member_conf in initial_prop_cluster:
-                            member_conf['_parent_global_cluster_id'] = parent_id 
-                        pseudo_global_cluster_id_counter += 1 
-
+                            member_conf['_parent_global_cluster_id'] = parent_id
+                        pseudo_global_cluster_id_counter += 1
 
                 if rmsd_threshold is not None:
                     print(f"  Performing first RMSD validation...")
-                    
+
                     validated_main_clusters, individual_outliers_from_first_pass = \
                         post_process_clusters_with_rmsd(initial_clusters_list_sorted_by_energy, rmsd_threshold)
-                    
+
                     current_hbond_group_clusters_for_final_output.extend(validated_main_clusters)
                     total_rmsd_outliers_first_pass += len(individual_outliers_from_first_pass)
 
                     if individual_outliers_from_first_pass:
                         print(f"    Attempting second RMSD clustering on {len(individual_outliers_from_first_pass)} outliers from first pass...")
-                        
+
                         outliers_grouped_by_parent_global_cluster = {}
                         for outlier_conf in individual_outliers_from_first_pass:
                             parent_global_id = outlier_conf.get('_parent_global_cluster_id')
@@ -4638,24 +4811,13 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
         total_skipped_str = str(total_skipped_all)
         critical_skipped_str = str(total_imag_need_recalc + total_non_converged_critical)
 
-    # Reduced-vector structures that never co-cluster with a full-feature structure
-    # are likely critical outliers and should be reviewed.
-    # In opt-only mode this concept does not apply — the reduced vector IS the
-    # expected full vector, so nothing should be flagged here.
-    reduced_unmatched_critical = []
-    if _dataset_has_freq:
-        for cluster_members in all_final_clusters:
-            if not cluster_members:
-                continue
-            has_full_feature_member = any(m.get('_is_full_feature', False) for m in cluster_members)
-            if has_full_feature_member:
-                continue
-            for m in cluster_members:
-                if not m.get('_is_full_feature', False):
-                    reduced_unmatched_critical.append(m)
-
-        if reduced_unmatched_critical:
-            print(f"\nReduced-vector criticals: {len(reduced_unmatched_critical)} structure(s) did not match any full-feature structure.")
+    # Reduced-vector structures that could not match any fullest-tier cluster
+    # are flagged as critical for redo (recalculation / Hessian / imaginary displacement).
+    # These were collected during tier-based matching in all_reduced_unmatched.
+    reduced_unmatched_critical = list(all_reduced_unmatched)
+    if reduced_unmatched_critical:
+        print(f"\nReduced-vector criticals: {len(reduced_unmatched_critical)} structure(s) did not match any full-feature cluster.")
+        print(f"  These structures need recalculation (redo mode).")
 
     if total_files_attempted > 0:
         reduced_unmatched_percentage = (len(reduced_unmatched_critical) / total_files_attempted) * 100
@@ -4797,7 +4959,7 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
         boltzmann_file_content_lines.append("=" * 75)
         boltzmann_file_content_lines.append("")
         boltzmann_file_content_lines.append(center_text_boltzmann("***************************"))
-        boltzmann_file_content_lines.append(center_text_boltzmann("* S I M I L A R I T Y *"))
+        boltzmann_file_content_lines.append(center_text_boltzmann("* C O S M I C *"))
         boltzmann_file_content_lines.append(center_text_boltzmann("***************************"))
         boltzmann_file_content_lines.append("")
         boltzmann_file_content_lines.append("                             √≈≠==≈                                  ")
@@ -4879,16 +5041,16 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
 
     # Emit marker for workflow detection: opt-only mode means no true minima.
     if not _dataset_has_freq:
-        print("SIMILARITY_OPT_ONLY_MODE")
+        print("COSMIC_OPT_ONLY_MODE")
 
 # Main execution block
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Similarity - Hierarchical clustering for quantum chemistry structures\nPhysicochemical feature-based discrimination of conformational families",
-        usage="similarity [OPTIONS] [FOLDER]",
+        description="COSMIC (COnfigurational Similarity via Motif Identification Code) - Hierarchical clustering for quantum chemistry structures\nPhysicochemical feature-based discrimination of conformational families",
+        usage="cosmic [OPTIONS] [FOLDER]",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""DESCRIPTION:
-  Similarity performs topological clustering of quantum chemistry outputs
+  COSMIC performs topological clustering of quantum chemistry outputs
   using a multi-dimensional physicochemical feature vector (energy, HOMO-LUMO
   gap, dipole moment, rotational constants, vibrational frequencies, H-bond geometry).
   Hierarchical clustering with optional RMSD refinement identifies unique
@@ -4897,7 +5059,7 @@ if __name__ == "__main__":
 METHODOLOGY:
   1. Feature Extraction: Parse QM outputs (.log/.out) for scalar descriptors
   2. Z-score Standardization: Normalize features across different units
-  3. Weighted Euclidean Distance: Calculate similarity matrix
+  3. Weighted Euclidean Distance: Calculate cosmic matrix
   4. Hierarchical Clustering: UPGMA linkage with 2-sigma threshold on Z-standardized features
      (Calinski-Harabasz + Silhouette score optimization)
   5. RMSD Refinement (optional): Distinguish geometric stereoisomers
@@ -4959,32 +5121,32 @@ OUTPUT FILES:
 
 EXAMPLES:
   Basic clustering (2-sigma threshold - recommended):
-    similarity                          Default threshold=2.0 (moderate)
-    similarity --rmsd=1                 Add RMSD validation at 1.0 Å
-    similarity calculation/             Process specific folder
+    cosmic                          Default threshold=2.0 (moderate)
+    cosmic --rmsd=1                 Add RMSD validation at 1.0 Å
+    cosmic calculation/             Process specific folder
 
   Manual threshold (deprecated):
-    similarity --th=2                   Manual clustering at threshold 2.0
-    similarity --th=1 --rmsd=0.5        Tight similarity with RMSD control
+    cosmic --th=2                   Manual clustering at threshold 2.0
+    cosmic --th=1 --rmsd=0.5        Tight clustering with RMSD control
   
   Performance optimization:
-    similarity --th=2 -j=8              Use 8 CPU cores for parallel processing
-    similarity --reprocess-files        Force cache refresh after updates
+    cosmic --th=2 -j=8              Use 8 CPU cores for parallel processing
+    cosmic --reprocess-files        Force cache refresh after updates
   
   Direct comparison:
-    similarity --compare s1.log s2.log s3.log  Compare specific structures
+    cosmic --compare s1.log s2.log s3.log  Compare specific structures
   
   Custom analysis:
-    similarity --th=2 --weights='(energy=0.3)(gap=0.2)'  Weighted features
-    similarity --th=2 -T=350.0          Boltzmann analysis at 350 K
+    cosmic --th=2 --weights='(energy=0.3)(gap=0.2)'  Weighted features
+    cosmic --th=2 -T=350.0          Boltzmann analysis at 350 K
 
 WORKFLOW INTEGRATION:
-  Similarity is typically used after ASCEC sampling and QM optimization:
+  COSMIC is typically used after ASCEC sampling and QM optimization:
     1. ascec input.in r5        → 5 replicated annealing runs
     2. ascec calc template.inp  → generate QM inputs
     3. [Run ORCA/Gaussian calculations]
     4. ascec sort               → organize results
-    5. similarity --th=2        → identify unique conformers
+    5. cosmic --th=2        → identify unique conformers
 
 RECOMMENDATIONS:
   - Start with --th=2 for initial exploration
@@ -5000,11 +5162,11 @@ SUPPORTED FORMATS:
   Note: ORCA 6.0 is not supported; use 5.0.x or upgrade to 6.1+
 
 CITATION:
-  If you use Similarity in your research, please cite:
+  If you use COSMIC in your research, please cite:
   Manuel, G.; Sara, G.; Albeiro, R. Universidad de Antioquia (2026)
 
 MORE INFORMATION:
-  Repository:     https://github.com/manuel2gl/qft-ascec-similarity
+  Repository:     https://github.com/manuel2gl/qft-ascec-cosmic
   Documentation:  See user manual for theoretical background
   Support:        Química Física Teórica - Universidad de Antioquia
 """)
@@ -5038,9 +5200,6 @@ MORE INFORMATION:
     
     parser.add_argument("--group-hb", action="store_true",
                         help="group structures by H-bond count before clustering (separate dendrograms per HB family)")
-
-    parser.add_argument("--loose", action="store_true",
-                        help="use relaxed weights for geometry-sensitive features (for loose optimizations in opt-only mode)")
 
     # Hidden/advanced options
     parser.add_argument("--min-std-threshold", type=float, default=1e-6,
@@ -5140,7 +5299,6 @@ MORE INFORMATION:
             abs_tolerances=abs_tolerances_dict,
             num_cores=num_cores,
             temperature_k=temperature_k,
-            loose=args.loose,
             group_hb=args.group_hb
         )
         print(f"\n--- Finished comparing {len(compare_files)} files: {', '.join(file_names)} ---\n")
@@ -5254,7 +5412,7 @@ MORE INFORMATION:
                 display_name = "./"
             print(f"\nProcessing folder: {display_name}\n")
 
-            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, loose=args.loose, group_hb=args.group_hb)
+            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb)
 
             print(f"\nFinished processing folder: {display_name}\n")
 
