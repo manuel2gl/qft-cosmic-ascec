@@ -73,7 +73,7 @@ def print_version_banner():
 
            Clustering Analysis for Quantum Chemistry Calculations          
 
-                        {version}                       
+                          {version}                       
 
 
                         Química Física Teórica - QFT                       
