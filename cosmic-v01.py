@@ -52,7 +52,7 @@ def print_version_banner():
 ===========================================================================
 
                         ***************************                        
-                          * C O S M I C *                          
+                        *       C O S M I C       *                          
                         ***************************                        
 
                              √≈≠==≈                                  
@@ -4152,7 +4152,7 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
     summary_file_content_lines.append("=" * 75)
     summary_file_content_lines.append("")
     summary_file_content_lines.append(center_text("***************************"))
-    summary_file_content_lines.append(center_text("* C O S M I C *"))
+    summary_file_content_lines.append(center_text("*       C O S M I C       *"))
     summary_file_content_lines.append(center_text("***************************"))
     summary_file_content_lines.append("")
     summary_file_content_lines.append("                             √≈≠==≈                                  ")
