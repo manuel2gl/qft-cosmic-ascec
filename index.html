@@ -1717,6 +1717,164 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             margin-top: 10px;
         }
 
+        .sampling-mode-card {
+            margin-bottom: 15px;
+        }
+
+        .sampling-mode-title-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--secondary-color);
+        }
+
+        .sampling-mode-title-row h2 {
+            margin: 0;
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+
+        .sampling-mode-title-row .auto-box-compact {
+            margin: 0;
+            font-size: 1em;
+            gap: 6px;
+        }
+
+        .sampling-mode-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 14px;
+            margin-top: 12px;
+            align-items: stretch;
+        }
+
+        .sampling-mode-choice {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 100%;
+            border: 1px solid #d7e0e8;
+            border-radius: 12px;
+            background: #ffffff;
+            padding: 16px 16px 14px;
+            text-align: left;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            height: 100%;
+            min-height: 160px;
+            transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+        }
+
+        .sampling-mode-choice:hover {
+            transform: translateY(-1px);
+            border-color: #b7cadb;
+            box-shadow: 0 10px 22px rgba(31, 63, 99, 0.08);
+        }
+
+        .sampling-mode-choice.active {
+            border-color: var(--secondary-color);
+            background: linear-gradient(180deg, #f5faff 0%, #ffffff 100%);
+            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.12) inset;
+        }
+
+        .sampling-mode-choice-title {
+            font-weight: 700;
+            color: #1f3f63;
+            font-size: 1.34em;
+            line-height: 1.15;
+        }
+
+        .sampling-mode-body {
+            display: grid;
+            grid-template-columns: 68px minmax(0, 1fr);
+            gap: 12px;
+            align-items: center;
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+
+        .sampling-mode-clock {
+            width: 68px;
+            height: 68px;
+            flex: 0 0 68px;
+        }
+
+        .sampling-mode-copy {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            justify-content: center;
+        }
+
+        .sampling-mode-stop {
+            color: #2a5b85;
+            font-size: 1.08em;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+
+        .sampling-mode-choice-desc {
+            color: #5a6f81;
+            font-size: 1.03em;
+            font-weight: 500;
+            line-height: 1.32;
+            text-wrap: balance;
+        }
+
+        .sampling-mode-clock-ring {
+            fill: #ffffff;
+            stroke: #d5dee8;
+            stroke-width: 2.5;
+        }
+
+        .sampling-mode-clock-progress {
+            fill: none;
+            stroke: #2a7fff;
+            stroke-width: 3.8;
+            stroke-linecap: round;
+            transform: rotate(-90deg);
+            transform-origin: 50% 50%;
+        }
+
+        .sampling-mode-clock-hands {
+            stroke: #2a5b85;
+            stroke-width: 2.4;
+            stroke-linecap: round;
+        }
+
+        .sampling-mode-clock-center {
+            fill: #2a5b85;
+        }
+
+        .sampling-mode-clock-33 .sampling-mode-clock-progress {
+            stroke-dasharray: 33 100;
+        }
+
+        .sampling-mode-clock-66 .sampling-mode-clock-progress {
+            stroke-dasharray: 66 100;
+        }
+
+        .sampling-mode-clock-100 .sampling-mode-clock-progress {
+            stroke-dasharray: 100 100;
+        }
+
+        @media (max-width: 1100px) {
+            .sampling-mode-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 700px) {
+            .sampling-mode-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
         /* Input preview style - editable */
         .input-preview {
             background: #f5f6f7;
@@ -2201,6 +2359,67 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                 </div>
             </div>
 
+
+            <div class="card sampling-mode-card">
+                <div class="sampling-mode-title-row">
+                    <h2>Sampling Mode</h2>
+                    <label class="auto-box-compact" title="Maxprint saves all QM output files and can consume significant disk space." onmouseenter="showMaxprintDiskAlert()">
+                        <input type="checkbox" id="smart-maxprint" onchange="toggleMaxprintFromSmart()">
+                        maxprint
+                    </label>
+                </div>
+                <div class="sampling-mode-grid">
+                    <button type="button" class="sampling-mode-choice" data-sampling-mode="preliminar" onclick="applySamplingPreset('preliminar')" aria-pressed="false">
+                        <span class="sampling-mode-choice-title">Preliminar</span>
+                        <div class="sampling-mode-body">
+                            <svg class="sampling-mode-clock sampling-mode-clock-33" viewBox="0 0 60 60" aria-hidden="true">
+                                <circle class="sampling-mode-clock-ring" cx="30" cy="30" r="22"></circle>
+                                <circle class="sampling-mode-clock-progress" cx="30" cy="30" r="22" pathLength="100"></circle>
+                                <line class="sampling-mode-clock-hands" x1="30" y1="30" x2="30" y2="18"></line>
+                                <line class="sampling-mode-clock-hands" x1="30" y1="30" x2="39" y2="30"></line>
+                                <circle class="sampling-mode-clock-center" cx="30" cy="30" r="2.6"></circle>
+                            </svg>
+                            <div class="sampling-mode-copy">
+                                <span class="sampling-mode-stop">Stop after geometry optimization.</span>
+                                <span class="sampling-mode-choice-desc">Fast semiempirical first pass for preliminar structures.</span>
+                            </div>
+                        </div>
+                    </button>
+                    <button type="button" class="sampling-mode-choice" data-sampling-mode="rigorous" onclick="applySamplingPreset('rigorous')" aria-pressed="false">
+                        <span class="sampling-mode-choice-title">Rigorous</span>
+                        <div class="sampling-mode-body">
+                            <svg class="sampling-mode-clock sampling-mode-clock-66" viewBox="0 0 60 60" aria-hidden="true">
+                                <circle class="sampling-mode-clock-ring" cx="30" cy="30" r="22"></circle>
+                                <circle class="sampling-mode-clock-progress" cx="30" cy="30" r="22" pathLength="100"></circle>
+                                <line class="sampling-mode-clock-hands" x1="30" y1="30" x2="30" y2="18"></line>
+                                <line class="sampling-mode-clock-hands" x1="30" y1="30" x2="39" y2="30"></line>
+                                <circle class="sampling-mode-clock-center" cx="30" cy="30" r="2.6"></circle>
+                            </svg>
+                            <div class="sampling-mode-copy">
+                                <span class="sampling-mode-stop">Stop after geometry refinement.</span>
+                                <span class="sampling-mode-choice-desc">A more rigorous structure-focused result with a later stop point.</span>
+                            </div>
+                        </div>
+                    </button>
+                    <button type="button" class="sampling-mode-choice" data-sampling-mode="complete" onclick="applySamplingPreset('complete')" aria-pressed="false">
+                        <span class="sampling-mode-choice-title">Complete</span>
+                        <div class="sampling-mode-body">
+                            <svg class="sampling-mode-clock sampling-mode-clock-100" viewBox="0 0 60 60" aria-hidden="true">
+                                <circle class="sampling-mode-clock-ring" cx="30" cy="30" r="22"></circle>
+                                <circle class="sampling-mode-clock-progress" cx="30" cy="30" r="22" pathLength="100"></circle>
+                                <line class="sampling-mode-clock-hands" x1="30" y1="30" x2="30" y2="18"></line>
+                                <line class="sampling-mode-clock-hands" x1="30" y1="30" x2="39" y2="30"></line>
+                                <circle class="sampling-mode-clock-center" cx="30" cy="30" r="2.6"></circle>
+                            </svg>
+                            <div class="sampling-mode-copy">
+                                <span class="sampling-mode-stop">Stop after energy refinement.</span>
+                                <span class="sampling-mode-choice-desc">Run the full workflow for the complete PES description.</span>
+                            </div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+
             <div class="smart-compact-grid">
                 <div class="card">
                     <h2>Annealing Theory Level</h2>
@@ -2380,11 +2599,11 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     <div class="card-title-row">
                         <h2>Geometry Refinement</h2>
                         <label class="auto-box-compact" style="font-size:0.84em; gap:6px;">
-                            <input type="checkbox" id="smart-ref-enabled" checked onchange="toggleSmartRef()">
+                            <input type="checkbox" id="smart-ref-enabled" onchange="toggleSmartRef()">
                             optional
                         </label>
                     </div>
-                    <div id="smart-ref-body">
+                    <div id="smart-ref-body" style="opacity:0.4; pointer-events:none;">
                     <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
                         <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                             <label>Theory</label>
@@ -2586,6 +2805,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     </button>
                 </div>
             </div>
+
         </div>
 
         <!-- ADVANCED MODE TAB -->
@@ -2643,6 +2863,10 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     <div class="form-group">
                         <label>Simulation Name</label>
                         <input type="text" id="sim-name" value="" placeholder="cluster" oninput="updatePreview()">
+                    </div>
+                    <div class="toggle-row" style="justify-content:center; margin-top: 0;">
+                        <input type="checkbox" id="adv-maxprint" onchange="toggleMaxprintFromAdvanced()">
+                        <label for="adv-maxprint" style="margin:0;">Maxprint (--maxprint)</label>
                     </div>
                     <div class="adv-name-actions-buttons">
                         <button class="btn btn-smart-primary" onclick="downloadAscFile()">
@@ -3012,11 +3236,11 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     <div class="card-title-row">
                         <h2>Geometry Refinement</h2>
                         <label class="auto-box-compact" style="font-size:0.84em; gap:6px;">
-                            <input type="checkbox" id="adv-ref-enabled" checked onchange="toggleAdvRef()">
+                            <input type="checkbox" id="adv-ref-enabled" onchange="toggleAdvRef()">
                             optional
                         </label>
                     </div>
-                    <div id="adv-ref-body">
+                    <div id="adv-ref-body" style="opacity:0.4; pointer-events:none;">
                     <div class="form-row-3">
                         <div class="form-group">
                             <label>Theory</label>
@@ -6397,6 +6621,112 @@ H  -0.757000  0.586000  0.000000"></textarea>
             syncSmartToAdvanced();
         }
 
+        function isMaxprintEnabled() {
+            return document.getElementById('smart-maxprint')?.checked === true
+                || document.getElementById('adv-maxprint')?.checked === true;
+        }
+
+        function syncMaxprintState(enabled) {
+            const smartMaxprint = document.getElementById('smart-maxprint');
+            const advMaxprint = document.getElementById('adv-maxprint');
+            if (smartMaxprint) smartMaxprint.checked = enabled;
+            if (advMaxprint) advMaxprint.checked = enabled;
+        }
+
+        function getSamplingPresetFromState() {
+            const erefEnabled = document.getElementById('smart-energy-ref-enabled')?.checked;
+            const refEnabled = document.getElementById('smart-ref-enabled')?.checked !== false;
+            if (erefEnabled) return 'complete';
+            if (refEnabled) return 'rigorous';
+            return 'preliminar';
+        }
+
+        function updateSamplingPresetUI() {
+            const activePreset = getSamplingPresetFromState();
+            document.querySelectorAll('[data-sampling-mode]').forEach((button) => {
+                const isActive = button.getAttribute('data-sampling-mode') === activePreset;
+                button.classList.toggle('active', isActive);
+                button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+            });
+        }
+
+        function setCheckboxState(inputId, enabled) {
+            const checkbox = document.getElementById(inputId);
+            if (checkbox) checkbox.checked = enabled;
+        }
+
+        function applySamplingPreset(mode) {
+            const selectedMode = mode || 'rigorous';
+
+            const optTheory = document.getElementById('smart-opt-theory');
+            if (optTheory) {
+                optTheory.value = 'native-gfn';
+                updateSmartOptMethod();
+            }
+
+            if (selectedMode === 'preliminar') {
+                setCheckboxState('smart-ref-enabled', false);
+                toggleSmartRef();
+                setCheckboxState('smart-energy-ref-enabled', false);
+                toggleSmartEnergyRef();
+            } else if (selectedMode === 'rigorous') {
+                setCheckboxState('smart-ref-enabled', true);
+                toggleSmartRef();
+                setCheckboxState('smart-energy-ref-enabled', false);
+                toggleSmartEnergyRef();
+            } else {
+                setCheckboxState('smart-ref-enabled', true);
+                toggleSmartRef();
+                setCheckboxState('smart-energy-ref-enabled', true);
+                toggleSmartEnergyRef();
+            }
+
+            if (selectedMode !== 'preliminar') {
+                const refTheory = document.getElementById('smart-ref-theory');
+                if (refTheory) {
+                    refTheory.value = selectedMode === 'rigorous' ? 'post-hf' : 'dft';
+                    updateSmartRefMethod();
+                }
+            }
+
+            if (selectedMode === 'complete') {
+                const erefTheory = document.getElementById('smart-eref-theory');
+                if (erefTheory) {
+                    erefTheory.value = 'post-hf';
+                    updateSmartEnergyRefMethod();
+                }
+            }
+
+            updateSamplingPresetUI();
+            updateSmartPipeline();
+            updateProtocolPreview();
+            updatePreview();
+        }
+
+        function toggleMaxprintFromSmart() {
+            const enabled = document.getElementById('smart-maxprint')?.checked === true;
+            syncMaxprintState(enabled);
+            updateProtocolPreview();
+            updatePreview();
+        }
+
+        function toggleMaxprintFromAdvanced() {
+            const enabled = document.getElementById('adv-maxprint')?.checked === true;
+            syncMaxprintState(enabled);
+            updateProtocolPreview();
+            updatePreview();
+        }
+
+        let maxprintHoverWarnedAt = 0;
+        function showMaxprintDiskAlert() {
+            const now = Date.now();
+            if (now - maxprintHoverWarnedAt < 4000) return;
+            maxprintHoverWarnedAt = now;
+            if (typeof toast === 'function') {
+                toast('Maxprint saves all QM output files and can consume significant disk space.', 'info', 5000);
+            }
+        }
+
         // Update Smart Mode annealing method based on theory
         function updateSmartAnnealingMethod() {
             const theory = document.getElementById('smart-annealing-theory').value;
@@ -6622,6 +6952,7 @@ end
             syncSmartToAdvanced();
             buildProtocolFromSettings();
             updatePipelineVisual();
+            updatePreview();
         }
 
         function toggleAdvRef() {
@@ -6677,6 +7008,7 @@ end
             syncSmartToAdvanced();
             buildProtocolFromSettings();
             updatePipelineVisual();
+            updatePreview();
         }
 
         // Update Energy Refinement method dropdown based on theory
@@ -6807,6 +7139,8 @@ end
             if (advPipeSim3Arrow) advPipeSim3Arrow.style.display = erefEnabled ? '' : 'none';
             if (advPipeSim3Step) advPipeSim3Step.style.display = erefEnabled ? '' : 'none';
             if (advPipeSim3) advPipeSim3.textContent = `th=${sim2Threshold}`;
+
+            updateSamplingPresetUI();
 
             updateSmartOptPreview();
             updateSmartRefPreview();
@@ -7196,6 +7530,8 @@ end
                 updateAdvEnergyRefPreview();
             }
 
+            syncMaxprintState(document.getElementById('smart-maxprint')?.checked === true);
+
             // Done syncing
             isSyncing = false;
         }
@@ -7231,6 +7567,8 @@ end
             if (smartUsePacking) {
                 smartUsePacking.checked = advUsePacking;
             }
+
+            syncMaxprintState(document.getElementById('adv-maxprint')?.checked === true);
 
             // Annealing settings
             const annealingTheory = document.getElementById('adv-annealing-theory')?.value;
@@ -8192,6 +8530,8 @@ end
             if (as3a) as3a.style.display = erefEnabled ? '' : 'none';
             if (as3s) as3s.style.display = erefEnabled ? '' : 'none';
             if (as3m) as3m.textContent = `th=${sim2Th}`;
+
+            updateSamplingPresetUI();
         }
 
         function getChangedCOSMICValues(bindings, defaults) {
@@ -8532,7 +8872,7 @@ end
             // Auto-number ref/opt stages: 1st ref → "ref", 2nd → "ref2", etc.
             let refCount = 0;
             let optCount = 0;
-            let text = '.asc,\n';
+            let text = isMaxprintEnabled() ? '.asc --maxprint,\n' : '.asc,\n';
             protocolStages.forEach((s, idx) => {
                 let name;
                 if (s.type === 'rN') {
@@ -9366,7 +9706,7 @@ H   1.981282  0.134064  0.000000`;
             if (protocolStages.length > 0) {
                 content += `\n# Protocol\n`;
                 content += `# (annealing, (pre)optimization, clustering, separated by "," or ".")\n\n`;
-                content += `.asc,\n`;
+                content += isMaxprintEnabled() ? `.asc --maxprint,\n` : `.asc,\n`;
                 let ascRefCount = 0;
                 let ascOptCount = 0;
                 protocolStages.forEach((stage, idx) => {
