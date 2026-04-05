@@ -8692,7 +8692,7 @@ def find_out_files(root_dir, include_orca: bool = True, include_gaussian: bool =
         root, files = dir_data
         local_out_files = []
         for file in files:
-            if (include_orca and file.endswith('.out')) or (include_gaussian and file.endswith('.log')):
+            if (include_orca and file.endswith('.out')) or (include_gaussian and file.endswith('.log') and not file.endswith('.xtbopt.log')):
                 local_out_files.append(os.path.join(root, file))
         return local_out_files
     
