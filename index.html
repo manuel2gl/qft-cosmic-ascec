@@ -1391,14 +1391,31 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             align-items: center;
         }
 
-        .smart-box-controls .btn-sm,
-        .smart-box-controls #smart-sim-name {
+        .smart-box-controls .btn-sm {
             height: 30px;
             font-size: 12px;
         }
 
         .smart-box-controls #smart-sim-name {
-            background: #ffffff;
+            background: #ffffff !important;
+            font-size: 13px !important;
+            padding: 5px 10px !important;
+            height: 30px !important;
+            border: 2px solid #3498db !important;
+            border-radius: 3px !important;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .smart-box-controls #smart-sim-name::placeholder {
+            color: #3498db;
+            font-weight: 600;
+            opacity: 1;
+        }
+
+        .smart-box-controls #smart-sim-name:focus {
+            border-color: #2980b9 !important;
+            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2) !important;
+            outline: none !important;
         }
 
         .mol-preview-card {
@@ -2251,7 +2268,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                                     <button class="btn btn-sm btn-primary" onclick="downloadMoleculesXYZ()">Download XYZ</button>
                                     <button class="btn btn-sm btn-primary" onclick="downloadBoxXYZ()">Download Box XYZ</button>
                                     <div class="form-group" style="flex: 1; margin: 0; min-width: 200px;">
-                                        <input type="text" id="smart-sim-name" value="" placeholder="Simulation name" oninput="syncSmartToAdvanced()">
+                                        <input type="text" id="smart-sim-name" value="" placeholder="Enter simulation name" oninput="syncSmartToAdvanced()">
                                     </div>
                                 </div>
                             </div>
@@ -2428,8 +2445,6 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <label>Theory</label>
                             <select id="smart-annealing-theory" onchange="updateSmartAnnealingMethod()">
                                 <option value="semiempirical" selected>Semiempirical</option>
-                                <option value="native-gfn">Native-GFN</option>
-                                <option value="gfn">GFN-xTB</option>
                                 <option value="dft">DFT</option>
                                 <option value="post-hf">Post-HF</option>
                             </select>
@@ -2497,7 +2512,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group" style="flex:1; min-width:82px; margin-bottom:0;">
                             <label>Initial T (K)</label>
-                            <input type="number" id="smart-quench-ti" value="600" step="50" min="100">
+                            <input type="number" id="smart-quench-ti" value="300" step="50" min="100">
                         </div>
                         <div class="form-group" style="flex:1; min-width:72px; margin-bottom:0;">
                             <label id="smart-quench-factor-label">Factor (%)</label>
@@ -2505,13 +2520,13 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group" style="flex:1; min-width:64px; margin-bottom:0;">
                             <label>Steps</label>
-                            <input type="number" id="smart-quench-steps" value="100" min="1" oninput="updateSmartQuenchParams()">
+                            <input type="number" id="smart-quench-steps" value="80" min="1" oninput="updateSmartQuenchParams()">
                         </div>
                     </div>
                     <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-top:10px;">
                         <div class="form-group" style="flex:1; min-width:70px; margin-bottom:0;">
                             <label>Replicas</label>
-                            <input type="number" id="smart-replicas" value="3" min="1" max="10" oninput="syncSmartBoxControlsToTop()">
+                            <input type="number" id="smart-replicas" value="1" min="1" max="10" oninput="syncSmartBoxControlsToTop()">
                         </div>
                         <div class="form-group" style="flex:1.2; min-width:100px; margin-bottom:0;">
                             <label>Packing (%)</label>
@@ -2520,9 +2535,9 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                                     <option value="5">5</option>
                                     <option value="10">10</option>
                                     <option value="15">15</option>
-                                    <option value="20" selected>20</option>
+                                    <option value="20">20</option>
                                     <option value="25">25</option>
-                                    <option value="30">30</option>
+                                    <option value="30" selected>30</option>
                                     <option value="35">35</option>
                                     <option value="40">40</option>
                                     <option value="45">45</option>
@@ -2549,8 +2564,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <label>Theory</label>
                             <select id="smart-opt-theory" onchange="updateSmartOptMethod()">
                                 <option value="semiempirical">Semiempirical</option>
-                                <option value="native-gfn" selected>Native-GFN</option>
-                                <option value="gfn">GFN-xTB</option>
+                                <option value="xtb" selected>Standalone xTB</option>
                                 <option value="dft">DFT</option>
                                 <option value="post-hf">Post-HF</option>
                             </select>
@@ -2582,13 +2596,13 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group" style="flex:0 0 85px; margin-bottom:0;">
                             <label>MaxIter</label>
-                            <input type="number" id="smart-opt-maxiter" value="100" min="10">
+                            <input type="number" id="smart-opt-maxiter" value="80" min="10">
                         </div>
                         <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                             <label>Job</label>
                             <select id="smart-opt-job" onchange="updateSmartOptPreview(); syncSmartToAdvanced();">
-                                <option value="Opt">Opt</option>
-                                <option value="Opt NumFreq" selected>Opt NumFreq</option>
+                                <option value="Opt" selected>Opt</option>
+                                <option value="Opt NumFreq">Opt NumFreq</option>
                                 <option value="Opt Freq">Opt Freq</option>
                             </select>
                         </div>
@@ -2609,8 +2623,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <label>Theory</label>
                             <select id="smart-ref-theory" onchange="updateSmartRefMethod()">
                                 <option value="semiempirical">Semiempirical</option>
-                                <option value="native-gfn">Native-GFN</option>
-                                <option value="gfn">GFN-xTB</option>
+                                <option value="xtb">Standalone xTB</option>
                                 <option value="dft" selected>DFT</option>
                                 <option value="post-hf">Post-HF</option>
                             </select>
@@ -2670,8 +2683,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                                 <label>Theory</label>
                                 <select id="smart-eref-theory" onchange="updateSmartEnergyRefMethod(); syncSmartToAdvanced();">
                                     <option value="semiempirical">Semiempirical</option>
-                                    <option value="native-gfn">Native-GFN</option>
-                                    <option value="gfn">GFN-xTB</option>
+                                    <option value="xtb">Standalone xTB</option>
                                     <option value="dft">DFT</option>
                                     <option value="post-hf" selected>Post-HF</option>
                                 </select>
@@ -2785,11 +2797,6 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <span class="pipeline-step-label refinement" style="background:#e74c3c;">E-Refine</span>
                         <span class="pipeline-step-theory" id="smart-pipe-eref">DLPNO-CCSD(T)</span>
                     </div>
-                    <span class="pipeline-arrow-small" id="smart-pipe-sim3-arrow" style="display:none;">→</span>
-                    <div class="pipeline-step-compact" id="smart-pipe-sim3-step" style="display:none;">
-                        <span class="pipeline-step-label cosmic">COSMIC 3</span>
-                        <span class="pipeline-step-theory" id="smart-pipe-sim3">th=2</span>
-                    </div>
                     <span class="pipeline-arrow-small">→</span>
                     <div class="pipeline-step-compact">
                         <span class="pipeline-step-label result">Results</span>
@@ -2848,11 +2855,6 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <span class="pipeline-step-label refinement" style="background:#e74c3c;">E-Refine</span>
                         <span class="pipeline-step-theory" id="adv-pipe-eref">DLPNO-CCSD(T)</span>
                     </div>
-                    <span class="pipeline-arrow-small" id="adv-pipe-sim3-arrow" style="display:none;">→</span>
-                    <div class="pipeline-step-compact" id="adv-pipe-sim3-step" style="display:none;">
-                        <span class="pipeline-step-label cosmic">COSMIC 3</span>
-                        <span class="pipeline-step-theory" id="adv-pipe-sim3">th=2</span>
-                    </div>
                     <span class="pipeline-arrow-small">→</span>
                     <div class="pipeline-step-compact">
                         <span class="pipeline-step-label result">Results</span>
@@ -2888,8 +2890,6 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <label>Theory</label>
                             <select id="adv-annealing-theory" onchange="updateAdvAnnealingMethod(); updateAllPreviews();">
                                 <option value="semiempirical" selected>Semiempirical</option>
-                                <option value="native-gfn">Native GFN</option>
-                                <option value="gfn">GFN (Non-native)</option>
                                 <option value="dft">DFT</option>
                                 <option value="post-hf">Post-HF / Wavefunction</option>
                             </select>
@@ -3107,9 +3107,9 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <div class="form-group" style="flex:1.1; min-width:140px; margin-bottom:0;">
                             <label>QM Program</label>
                             <select id="qm-program" onchange="updateQmCommandFromProgram(); updatePreview();">
+                                <option value="1">Gaussian (1)</option>
                                 <option value="2" selected>ORCA (2)</option>
-                                <option value="1">Program 1</option>
-                                <option value="3">Other (3)</option>
+                                <option value="3">xTB (3)</option>
                             </select>
                         </div>
                         <div class="form-group" style="flex:1.3; min-width:170px; margin-bottom:0;">
@@ -3129,8 +3129,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <label>Theory</label>
                             <select id="adv-opt-theory" onchange="updateAdvOptMethod(); updateAllPreviews();">
                                 <option value="semiempirical">Semiempirical</option>
-                                <option value="native-gfn" selected>Native GFN</option>
-                                <option value="gfn">GFN (Non-native)</option>
+                                <option value="xtb" selected>Standalone xTB</option>
                                 <option value="dft">DFT</option>
                                 <option value="post-hf">Post-HF / Wavefunction</option>
                             </select>
@@ -3139,10 +3138,10 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <label>Method</label>
                             <div class="custom-inline-control">
                                 <select id="adv-opt-method" onchange="toggleCustomMethod('adv-opt'); updateAllPreviews()">
-                                    <option value="Native-GFN2-xTB" selected>Native-GFN2-xTB</option>
-                                    <option value="Native-GFN1-xTB">Native-GFN1-xTB</option>
-                                    <option value="Native-GFN0-xTB">Native-GFN0-xTB</option>
-                                    <option value="Native-GFN-FF">Native-GFN-FF</option>
+                                    <option value="GFN2-xTB" selected>GFN2-xTB</option>
+                                    <option value="GFN1-xTB">GFN1-xTB</option>
+                                    <option value="GFN0-xTB">GFN0-xTB</option>
+                                    <option value="GFN-FF">GFN-FF</option>
                                     <option value="Other">Other...</option>
                                 </select>
                                 <div id="adv-opt-method-custom-wrap" class="custom-inline-editor">
@@ -3196,11 +3195,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <label>Rescue Method</label>
                             <div class="custom-inline-control">
                                 <select id="adv-opt-rescue-method" onchange="markAdvOptRescueManual(); toggleCustomInput('adv-opt-rescue-method', 'adv-opt-rescue-method-custom'); updateAllPreviews()">
-                                    <option value="Native-GFN2-xTB" selected>Native-GFN2-xTB</option>
-                                    <option value="Native-GFN1-xTB">Native-GFN1-xTB</option>
-                                    <option value="Native-GFN0-xTB">Native-GFN0-xTB</option>
-                                    <option value="Native-GFN-FF">Native-GFN-FF</option>
-                                    <option value="GFN2-xTB">GFN2-xTB</option>
+                                    <option value="GFN2-xTB" selected>GFN2-xTB</option>
                                     <option value="GFN1-xTB">GFN1-xTB</option>
                                     <option value="GFN0-xTB">GFN0-xTB</option>
                                     <option value="GFN-FF">GFN-FF</option>
@@ -3246,8 +3241,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <label>Theory</label>
                             <select id="adv-ref-theory" onchange="updateAdvRefMethod(); updateAllPreviews();">
                                 <option value="semiempirical">Semiempirical</option>
-                                <option value="native-gfn">Native GFN</option>
-                                <option value="gfn">GFN (Non-native)</option>
+                                <option value="xtb">Standalone xTB</option>
                                 <option value="dft" selected>DFT</option>
                                 <option value="post-hf">Post-HF / Wavefunction</option>
                             </select>
@@ -3311,10 +3305,6 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <div class="custom-inline-control">
                                 <select id="adv-ref-rescue-method" onchange="markAdvRefRescueManual(); toggleCustomInput('adv-ref-rescue-method', 'adv-ref-rescue-method-custom'); updateAllPreviews()">
                                     <option value="HF-3c" selected>HF-3c</option>
-                                    <option value="Native-GFN2-xTB">Native-GFN2-xTB</option>
-                                    <option value="Native-GFN1-xTB">Native-GFN1-xTB</option>
-                                    <option value="Native-GFN0-xTB">Native-GFN0-xTB</option>
-                                    <option value="Native-GFN-FF">Native-GFN-FF</option>
                                     <option value="GFN2-xTB">GFN2-xTB</option>
                                     <option value="GFN1-xTB">GFN1-xTB</option>
                                     <option value="GFN0-xTB">GFN0-xTB</option>
@@ -3361,8 +3351,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                                 <label>Theory</label>
                                 <select id="adv-eref-theory" onchange="updateAdvEnergyRefMethod(); updateAdvEnergyRefPreview(); updateAllPreviews();">
                                     <option value="semiempirical">Semiempirical</option>
-                                    <option value="native-gfn">Native GFN</option>
-                                    <option value="gfn">GFN (Non-native)</option>
+                                    <option value="xtb">Standalone xTB</option>
                                     <option value="dft">DFT</option>
                                     <option value="post-hf" selected>Post-HF / Wavefunction</option>
                                 </select>
@@ -3934,9 +3923,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
         // ORCA Method Maps
         const methodsByTheory = {
-            semiempirical: ['PM6', 'PM7', 'AM1', 'PM3', 'MNDO', 'RM1'],
-            'native-gfn': ['Native-GFN2-xTB', 'Native-GFN1-xTB', 'Native-GFN0-xTB', 'Native-GFN-FF'],
-            gfn: ['GFN2-xTB', 'GFN1-xTB', 'GFN0-xTB'],
+            semiempirical: ['PM6', 'PM7', 'AM1', 'PM3', 'MNDO', 'RM1', 'GFN2-xTB', 'GFN1-xTB', 'GFN0-xTB', 'GFN-FF'],
             xtb: ['GFN2-xTB', 'GFN1-xTB', 'GFN0-xTB', 'GFN-FF'],
             dft: ['B3LYP', 'B97-3c', 'r2SCAN-3c', 'PBE0', 'wB97X-D3', 'TPSS', 'PBE', 'BP86'],
             'post-hf': ['MP2', 'HF', 'SCS-MP2', 'CCSD', 'DLPNO-CCSD(T)', 'CCSD(T)'],
@@ -3946,8 +3933,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
         const basisOptionsByTheory = {
             semiempirical: [],
-            'native-gfn': [],
-            gfn: [],
+            xtb: [],
             dft: [
                 { label: 'Ahlrichs (Def2)', values: ['def2-SVP', 'def2-TZVP', 'def2-TZVPP', 'def2-QZVP', 'ma-def2-SVP'] },
                 { label: 'Dunning (cc-)', values: ['cc-pVDZ', 'cc-pVTZ', 'aug-cc-pVDZ', 'aug-cc-pVTZ'] },
@@ -5948,19 +5934,23 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
         function buildSmartMethodWithBasis(method, basis, theory) {
             let methodValue = method || '';
-            if (theory === 'native-gfn' && methodValue) {
-                methodValue = methodValue.replace(/^(Native-)+/, '');
-                methodValue = `Native-${methodValue}`;
-            }
             return basis ? `${methodValue} ${basis}` : methodValue;
         }
 
         function formatOrcaMethodLine(method) {
-            if (!method) return '';
-            if (method.includes('xTB') || method.includes('GFN-FF')) {
-                return `Native-${method.replace(/^(Native-)+/, '')}`;
-            }
-            return method;
+            return method || '';
+        }
+
+        function formatAnnealingDisplayMethod(method) {
+            return String(method || '');
+        }
+
+        function formatTemplateMethodLine(method) {
+            return String(method || '');
+        }
+
+        function isStandaloneXtbTheory(theory) {
+            return theory === 'xtb';
         }
 
         function getSmartPackingValue() {
@@ -6656,14 +6646,55 @@ H  -0.757000  0.586000  0.000000"></textarea>
         }
 
         function applySamplingPreset(mode) {
-            const selectedMode = mode || 'rigorous';
+            const selectedMode = mode || 'preliminar';
 
-            const optTheory = document.getElementById('smart-opt-theory');
-            if (optTheory) {
-                optTheory.value = 'native-gfn';
-                updateSmartOptMethod();
+            // --- Annealing: PM6, 1 proc for all presets ---
+            const annealTheory = document.getElementById('smart-annealing-theory');
+            if (annealTheory) { annealTheory.value = 'semiempirical'; updateSmartAnnealingMethod(); }
+            const annealMethod = document.getElementById('smart-annealing-method');
+            if (annealMethod) annealMethod.value = 'PM6';
+            const annealNprocs = document.getElementById('smart-annealing-nprocs');
+            if (annealNprocs) annealNprocs.value = '1';
+            const annealConcurrent = document.getElementById('smart-annealing-concurrent');
+            if (annealConcurrent) annealConcurrent.value = (selectedMode === 'preliminar') ? '1' : '3';
+
+            // --- Quenching ---
+            const quenchRoute = document.getElementById('smart-quench-route');
+            if (quenchRoute) quenchRoute.value = '2'; // geometric
+            const quenchTi = document.getElementById('smart-quench-ti');
+            if (quenchTi) quenchTi.value = (selectedMode === 'preliminar') ? '300' : '500';
+            const quenchFactor = document.getElementById('smart-quench-factor');
+            if (quenchFactor) quenchFactor.value = '5';
+            const quenchSteps = document.getElementById('smart-quench-steps');
+            if (quenchSteps) quenchSteps.value = (selectedMode === 'preliminar') ? '80' : '100';
+            updateSmartQuenchParams();
+
+            // --- Replicas & Packing ---
+            const replicas = document.getElementById('smart-replicas');
+            if (replicas) replicas.value = (selectedMode === 'preliminar') ? '1' : '3';
+            const packing = document.getElementById('smart-packing');
+            if (packing) {
+                packing.value = (selectedMode === 'preliminar') ? '30' : '20';
+                toggleCustomInput('smart-packing', 'smart-packing-custom', false);
             }
+            updateSmartBoxSize();
+            syncSmartBoxControlsToTop();
 
+            // --- Geometry Optimization: SA xtb2 ---
+            const optTheory = document.getElementById('smart-opt-theory');
+            if (optTheory) { optTheory.value = 'xtb'; updateSmartOptMethod(); }
+            const optMethod = document.getElementById('smart-opt-method');
+            if (optMethod) optMethod.value = 'GFN2-xTB';
+            const optNprocs = document.getElementById('smart-opt-nprocs');
+            if (optNprocs) optNprocs.value = '1';
+            const optConcurrent = document.getElementById('smart-opt-concurrent');
+            if (optConcurrent) optConcurrent.value = '4';
+            const optMaxiter = document.getElementById('smart-opt-maxiter');
+            if (optMaxiter) optMaxiter.value = (selectedMode === 'preliminar') ? '80' : '100';
+            const optJob = document.getElementById('smart-opt-job');
+            if (optJob) optJob.value = 'Opt';
+
+            // --- Geometry Refinement & Energy Refinement toggles ---
             if (selectedMode === 'preliminar') {
                 setCheckboxState('smart-ref-enabled', false);
                 toggleSmartRef();
@@ -6681,20 +6712,22 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 toggleSmartEnergyRef();
             }
 
+            // --- Geometry Refinement: DFT B3LYP 6-31G* Opt Freq ---
             if (selectedMode !== 'preliminar') {
                 const refTheory = document.getElementById('smart-ref-theory');
-                if (refTheory) {
-                    refTheory.value = selectedMode === 'rigorous' ? 'post-hf' : 'dft';
-                    updateSmartRefMethod();
-                }
+                if (refTheory) { refTheory.value = 'dft'; updateSmartRefMethod(); }
+                const refMethod = document.getElementById('smart-ref-method');
+                if (refMethod) refMethod.value = 'B3LYP';
+                const refBasis = document.getElementById('smart-ref-basis');
+                if (refBasis) refBasis.value = '6-31G*';
+                const refJob = document.getElementById('smart-ref-job');
+                if (refJob) refJob.value = 'Opt Freq';
             }
 
+            // --- Energy Refinement: DLPNO ---
             if (selectedMode === 'complete') {
                 const erefTheory = document.getElementById('smart-eref-theory');
-                if (erefTheory) {
-                    erefTheory.value = 'post-hf';
-                    updateSmartEnergyRefMethod();
-                }
+                if (erefTheory) { erefTheory.value = 'post-hf'; updateSmartEnergyRefMethod(); }
             }
 
             updateSamplingPresetUI();
@@ -6754,7 +6787,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             const theory = document.getElementById('smart-opt-theory').value;
             const methodSelect = document.getElementById('smart-opt-method');
             const basisSelect = document.getElementById('smart-opt-basis');
-            const methods = methodsByTheory[theory] || methodsByTheory['native-gfn'];
+            const methods = methodsByTheory[theory] || methodsByTheory.semiempirical;
 
             const defaultMethod = theory === 'dft' ? 'B3LYP' : methods[0];
             methodSelect.innerHTML = methods.map((m) =>
@@ -6867,7 +6900,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
         // Update optimization preview
         function updateSmartOptPreview() {
             const method = document.getElementById('smart-opt-method').value;
-            const theory = document.getElementById('smart-opt-theory')?.value || 'native-gfn';
+            const theory = document.getElementById('smart-opt-theory')?.value || 'xtb';
             const basis = getSelectOrCustomValue('smart-opt-basis', 'smart-opt-basis-custom');
             const job = document.getElementById('smart-opt-job')?.value || 'Opt NumFreq';
             const nprocs = document.getElementById('smart-opt-nprocs').value;
@@ -7073,8 +7106,7 @@ end
             const sameCOSMIC = document.getElementById('smart-sim-same')?.checked !== false;
             const simThreshold = document.getElementById('smart-sim-th')?.value || '2';
             const sim2Threshold = sameCOSMIC ? simThreshold : (document.getElementById('smart-sim2-th')?.value || simThreshold);
-            // annealingMethod already has Native- prefix when native-gfn family is selected
-            const displayAnnealing = annealingMethod;
+            const displayAnnealing = formatAnnealingDisplayMethod(annealingMethod);
 
             // Update pipeline display
             const pipeAnnealing = document.getElementById('smart-pipe-annealing');
@@ -7115,30 +7147,18 @@ end
             const pipeErefArrow = document.getElementById('smart-pipe-eref-arrow');
             const pipeErefStep = document.getElementById('smart-pipe-eref-step');
             const pipeEref = document.getElementById('smart-pipe-eref');
-            const pipeSim3Arrow = document.getElementById('smart-pipe-sim3-arrow');
-            const pipeSim3Step = document.getElementById('smart-pipe-sim3-step');
-            const pipeSim3 = document.getElementById('smart-pipe-sim3');
             // Show/hide energy refinement steps — restore CSS display, don't force inline-block
             if (pipeErefArrow) pipeErefArrow.style.display = erefEnabled ? '' : 'none';
             if (pipeErefStep) pipeErefStep.style.display = erefEnabled ? '' : 'none';
             if (pipeEref) pipeEref.textContent = erefMethod;
-            if (pipeSim3Arrow) pipeSim3Arrow.style.display = erefEnabled ? '' : 'none';
-            if (pipeSim3Step) pipeSim3Step.style.display = erefEnabled ? '' : 'none';
-            if (pipeSim3) pipeSim3.textContent = `th=${sim2Threshold}`;
 
             // Sync advanced pipeline too
             const advPipeErefArrow = document.getElementById('adv-pipe-eref-arrow');
             const advPipeErefStep = document.getElementById('adv-pipe-eref-step');
             const advPipeEref = document.getElementById('adv-pipe-eref');
-            const advPipeSim3Arrow = document.getElementById('adv-pipe-sim3-arrow');
-            const advPipeSim3Step = document.getElementById('adv-pipe-sim3-step');
-            const advPipeSim3 = document.getElementById('adv-pipe-sim3');
             if (advPipeErefArrow) advPipeErefArrow.style.display = erefEnabled ? '' : 'none';
             if (advPipeErefStep) advPipeErefStep.style.display = erefEnabled ? '' : 'none';
             if (advPipeEref) advPipeEref.textContent = erefMethod;
-            if (advPipeSim3Arrow) advPipeSim3Arrow.style.display = erefEnabled ? '' : 'none';
-            if (advPipeSim3Step) advPipeSim3Step.style.display = erefEnabled ? '' : 'none';
-            if (advPipeSim3) advPipeSim3.textContent = `th=${sim2Threshold}`;
 
             updateSamplingPresetUI();
 
@@ -7307,12 +7327,11 @@ end
                 if (advOptTheory) {
                     const optTheoryMap = {
                         semiempirical: 'semiempirical',
-                        'native-gfn': 'native-gfn',
-                        gfn: 'gfn',
+                        xtb: 'xtb',
                         dft: 'dft',
                         'post-hf': 'post-hf'
                     };
-                    advOptTheory.value = optTheoryMap[optTheory] || 'native-gfn';
+                    advOptTheory.value = optTheoryMap[optTheory] || 'xtb';
                     updateAdvOptMethod();
                 }
             }
@@ -7391,7 +7410,6 @@ end
                 if (advRefTheory) {
                     const refTheoryMap = {
                         semiempirical: 'semiempirical',
-                        'native-gfn': 'native-gfn',
                         gfn: 'gfn',
                         dft: 'dft',
                         'post-hf': 'post-hf'
@@ -7695,12 +7713,11 @@ end
                 if (smartOptTheory) {
                     const optTheoryMap = {
                         semiempirical: 'semiempirical',
-                        'native-gfn': 'native-gfn',
                         gfn: 'gfn',
                         dft: 'dft',
                         'post-hf': 'post-hf'
                     };
-                    smartOptTheory.value = optTheoryMap[optTheory] || 'native-gfn';
+                    smartOptTheory.value = optTheoryMap[optTheory] || 'xtb';
                     updateSmartOptMethod();
                 }
             }
@@ -7776,7 +7793,6 @@ end
                 if (smartRefTheory) {
                     const refTheoryMap = {
                         semiempirical: 'semiempirical',
-                        'native-gfn': 'native-gfn',
                         gfn: 'gfn',
                         dft: 'dft',
                         'post-hf': 'post-hf'
@@ -8013,7 +8029,7 @@ end
         function updateAdvOptMethod() {
             const theory = document.getElementById('adv-opt-theory').value;
             const methodSelect = document.getElementById('adv-opt-method');
-            const methods = methodsByTheory[theory] || methodsByTheory['native-gfn'];
+            const methods = methodsByTheory[theory] || methodsByTheory.semiempirical;
             const basisSelect = document.getElementById('adv-opt-basis');
 
             const defaultMethod = theory === 'dft' ? 'B3LYP' : methods[0];
@@ -8194,26 +8210,19 @@ end
             const method = String(rawMethod || '').trim();
             if (!method) return 'HF-3c';
             if (method.includes('GFN') || method.includes('xTB') || method.includes('FF')) {
-                const noNative = method.replace(/^(Native-)+/, '');
-                return method.startsWith('Native-') ? `Native-${noNative}` : noNative;
+                return method.replace(/^(Native-)+/, '');
             }
             return 'HF-3c';
         }
 
         function getSuggestedAdvancedOptRescue() {
-            const theory = document.getElementById('adv-opt-theory')?.value || 'native-gfn';
+            const theory = document.getElementById('adv-opt-theory')?.value || 'xtb';
             const method = getMethodValue('adv-opt');
             const normalized = sanitizeRescueMethodForFallback(method);
             const noNative = normalized.replace(/^(Native-)+/, '');
-            const isXtbFamily = theory === 'native-gfn' || theory === 'gfn' || normalized.includes('GFN') || normalized.includes('xTB') || normalized.includes('FF');
-            if (theory === 'native-gfn' && (noNative.includes('GFN') || noNative.includes('xTB') || noNative.includes('FF'))) {
-                return { method: `Native-${noNative}`, hess: 'num' };
-            }
-            if (theory === 'gfn' && (noNative.includes('GFN') || noNative.includes('xTB') || noNative.includes('FF'))) {
-                return { method: noNative, hess: 'num' };
-            }
+            const isXtbFamily = theory === 'gfn' || theory === 'xtb' || normalized.includes('GFN') || normalized.includes('xTB') || normalized.includes('FF');
             if (isXtbFamily) {
-                return { method: normalized, hess: 'num' };
+                return { method: noNative, hess: 'num' };
             }
             return { method: 'HF-3c', hess: 'freq' };
         }
@@ -8253,10 +8262,8 @@ end
             const method = getMethodValue('adv-ref');
             const normalized = sanitizeRescueMethodForFallback(method);
             const noNative = normalized.replace(/^(Native-)+/, '');
-            if (theory === 'native-gfn' && (noNative.includes('GFN') || noNative.includes('xTB') || noNative.includes('FF'))) {
-                return { method: `Native-${noNative}`, hess: 'num' };
-            }
-            if (theory === 'gfn' && (noNative.includes('GFN') || noNative.includes('xTB') || noNative.includes('FF'))) {
+            const isXtbFamily = theory === 'gfn' || theory === 'xtb' || normalized.includes('GFN') || normalized.includes('xTB') || normalized.includes('FF');
+            if (isXtbFamily) {
                 return { method: noNative, hess: 'num' };
             }
             return { method: 'HF-3c', hess: 'freq' };
@@ -8405,6 +8412,7 @@ end
         function updateAdvOrcaInput1() {
             applyAdvancedOptRescueDefaults();
 
+            const theory = document.getElementById('adv-opt-theory')?.value || 'xtb';
             const method = getMethodValue('adv-opt');
             const basis = getAdvancedOptBasisValue();
             const job = document.getElementById('adv-opt-job')?.value || 'Opt NumFreq';
@@ -8421,12 +8429,29 @@ end
                 rescueHess = (rescueMethod.includes('GFN') || rescueMethod.includes('xTB') || rescueMethod.includes('FF')) ? 'num' : 'freq';
             }
 
-            const formattedMethod = formatOrcaMethodLine(method);
+            const standaloneXtb = isStandaloneXtbTheory(theory);
+
+            if (standaloneXtb) {
+                const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
+                const xtbRescue = String(rescueMethod || xtbMethod).replace(/^(Native-)+/, '');
+                // xTB has analytical Hessian, so default to freq
+                const xtbRescueHess = (rescueHess === 'num') ? 'num' : 'freq';
+                const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? 'Opt Freq' : 'Opt';
+                const input = `#name
+#rescue(${xtbRescue}/${xtbRescueHess})
+# ${xtbMethod} ${xtbJob}`;
+                const textarea = document.getElementById('orca-input1');
+                if (textarea) textarea.value = input;
+                return;
+            }
+
+            const formattedMethod = formatTemplateMethodLine(method);
             const methodLine = basis ? `${formattedMethod} ${basis}` : formattedMethod;
+            const rescueDisplayMethod = formatTemplateMethodLine(rescueMethod);
             const maxcoreLine = maxcore ? `%maxcore ${maxcore}\n` : '';
 
                         const input = `#name
-#rescue(${rescueMethod}/${rescueHess})
+#rescue(${rescueDisplayMethod}/${rescueHess})
 ! ${methodLine}
 ! ${job}
 %pal
@@ -8448,6 +8473,7 @@ end
             if (!_refEnabled) { const t = document.getElementById('orca-input2'); if (t) t.value = ''; return; }
                         applyAdvancedRefRescueDefaults();
 
+                        const theory = document.getElementById('adv-ref-theory')?.value || 'dft';
                         const method = getMethodValue('adv-ref');
                         const basis = getAdvancedRefBasisValue();
             const job = document.getElementById('adv-ref-job')?.value || 'Opt Freq';
@@ -8464,12 +8490,28 @@ end
                                 rescueHess = (rescueMethod.includes('GFN') || rescueMethod.includes('xTB') || rescueMethod.includes('FF')) ? 'num' : 'freq';
                         }
 
-                        const formattedMethod = formatOrcaMethodLine(method);
+                        const standaloneXtb = isStandaloneXtbTheory(theory);
+
+                        if (standaloneXtb) {
+                            const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
+                            const xtbRescue = String(rescueMethod || xtbMethod).replace(/^(Native-)+/, '');
+                            const xtbRescueHess = (rescueHess === 'num') ? 'num' : 'freq';
+                            const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? 'Opt Freq' : 'Opt';
+                            const input = `#name
+#rescue(${xtbRescue}/${xtbRescueHess})
+# ${xtbMethod} ${xtbJob}`;
+                            const textarea = document.getElementById('orca-input2');
+                            if (textarea) textarea.value = input;
+                            return;
+                        }
+
+                        const formattedMethod = formatTemplateMethodLine(method);
                         const methodLine = basis ? `${formattedMethod} ${basis}` : formattedMethod;
+                        const rescueDisplayMethod = formatTemplateMethodLine(rescueMethod);
                         const maxcoreLine = maxcore ? `%maxcore ${maxcore}\n` : '';
 
                         const input = `#name
-#rescue(${rescueMethod}/${rescueHess})
+#rescue(${rescueDisplayMethod}/${rescueHess})
 ! ${methodLine}
 ! ${job}
 %pal
@@ -8498,7 +8540,7 @@ end
             const pipeRef = document.getElementById('pipe-ref-theory');
             const pipeSim2 = document.getElementById('pipe-sim2-theory');
 
-            if (pipeAnnealing) pipeAnnealing.textContent = annealingMethod.replace('-xTB', '').replace('Native-', '');
+            if (pipeAnnealing) pipeAnnealing.textContent = formatAnnealingDisplayMethod(annealingMethod);
             if (pipeOpt) pipeOpt.textContent = optMethod.replace('-xTB', '').replace('Native-', '');
             if (pipeSim1) pipeSim1.textContent = `th=${sim1Th}`;
             if (pipeRef) pipeRef.textContent = refMethod;
@@ -8693,6 +8735,7 @@ end
         }
 
         function updateOrcaInput1() {
+            const theory = document.getElementById('opt1-theory')?.value || 'xtb';
             const method = document.getElementById('opt1-method')?.value || 'GFN2-xTB';
             const job = document.getElementById('opt1-job')?.value || 'Opt NumFreq';
             const maxiter = document.getElementById('opt1-maxiter')?.value || '100';
@@ -8701,7 +8744,16 @@ end
             const charge = document.getElementById('basic-charge')?.value || '0';
             const mult = document.getElementById('basic-multiplicity')?.value || '1';
 
-            const methodLine = formatOrcaMethodLine(method);
+            if (isStandaloneXtbTheory(theory)) {
+                const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
+                const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? 'Opt Freq' : 'Opt';
+                const input = `#name
+# ${xtbMethod} ${xtbJob}`;
+                document.getElementById('orca-input1').value = input;
+                return;
+            }
+
+            const methodLine = formatTemplateMethodLine(method);
 
             const input = `! ${methodLine} 
 ! ${job}
@@ -8720,6 +8772,7 @@ end
         }
 
         function updateOrcaInput2() {
+            const theory = document.getElementById('opt2-theory')?.value || 'dft';
             const method = document.getElementById('opt2-method')?.value || 'B97-3c';
             const job = document.getElementById('opt2-job')?.value || 'Opt Freq';
             const maxiter = document.getElementById('opt2-maxiter')?.value || '50';
@@ -8727,6 +8780,15 @@ end
             const memory = document.getElementById('annealing-memory')?.value || '2500';
             const charge = document.getElementById('basic-charge')?.value || '0';
             const mult = document.getElementById('basic-multiplicity')?.value || '1';
+
+            if (isStandaloneXtbTheory(theory)) {
+                const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
+                const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? 'Opt Freq' : 'Opt';
+                const input = `#name
+# ${xtbMethod} ${xtbJob}`;
+                document.getElementById('orca-input2').value = input;
+                return;
+            }
 
             const input = `! ${method}
 ! ${job}
@@ -9562,6 +9624,8 @@ H   1.981282  0.134064  0.000000`;
                 cmdInput.value = 'orca';
             } else if (program === '1') {
                 cmdInput.value = 'g09';
+            } else if (program === '3') {
+                cmdInput.value = 'xtb';
             } else if (!cmdInput.value.trim()) {
                 cmdInput.value = 'other';
             }
@@ -9606,7 +9670,7 @@ H   1.981282  0.134064  0.000000`;
             // Map QM Program value to alias and format
             const qmProgramVal = document.getElementById('qm-program')?.value || '2';
             const qmAlias = (document.getElementById('qm-command')?.value || '').trim() ||
-                (qmProgramVal === '1' ? 'g09' : (qmProgramVal === '2' ? 'orca' : 'other'));
+                (qmProgramVal === '1' ? 'g09' : (qmProgramVal === '2' ? 'orca' : 'xtb'));
             
             const qmMethod = getMethodValue('adv-annealing');
             const qmBasis = getAnnealingBasisValue();
@@ -9667,7 +9731,7 @@ H   1.981282  0.134064  0.000000`;
             );
             content += `              # & Maximum dihedral rotation (degrees)\n\n`;
             content += formatLineWithComment(`${qmProgramVal} ${qmAlias}`, '# Line 9: QM Program Index & alias');
-            content += `              # (1: Program1, 2: ORCA, 3: Other)\n\n`;
+            content += `              # (1: Gaussian, 2: ORCA, 3: xTB)\n\n`;
 
             const methodLine = qmBasis ? `${qmMethod} ${qmBasis}` : qmMethod;
             content += formatLineWithComment(methodLine, '# Line 10: Hamiltonian & Basis Set');
@@ -9730,11 +9794,13 @@ H   1.981282  0.134064  0.000000`;
             // Add ORCA inputs
             const refIsEnabled = document.getElementById('smart-ref-enabled')?.checked !== false
                 || document.getElementById('adv-ref-enabled')?.checked !== false;
+            const optTemplateHeader = isStandaloneXtbTheory(document.getElementById('adv-opt-theory')?.value || '') ? 'xtb' : 'orca';
+            const refTemplateHeader = isStandaloneXtbTheory(document.getElementById('adv-ref-theory')?.value || '') ? 'xtb' : 'orca';
             const orcaInput1 = document.getElementById('orca-input1')?.value || '';
             const orcaInput2 = refIsEnabled ? (document.getElementById('orca-input2')?.value || '') : '';
 
             if (orcaInput1) {
-                content += `\n#orca input1\n`;
+                content += `\n#${optTemplateHeader} input1\n`;
                 const cleanedInput1 = orcaInput1.trimStart();
                 if (cleanedInput1.startsWith('#name')) {
                     content += orcaInput1 + '\n';
@@ -9745,7 +9811,7 @@ H   1.981282  0.134064  0.000000`;
             }
 
             if (orcaInput2) {
-                content += `\n#orca input2\n`;
+                content += `\n#${refTemplateHeader} input2\n`;
                 const cleanedInput2 = orcaInput2.trimStart();
                 if (cleanedInput2.startsWith('#name')) {
                     content += orcaInput2 + '\n';
