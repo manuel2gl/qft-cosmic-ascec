@@ -8958,7 +8958,7 @@ def create_summary_with_tracking(directory, file_types_override: Optional[List[s
                     xtb_files.append(filepath)
                 else:
                     orca_files.append(filepath)
-            elif filename.endswith(".log"):
+            elif filename.endswith(".log") and not filename.endswith(".xtbopt.log"):
                 gaussian_files.append(filepath)
 
     try:
@@ -11368,7 +11368,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 # Keep non-directory files that are summaries
                 if os.path.isfile(entry_path):
                     keep = (entry.startswith("combined_results") or
-                            entry == "orca_summary.txt" or
+                            entry in ("orca_summary.txt", "xtb_summary.txt", "gaussian_summary.txt") or
                             entry.startswith("launcher_") or
                             entry.endswith('.sh'))
                     if keep:
