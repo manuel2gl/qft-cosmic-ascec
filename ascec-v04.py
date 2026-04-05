@@ -14978,12 +14978,11 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             qm_alias=qm_alias,
         )
         # Check if calculate_input_files succeeded (returns string message)
-        # Successfully created files return: "Created optimization system in '...' with X input files..."
-        # Errors return: "Error: ..."
-        if isinstance(status, str) and status.startswith("Error"):
-            print(f"\n{status}") # Print the error message directly
-            return 1  # Return error code
-        # Don't print result message in workflow mode - output is already shown
+        # Successfully created files contain "Created" in the message
+        # All other returns are failures (Error:, No result_*.xyz, No XYZ files, etc.)
+        if isinstance(status, str) and "Created" not in status:
+            print(f"\n{status}")
+            return 1
         
         # Find the optimization directory that was just created (may be optimization, optimization_2, etc.)
         current_opt_dirs = set(d for d in os.listdir('.') if d.startswith('Geom Optimization') and os.path.isdir(d))
@@ -15358,7 +15357,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             return 1
             
     else:
-        print(f"Warning: Optimization directory not found")
+        print(f"Warning: Geom Optimization directory not found")
         return 1
     
     # Clean up retry_input folder if it exists
