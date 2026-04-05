@@ -8359,6 +8359,87 @@ def parse_orca_output(filepath):
         results['time'] = None
     return results
 
+def detect_output_file_type(filepath):
+    """Detect whether an output file is from ORCA, Gaussian, or xTB.
+
+    Returns:
+        'orca', 'gaussian', 'xtb', or None if not detected
+    """
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            for i, line in enumerate(f):
+                if i > 100:
+                    break
+                if 'O   R   C   A' in line:
+                    return 'orca'
+                if 'Gaussian' in line:
+                    return 'gaussian'
+                if 'x T B' in line or 'xtb version' in line.lower():
+                    return 'xtb'
+    except Exception:
+        pass
+    return None
+
+
+def parse_xtb_output(filepath):
+    """Parse an xTB output file to extract key information."""
+
+    results = {}
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+    except (FileNotFoundError, IOError, UnicodeDecodeError) as e:
+        print(f"Error reading file {filepath}: {e}")
+        return None
+
+    # Verify this is an xTB file
+    if 'x T B' not in content and 'xtb version' not in content.lower():
+        print(f"File {filepath} is not an xTB output file.")
+        return None
+
+    results['input_file'] = os.path.splitext(os.path.basename(filepath))[0]
+
+    # Extract total energy (last occurrence)
+    energy_matches = re.findall(r'TOTAL ENERGY\s+([-+]?\d+\.\d+)\s*Eh', content)
+    if energy_matches:
+        results['energy'] = float(energy_matches[-1])
+    else:
+        results['energy'] = None
+
+    # Check for optimization convergence
+    if 'optimized geometry written to' in content.lower() or 'GEOMETRY OPTIMIZATION CONVERGED' in content:
+        results['converged'] = True
+    elif 'FAILED TO CONVERGE' in content:
+        results['converged'] = False
+    else:
+        results['converged'] = None
+
+    # Extract optimization cycles
+    cycle_matches = re.findall(r'^\s*\.\.\.\.\.\. (?:value|geom)\s.*$', content, re.MULTILINE)
+    if cycle_matches:
+        results['cycles'] = len(cycle_matches)
+    else:
+        # Try ANC optimizer step count
+        step_matches = re.findall(r'^\s*\d+\s+[-+]?\d+\.\d+', content, re.MULTILINE)
+        results['cycles'] = None
+
+    # Extract wall time
+    time_match = re.search(
+        r'total:\s*\n\s*\*\s*wall-time:\s*(\d+)\s*d,\s*(\d+)\s*h,\s*(\d+)\s*min,\s*([\d.]+)\s*sec',
+        content
+    )
+    if time_match:
+        days = int(time_match.group(1))
+        hours = int(time_match.group(2))
+        minutes = int(time_match.group(3))
+        seconds = float(time_match.group(4))
+        results['time'] = (days * 86400) + (hours * 3600) + (minutes * 60) + seconds
+    else:
+        results['time'] = None
+
+    return results
+
+
 def format_time_summary(seconds, include_days=False):
     """Format time for summary output."""
     if include_days:
@@ -8440,15 +8521,15 @@ def format_wall_time(seconds):
     return ", ".join(time_parts[:2])
 
 def summarize_calculations(directory=".", file_types=None, actual_wall_time=None):
-    """Create summary of calculations for ORCA (.out) and/or Gaussian (.log) files."""
+    """Create summary of calculations for ORCA (.out), Gaussian (.log), and/or xTB (.out) files."""
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor, as_completed
-    
+
     if file_types is None:
         file_types = ['orca', 'gaussian']  # Default: process both types
-    
+
     results_by_type = {}
-    
+
     # Process each requested file type
     for file_type in file_types:
         if file_type == 'orca':
@@ -8456,9 +8537,13 @@ def summarize_calculations(directory=".", file_types=None, actual_wall_time=None
             file_extension = ".out"
             parse_function = parse_orca_output
         elif file_type == 'gaussian':
-            summary_file = "gaussian_summary.txt" 
+            summary_file = "gaussian_summary.txt"
             file_extension = ".log"
             parse_function = parse_gaussian_output
+        elif file_type == 'xtb':
+            summary_file = "xtb_summary.txt"
+            file_extension = ".out"
+            parse_function = parse_xtb_output
         else:
             continue
         
@@ -8483,7 +8568,15 @@ def summarize_calculations(directory=".", file_types=None, actual_wall_time=None
                     # Skip rescue files - they are intermediate files from redo workflow
                     if '_rescue' in filename:
                         continue
-                    found_files.append(os.path.join(root, filename))
+                    filepath = os.path.join(root, filename)
+                    # For .out files, disambiguate ORCA vs xTB by content
+                    if file_extension == '.out':
+                        detected = detect_output_file_type(filepath)
+                        if file_type == 'xtb' and detected != 'xtb':
+                            continue
+                        if file_type == 'orca' and detected == 'xtb':
+                            continue
+                    found_files.append(filepath)
         
         if not found_files:
             continue  # Skip this type if no files found
@@ -8559,10 +8652,10 @@ def summarize_calculations(directory=".", file_types=None, actual_wall_time=None
             # Write individual job details
             job_index = 1
             for result in job_summaries:
-                if file_type == 'orca':
-                    outfile.write(f"=> {job_index}. {result['input_file']}.out\n")
-                else:  # gaussian
+                if file_type == 'gaussian':
                     outfile.write(f"=> {job_index}. {result['input_file']}.log\n")
+                else:  # orca or xtb
+                    outfile.write(f"=> {job_index}. {result['input_file']}.out\n")
                 job_index += 1
                 # Write in specific order: energy, cycles, time
                 if 'energy' in result and result['energy'] is not None:
@@ -8652,19 +8745,33 @@ def collect_out_files():
     num_files = len(all_out_files)
     
     # Detect file types to name folder appropriately
-    has_orca = any(f.endswith('.out') for f in all_out_files)
+    out_files = [f for f in all_out_files if f.endswith('.out')]
     has_gaussian = any(f.endswith('.log') for f in all_out_files)
-    
-    if has_orca and has_gaussian:
+    # Check if .out files are actually xTB (sample first file)
+    has_xtb = False
+    has_orca = False
+    for f in out_files:
+        detected = detect_output_file_type(f)
+        if detected == 'xtb':
+            has_xtb = True
+        else:
+            has_orca = True
+        if has_xtb and has_orca:
+            break
+
+    if sum([has_orca, has_gaussian, has_xtb]) > 1:
         base_destination_folder_name = f"calc_out_{num_files}"
-        file_type_desc = "output files (ORCA and Gaussian)"
+        file_type_desc = "output files (mixed)"
     elif has_gaussian:
         base_destination_folder_name = f"gaussian_out_{num_files}"
         file_type_desc = "Gaussian files"
+    elif has_xtb:
+        base_destination_folder_name = f"xtb_out_{num_files}"
+        file_type_desc = "xTB files"
     else:
         base_destination_folder_name = f"orca_out_{num_files}"
         file_type_desc = "ORCA files"
-    
+
     # Create cosmic directory at parent level
     parent_directory = os.path.dirname(current_directory)
     cosmic_path = os.path.join(parent_directory, "cosmic")
@@ -8833,29 +8940,40 @@ def group_files_by_base_with_tracking(directory='.'):
 def create_summary_with_tracking(directory, file_types_override: Optional[List[str]] = None, actual_wall_time=None):
     """Create summaries and return list of created files."""
     created_files = []
-    
-    # Check for ORCA files (.out) and Gaussian files (.log)
+
+    # Classify .out files by actual content (ORCA vs xTB) and collect .log files
     orca_files = []
+    xtb_files = []
     gaussian_files = []
-    
+
     for root, _, files in os.walk(directory):
         for filename in files:
+            filepath = os.path.join(root, filename)
             if filename.endswith(".out"):
-                orca_files.append(os.path.join(root, filename))
+                # Skip rescue files
+                if '_rescue' in filename:
+                    continue
+                detected = detect_output_file_type(filepath)
+                if detected == 'xtb':
+                    xtb_files.append(filepath)
+                else:
+                    orca_files.append(filepath)
             elif filename.endswith(".log"):
-                gaussian_files.append(os.path.join(root, filename))
-    
+                gaussian_files.append(filepath)
+
     try:
         # Determine which file types to process
         if file_types_override is not None:
-            file_types_to_process = [ft for ft in file_types_override if ft in ('orca', 'gaussian')]
+            file_types_to_process = [ft for ft in file_types_override if ft in ('orca', 'gaussian', 'xtb')]
         else:
             file_types_to_process = []
             if orca_files:
                 file_types_to_process.append('orca')
+            if xtb_files:
+                file_types_to_process.append('xtb')
             if gaussian_files:
                 file_types_to_process.append('gaussian')
-        
+
         # Create summaries for found file types
         if file_types_to_process:
             num_summaries = summarize_calculations(directory, file_types_to_process, actual_wall_time=actual_wall_time)
@@ -8863,6 +8981,8 @@ def create_summary_with_tracking(directory, file_types_override: Optional[List[s
             # Check which summary files were created
             if 'orca' in file_types_to_process and os.path.exists("orca_summary.txt"):
                 created_files.append("orca_summary.txt")
+            if 'xtb' in file_types_to_process and os.path.exists("xtb_summary.txt"):
+                created_files.append("xtb_summary.txt")
             if 'gaussian' in file_types_to_process and os.path.exists("gaussian_summary.txt"):
                 created_files.append("gaussian_summary.txt")
     except Exception:
@@ -8883,6 +9003,7 @@ def collect_out_files_with_tracking(reuse_existing=False, target_cosmic_folder=N
             f.endswith('.out.backup') or
             f.endswith('.log.backup') or
             'orca_summary' in os.path.basename(f).lower() or
+            'xtb_summary' in os.path.basename(f).lower() or
             'gaussian_summary' in os.path.basename(f).lower() or
             '.scfhess.' in os.path.basename(f) or
             '.scfgrad.' in os.path.basename(f) or
@@ -8896,16 +9017,28 @@ def collect_out_files_with_tracking(reuse_existing=False, target_cosmic_folder=N
         num_files = len(all_out_files)
         
         # Detect file types to name folder appropriately
-        has_orca = any(f.endswith('.out') for f in all_out_files)
+        out_files = [f for f in all_out_files if f.endswith('.out')]
         has_gaussian = any(f.endswith('.log') for f in all_out_files)
-        
-        if has_orca and has_gaussian:
+        has_xtb = False
+        has_orca = False
+        for f in out_files:
+            detected = detect_output_file_type(f)
+            if detected == 'xtb':
+                has_xtb = True
+            else:
+                has_orca = True
+            if has_xtb and has_orca:
+                break
+
+        if sum([has_orca, has_gaussian, has_xtb]) > 1:
             base_destination_folder_name = f"calc_out_{num_files}"
         elif has_gaussian:
             base_destination_folder_name = f"gaussian_out_{num_files}"
+        elif has_xtb:
+            base_destination_folder_name = f"xtb_out_{num_files}"
         else:
             base_destination_folder_name = f"orca_out_{num_files}"
-        
+
         # Create cosmic folder with incremental numbering at parent level
         parent_directory = os.path.dirname(current_directory)
         
@@ -9021,10 +9154,12 @@ def collect_out_files_with_tracking(reuse_existing=False, target_cosmic_folder=N
         # Get just the folder name for display (without full path)
         cosmic_folder_name = os.path.basename(cosmic_dir)
         file_type_desc = "output files"
-        if has_orca and has_gaussian:
-            file_type_desc = "ORCA and Gaussian files"
+        if sum([has_orca, has_gaussian, has_xtb]) > 1:
+            file_type_desc = "output files (mixed)"
         elif has_gaussian:
             file_type_desc = "Gaussian files"
+        elif has_xtb:
+            file_type_desc = "xTB files"
         else:
             file_type_desc = "ORCA files"
         print(f"Copied {num_files} {file_type_desc} to {cosmic_folder_name}/{destination_folder_name}")
@@ -9107,40 +9242,52 @@ def execute_summary_only():
     print("ASCEC Summary Creation")
     print("=" * 50)
     
-    # Check for ORCA files (.out) and Gaussian files (.log)
+    # Check for ORCA files (.out), xTB files (.out), and Gaussian files (.log)
     orca_files = []
+    xtb_files = []
     gaussian_files = []
-    
+
     for root, _, files in os.walk("."):
         for filename in files:
             if filename.endswith(".out"):
-                orca_files.append(os.path.join(root, filename))
+                filepath = os.path.join(root, filename)
+                detected = detect_output_file_type(filepath)
+                if detected == 'xtb':
+                    xtb_files.append(filepath)
+                else:
+                    orca_files.append(filepath)
             elif filename.endswith(".log"):
                 gaussian_files.append(os.path.join(root, filename))
-    
+
     created_summaries = []
     file_types_to_process = []
-    
+
     if orca_files:
         print(f"\nFound {len(orca_files)} ORCA output files.")
         file_types_to_process.append('orca')
-        
+
+    if xtb_files:
+        print(f"\nFound {len(xtb_files)} xTB output files.")
+        file_types_to_process.append('xtb')
+
     if gaussian_files:
         print(f"\nFound {len(gaussian_files)} Gaussian output files.")
         file_types_to_process.append('gaussian')
-    
-    if not orca_files and not gaussian_files:
-        print("\nNo ORCA (.out) or Gaussian (.log) output files found in the current directory or its subfolders.")
+
+    if not orca_files and not xtb_files and not gaussian_files:
+        print("\nNo ORCA (.out), xTB (.out), or Gaussian (.log) output files found in the current directory or its subfolders.")
         return
-        
+
     # Create summaries for found file types
     if file_types_to_process:
         print("Creating summaries...")
         num_summaries = summarize_calculations(".", file_types_to_process)
-        
+
         # Check which summary files were created
         if 'orca' in file_types_to_process and os.path.exists("orca_summary.txt"):
             created_summaries.append("orca_summary.txt")
+        if 'xtb' in file_types_to_process and os.path.exists("xtb_summary.txt"):
+            created_summaries.append("xtb_summary.txt")
         if 'gaussian' in file_types_to_process and os.path.exists("gaussian_summary.txt"):
             created_summaries.append("gaussian_summary.txt")
     
@@ -11331,7 +11478,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         for candidate in cosmic_candidates:
             candidate_dir = candidate
             base_name = os.path.basename(candidate_dir)
-            if base_name.startswith('orca_out_') or base_name.startswith('gaussian_out_') or base_name.startswith('opt_out_'):
+            if base_name.startswith('orca_out_') or base_name.startswith('gaussian_out_') or base_name.startswith('opt_out_') or base_name.startswith('calc_out_') or base_name.startswith('xtb_out_'):
                 candidate_dir = os.path.dirname(candidate_dir)
 
             abs_candidate = os.path.abspath(candidate_dir)
@@ -15365,7 +15512,7 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
     # Verify output subfolder exists and count input structures.
     out_candidates = []
     for item in sorted(os.listdir(cosmic_base)):
-        if item.startswith("orca_out_") or item.startswith("opt_out_") or item.startswith("gaussian_out_"):
+        if item.startswith("orca_out_") or item.startswith("opt_out_") or item.startswith("gaussian_out_") or item.startswith("calc_out_") or item.startswith("xtb_out_"):
             out_candidates.append(item)
 
     out_folder_found = len(out_candidates) > 0
@@ -15386,7 +15533,7 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
         )
     
     if not out_folder_found:
-        print(f"Warning: No orca_out_*, gaussian_out_*, or opt_out_* folder found in {cosmic_base}/")
+        print(f"Warning: No orca_out_*, gaussian_out_*, calc_out_*, xtb_out_*, or opt_out_* folder found in {cosmic_base}/")
         if getattr(context, 'is_workflow', False):
             return 1
         return 0
