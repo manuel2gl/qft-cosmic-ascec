@@ -5589,7 +5589,8 @@ MORE INFORMATION:
             selected_folders = [args.input_source]
             
             # Auto-detect file extension
-            has_log = bool(glob.glob(os.path.join(args.input_source, "*.log")))
+            log_files_input = [f for f in glob.glob(os.path.join(args.input_source, "*.log")) if not f.endswith('.xtbopt.log')]
+            has_log = bool(log_files_input)
             has_out = bool(glob.glob(os.path.join(args.input_source, "*.out")))
             
             if has_out:
@@ -5608,7 +5609,9 @@ MORE INFORMATION:
             folders_with_out_files = []
 
             for folder in all_potential_folders:
-                has_log = bool(glob.glob(os.path.join(folder, "*.log")))
+                # Exclude xTB trajectory files (*.xtbopt.log) — not calculation outputs
+                log_files = [f for f in glob.glob(os.path.join(folder, "*.log")) if not f.endswith('.xtbopt.log')]
+                has_log = bool(log_files)
                 has_out = bool(glob.glob(os.path.join(folder, "*.out")))
                 
                 if has_log:
