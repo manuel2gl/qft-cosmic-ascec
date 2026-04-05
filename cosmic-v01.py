@@ -683,7 +683,7 @@ def detect_file_type(logfile_path):
         logfile_path: Path to output file (.out or .log)
         
     Returns:
-        'orca', 'gaussian', or None if not detected
+        'orca', 'gaussian', 'xtb', or None if not detected
     """
     try:
         with open(logfile_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -695,6 +695,8 @@ def detect_file_type(logfile_path):
                     return 'orca'
                 if 'Gaussian' in line:
                     return 'gaussian'
+                if 'xtb version' in line.lower() or 'normal termination of xtb' in line.lower():
+                    return 'xtb'
     except Exception:
         pass
     return None
@@ -735,10 +737,14 @@ def choose_parser(logfile_path):
         logfile_path: Path to ORCA or Gaussian output file
         
     Returns:
-        'opi' or 'cclib', or raises error if no suitable parser
+        'opi', 'cclib', or 'xtb', or raises error if no suitable parser
     """
     # First, detect the file type (ORCA or Gaussian)
     file_type = detect_file_type(logfile_path)
+
+    # Standalone xTB output parsing does not depend on cclib/OPI.
+    if file_type == 'xtb':
+        return 'xtb'
     
     # For Gaussian files, always use cclib (OPI only supports ORCA)
     if file_type == 'gaussian':
@@ -826,10 +832,6 @@ def extract_properties_from_logfile(logfile_path):
     Returns:
         dict: Extracted properties, or None if parsing fails
     """
-    if not CCLIB_AVAILABLE and not OPI_AVAILABLE:
-        print(f"  ERROR: Neither cclib nor OPI is installed. Please install one: pip install cclib OR pip install orca-pi")
-        return None
-    
     # Determine which parser to use
     try:
         parser_type = choose_parser(logfile_path)
@@ -840,8 +842,188 @@ def extract_properties_from_logfile(logfile_path):
     # Use the appropriate parser
     if parser_type == 'opi':
         return extract_properties_with_opi(logfile_path)
+    elif parser_type == 'xtb':
+        return extract_properties_with_xtb(logfile_path)
     else:
         return extract_properties_with_cclib(logfile_path)
+
+
+def extract_properties_with_xtb(logfile_path):
+    """Extract properties from standalone xTB text outputs."""
+    extracted_props = {
+        'filename': os.path.basename(logfile_path),
+        'method': "GFN2-xTB",
+        'functional': "GFN2-xTB",
+        'basis_set': "N/A",
+        'charge': None,
+        'multiplicity': None,
+        'num_atoms': 0,
+        'final_geometry_atomnos': None,
+        'final_geometry_coords': None,
+        'final_electronic_energy': None,
+        'gibbs_free_energy': None,
+        'homo_energy': None,
+        'lumo_energy': None,
+        'homo_lumo_gap': None,
+        'dipole_moment': None,
+        'rotational_constants': None,
+        'radius_of_gyration': None,
+        'num_imaginary_freqs': None,
+        'first_vib_freq': None,
+        'last_vib_freq': None,
+        'num_hydrogen_bonds': 0,
+        'hbond_details': [],
+        'average_hbond_distance': None,
+        'min_hbond_distance': None,
+        'max_hbond_distance': None,
+        'std_hbond_distance': None,
+        'average_hbond_angle': None,
+        'min_hbond_angle': None,
+        'max_hbond_angle': None,
+        'std_hbond_angle': None,
+        '_has_freq_calc': False,
+        '_initial_cluster_label': None,
+        '_parent_global_cluster_id': None,
+        '_first_rmsd_context_listing': None,
+        '_second_rmsd_sub_cluster_id': None,
+        '_second_rmsd_context_listing': None,
+        '_second_rmsd_rep_filename': None,
+        '_rmsd_pass_origin': None
+    }
+
+    try:
+        with open(logfile_path, 'r', encoding='utf-8', errors='ignore') as f_log:
+            content = f_log.read()
+        lines = content.splitlines()
+
+        upper_content = content.upper()
+        if 'GFN-FF' in upper_content or 'GFNFF' in upper_content:
+            extracted_props['method'] = 'GFN-FF'
+            extracted_props['functional'] = 'GFN-FF'
+        elif 'GFN0' in upper_content:
+            extracted_props['method'] = 'GFN0-xTB'
+            extracted_props['functional'] = 'GFN0-xTB'
+        elif 'GFN1' in upper_content:
+            extracted_props['method'] = 'GFN1-xTB'
+            extracted_props['functional'] = 'GFN1-xTB'
+
+        charge_match = re.search(r'\bcharge\b\s*[:=]\s*(-?\d+)', content, re.IGNORECASE)
+        if charge_match:
+            extracted_props['charge'] = int(charge_match.group(1))
+
+        mult_match = re.search(r'\bmultiplicity\b\s*[:=]\s*(\d+)', content, re.IGNORECASE)
+        if mult_match:
+            extracted_props['multiplicity'] = int(mult_match.group(1))
+
+        # Prefer the last TOTAL ENERGY in Eh units.
+        energy_matches = re.findall(r'TOTAL ENERGY\s+([-+]?\d+\.\d+)', content, re.IGNORECASE)
+        if energy_matches:
+            extracted_props['final_electronic_energy'] = float(energy_matches[-1])
+
+        gap_match = re.search(r'HOMO-?LUMO\s+GAP\s*[:=]?\s*([-+]?\d+\.\d+)', content, re.IGNORECASE)
+        if gap_match:
+            extracted_props['homo_lumo_gap'] = float(gap_match.group(1))
+
+        homo_match = re.search(r'\bHOMO\b\s*[:=]?\s*([-+]?\d+\.\d+)', content, re.IGNORECASE)
+        if homo_match:
+            extracted_props['homo_energy'] = float(homo_match.group(1))
+        lumo_match = re.search(r'\bLUMO\b\s*[:=]?\s*([-+]?\d+\.\d+)', content, re.IGNORECASE)
+        if lumo_match:
+            extracted_props['lumo_energy'] = float(lumo_match.group(1))
+
+        dipole_match = re.search(r'dipole[^\n]*norm[^\n]*[:=]\s*([-+]?\d+\.\d+)', content, re.IGNORECASE)
+        if dipole_match:
+            extracted_props['dipole_moment'] = float(dipole_match.group(1))
+
+        freq_matches = re.findall(r'([-+]?\d+\.\d+)\s*cm\^-?1', content, re.IGNORECASE)
+        if freq_matches:
+            freqs = [float(v) for v in freq_matches]
+            extracted_props['_has_freq_calc'] = True
+            imag = [v for v in freqs if v < 0.0]
+            real = [v for v in freqs if v > 0.0]
+            extracted_props['num_imaginary_freqs'] = len(imag)
+            if real:
+                extracted_props['first_vib_freq'] = min(real)
+                extracted_props['last_vib_freq'] = max(real)
+
+        # Geometry fallback strategy for xTB:
+        # 1) <basename>.xtbopt.xyz (from --namespace)
+        # 2) xtbopt.xyz
+        # 3) <basename>.xyz (original input)
+        file_path = PathLib(logfile_path)
+        basename = file_path.stem
+        workdir = file_path.parent
+        xyz_candidates = [
+            workdir / f"{basename}.xtbopt.xyz",
+            workdir / "xtbopt.xyz",
+            workdir / f"{basename}.xyz",
+        ]
+
+        def _read_xyz_geometry(xyz_path):
+            with open(xyz_path, 'r', encoding='utf-8', errors='ignore') as xf:
+                raw = [ln.rstrip('\n') for ln in xf]
+            if len(raw) < 2:
+                return None, None
+            try:
+                nat = int(raw[0].strip())
+            except Exception:
+                return None, None
+            atoms = raw[2:2 + nat]
+            if len(atoms) != nat:
+                return None, None
+
+            sym_to_num = {
+                'H': 1, 'He': 2, 'Li': 3, 'Be': 4, 'B': 5, 'C': 6, 'N': 7, 'O': 8,
+                'F': 9, 'Ne': 10, 'Na': 11, 'Mg': 12, 'Al': 13, 'Si': 14, 'P': 15,
+                'S': 16, 'Cl': 17, 'Ar': 18, 'K': 19, 'Ca': 20, 'Sc': 21, 'Ti': 22,
+                'V': 23, 'Cr': 24, 'Mn': 25, 'Fe': 26, 'Co': 27, 'Ni': 28, 'Cu': 29,
+                'Zn': 30, 'Ga': 31, 'Ge': 32, 'As': 33, 'Se': 34, 'Br': 35, 'Kr': 36,
+                'Rb': 37, 'Sr': 38, 'Y': 39, 'Zr': 40, 'Mo': 42, 'Ru': 44, 'Rh': 45,
+                'Pd': 46, 'Ag': 47, 'Cd': 48, 'In': 49, 'Sn': 50, 'Sb': 51, 'Te': 52,
+                'I': 53, 'Xe': 54, 'Cs': 55, 'Ba': 56, 'La': 57, 'Pt': 78, 'Au': 79,
+                'Hg': 80, 'Pb': 82, 'Bi': 83
+            }
+
+            atomnos = []
+            coords = []
+            for ln in atoms:
+                parts = ln.split()
+                if len(parts) < 4:
+                    return None, None
+                sym = parts[0]
+                atomnos.append(sym_to_num.get(sym, 0))
+                coords.append([float(parts[1]), float(parts[2]), float(parts[3])])
+            return np.array(atomnos), np.array(coords, dtype=float)
+
+        for cand in xyz_candidates:
+            if cand.exists():
+                atomnos, coords = _read_xyz_geometry(cand)
+                if atomnos is not None and coords is not None:
+                    extracted_props['final_geometry_atomnos'] = atomnos
+                    extracted_props['final_geometry_coords'] = coords
+                    extracted_props['num_atoms'] = len(atomnos)
+                    break
+
+        if extracted_props['final_geometry_atomnos'] is not None and extracted_props['final_geometry_coords'] is not None:
+            try:
+                extracted_props['radius_of_gyration'] = calculate_radius_of_gyration(
+                    extracted_props['final_geometry_atomnos'], extracted_props['final_geometry_coords']
+                )
+            except Exception:
+                pass
+
+            try:
+                hbond_results = detect_hydrogen_bonds(
+                    extracted_props['final_geometry_atomnos'], extracted_props['final_geometry_coords']
+                )
+                extracted_props.update(hbond_results)
+            except Exception:
+                pass
+
+        return extracted_props
+    except Exception as e:
+        print(f"  GENERIC_ERROR: Failed to extract properties from {os.path.basename(logfile_path)} with xTB parser: {e}")
+        return None
 
 def extract_properties_with_cclib(logfile_path):
     """
