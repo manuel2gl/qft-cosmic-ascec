@@ -985,7 +985,8 @@ def extract_properties_with_xtb(logfile_path):
                 extracted_props['last_vib_freq'] = max(real)
 
         # --- Geometry --------------------------------------------------------
-        # Fallback strategy for xTB:
+        # Strategy for xTB:
+        # 0) Parse "final structure:" block directly from the .out file (most reliable)
         # 1) <basename>.xtbopt.xyz (from --namespace)
         # 2) xtbopt.xyz
         # 3) <basename>.xtbopt.log (trajectory — take last frame)
@@ -1059,21 +1060,48 @@ def extract_properties_with_xtb(logfile_path):
                 coords.append([float(parts[1]), float(parts[2]), float(parts[3])])
             return np.array(atomnos), np.array(coords, dtype=float)
 
-        # Try single-frame xyz files first
-        xyz_candidates = [
-            workdir / f"{basename}.xtbopt.xyz",
-            workdir / "xtbopt.xyz",
-        ]
-        for cand in xyz_candidates:
-            if cand.exists():
-                atomnos, coords = _read_xyz_geometry(cand)
-                if atomnos is not None and coords is not None:
-                    extracted_props['final_geometry_atomnos'] = atomnos
-                    extracted_props['final_geometry_coords'] = coords
-                    extracted_props['num_atoms'] = len(atomnos)
-                    break
+        # 0) Parse "final structure:" block from the .out file itself
+        # Format:
+        #   ================
+        #    final structure:
+        #   ================
+        #   18
+        #    xtb: 6.7.0 (08769fc)
+        #   O            2.572886...   0.054433...  -0.806688...
+        #   H            1.695956...  -0.135886...  -1.264428...
+        final_struct_match = re.search(r'final structure:\s*={3,}\s*\n\s*(\d+)\s*\n[^\n]*\n((?:\s*[A-Z][a-z]?\s+[-+]?\d+\.\d+\s+[-+]?\d+\.\d+\s+[-+]?\d+\.\d+\s*\n)+)', content)
+        if final_struct_match:
+            nat = int(final_struct_match.group(1))
+            atom_block = final_struct_match.group(2).strip().splitlines()
+            if len(atom_block) >= nat:
+                atomnos = []
+                coords = []
+                for ln in atom_block[:nat]:
+                    parts = ln.split()
+                    if len(parts) >= 4:
+                        atomnos.append(sym_to_num.get(parts[0], 0))
+                        coords.append([float(parts[1]), float(parts[2]), float(parts[3])])
+                if len(atomnos) == nat:
+                    extracted_props['final_geometry_atomnos'] = np.array(atomnos)
+                    extracted_props['final_geometry_coords'] = np.array(coords, dtype=float)
+                    extracted_props['num_atoms'] = nat
 
-        # If no xyz found, try trajectory .log files (last frame = optimized geom)
+        # Fallback 1) Try single-frame xyz files
+        if extracted_props['final_geometry_atomnos'] is None:
+            xyz_candidates = [
+                workdir / f"{basename}.xtbopt.xyz",
+                workdir / "xtbopt.xyz",
+            ]
+            for cand in xyz_candidates:
+                if cand.exists():
+                    atomnos, coords = _read_xyz_geometry(cand)
+                    if atomnos is not None and coords is not None:
+                        extracted_props['final_geometry_atomnos'] = atomnos
+                        extracted_props['final_geometry_coords'] = coords
+                        extracted_props['num_atoms'] = len(atomnos)
+                        break
+
+        # Fallback 2) Try trajectory .log files (last frame = optimized geom)
         if extracted_props['final_geometry_atomnos'] is None:
             traj_candidates = [
                 workdir / f"{basename}.xtbopt.log",
