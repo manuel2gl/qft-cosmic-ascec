@@ -695,7 +695,7 @@ def detect_file_type(logfile_path):
                     return 'orca'
                 if 'Gaussian' in line:
                     return 'gaussian'
-                if 'xtb version' in line.lower() or 'normal termination of xtb' in line.lower():
+                if 'x T B' in line or 'xtb version' in line.lower() or 'normal termination of xtb' in line.lower():
                     return 'xtb'
     except Exception:
         pass
@@ -896,45 +896,83 @@ def extract_properties_with_xtb(logfile_path):
             content = f_log.read()
         lines = content.splitlines()
 
-        upper_content = content.upper()
-        if 'GFN-FF' in upper_content or 'GFNFF' in upper_content:
+        # --- Method detection ------------------------------------------------
+        # Match the actual method used (in the setup block), not citations.
+        # xTB prints e.g. "G F N 2 - x T B" or "G F N - F F" as a banner,
+        # and "GFN2-xTB" / "GFN-FF" in the settings block.
+        # Look for the spaced banner first (most reliable), then settings line.
+        if re.search(r'G\s+F\s+N\s*-?\s*F\s+F', content):
             extracted_props['method'] = 'GFN-FF'
             extracted_props['functional'] = 'GFN-FF'
-        elif 'GFN0' in upper_content:
+        elif re.search(r'G\s+F\s+N\s+0', content):
             extracted_props['method'] = 'GFN0-xTB'
             extracted_props['functional'] = 'GFN0-xTB'
-        elif 'GFN1' in upper_content:
+        elif re.search(r'G\s+F\s+N\s+1\s', content):
             extracted_props['method'] = 'GFN1-xTB'
             extracted_props['functional'] = 'GFN1-xTB'
+        # else: default GFN2-xTB (already set)
 
-        charge_match = re.search(r'\bcharge\b\s*[:=]\s*(-?\d+)', content, re.IGNORECASE)
+        # --- Charge ----------------------------------------------------------
+        # xTB prints ":  net charge   0  :" in the setup block
+        charge_match = re.search(r'net\s+charge\s+([-]?\d+)', content)
         if charge_match:
             extracted_props['charge'] = int(charge_match.group(1))
 
-        mult_match = re.search(r'\bmultiplicity\b\s*[:=]\s*(\d+)', content, re.IGNORECASE)
-        if mult_match:
-            extracted_props['multiplicity'] = int(mult_match.group(1))
+        # --- Multiplicity ----------------------------------------------------
+        # xTB prints ":  unpaired electrons   0  :" — multiplicity = 2S+1
+        unpaired_match = re.search(r'unpaired\s+electrons\s+(\d+)', content)
+        if unpaired_match:
+            extracted_props['multiplicity'] = int(unpaired_match.group(1)) + 1
 
-        # Prefer the last TOTAL ENERGY in Eh units.
-        energy_matches = re.findall(r'TOTAL ENERGY\s+([-+]?\d+\.\d+)', content, re.IGNORECASE)
+        # --- Energy (last TOTAL ENERGY in the summary box) -------------------
+        energy_matches = re.findall(r'TOTAL ENERGY\s+([-+]?\d+\.\d+)\s*Eh', content)
         if energy_matches:
             extracted_props['final_electronic_energy'] = float(energy_matches[-1])
 
-        gap_match = re.search(r'HOMO-?LUMO\s+GAP\s*[:=]?\s*([-+]?\d+\.\d+)', content, re.IGNORECASE)
-        if gap_match:
-            extracted_props['homo_lumo_gap'] = float(gap_match.group(1))
+        # --- HOMO-LUMO gap (last occurrence = post-optimization) -------------
+        gap_matches = re.findall(r'HOMO-?LUMO\s+(?:GAP|gap)\s*[:=]?\s*([-+]?\d+\.\d+)', content, re.IGNORECASE)
+        if gap_matches:
+            extracted_props['homo_lumo_gap'] = float(gap_matches[-1])
 
-        homo_match = re.search(r'\bHOMO\b\s*[:=]?\s*([-+]?\d+\.\d+)', content, re.IGNORECASE)
-        if homo_match:
-            extracted_props['homo_energy'] = float(homo_match.group(1))
-        lumo_match = re.search(r'\bLUMO\b\s*[:=]?\s*([-+]?\d+\.\d+)', content, re.IGNORECASE)
-        if lumo_match:
-            extracted_props['lumo_energy'] = float(lumo_match.group(1))
+        # --- HOMO / LUMO orbital energies ------------------------------------
+        # xTB format:  "  24   2.0000   -0.4357648   -11.8578 (HOMO)"
+        #              "  25            0.0026252     0.0714 (LUMO)"
+        # Take last occurrence (post-optimization Property Printout).
+        homo_matches = re.findall(
+            r'([-+]?\d+\.\d+)\s+([-+]?\d+\.\d+)\s+\(HOMO\)', content)
+        if homo_matches:
+            # Each match is (Energy/Eh, Energy/eV); take Eh from the last match
+            extracted_props['homo_energy'] = float(homo_matches[-1][0])
+        lumo_matches = re.findall(
+            r'([-+]?\d+\.\d+)\s+([-+]?\d+\.\d+)\s+\(LUMO\)', content)
+        if lumo_matches:
+            extracted_props['lumo_energy'] = float(lumo_matches[-1][0])
 
-        dipole_match = re.search(r'dipole[^\n]*norm[^\n]*[:=]\s*([-+]?\d+\.\d+)', content, re.IGNORECASE)
-        if dipole_match:
-            extracted_props['dipole_moment'] = float(dipole_match.group(1))
+        # --- Dipole moment ---------------------------------------------------
+        # xTB format:
+        #   molecular dipole:
+        #                x           y           z       tot (Debye)
+        #    full:    -0.011      -0.003       0.029       0.079
+        # Must match exactly 4 float columns (not 6 as in quadrupole).
+        dipole_matches = re.findall(
+            r'^\s*full:\s+([-+]?\d+\.\d+)\s+([-+]?\d+\.\d+)\s+([-+]?\d+\.\d+)\s+([-+]?\d+\.\d+)\s*$',
+            content, re.MULTILINE)
+        if dipole_matches:
+            # Take the last "full:" line (post-optimization), tot column
+            extracted_props['dipole_moment'] = float(dipole_matches[-1][3])
 
+        # --- Rotational constants --------------------------------------------
+        rot_match = re.search(
+            r'rotational constants/cm.*?:\s*([-+]?\d+\.\d+E[+-]?\d+)\s+([-+]?\d+\.\d+E[+-]?\d+)\s+([-+]?\d+\.\d+E[+-]?\d+)',
+            content, re.IGNORECASE)
+        if rot_match:
+            extracted_props['rotational_constants'] = [
+                float(rot_match.group(1)),
+                float(rot_match.group(2)),
+                float(rot_match.group(3))
+            ]
+
+        # --- Vibrational frequencies -----------------------------------------
         freq_matches = re.findall(r'([-+]?\d+\.\d+)\s*cm\^-?1', content, re.IGNORECASE)
         if freq_matches:
             freqs = [float(v) for v in freq_matches]
@@ -946,20 +984,31 @@ def extract_properties_with_xtb(logfile_path):
                 extracted_props['first_vib_freq'] = min(real)
                 extracted_props['last_vib_freq'] = max(real)
 
-        # Geometry fallback strategy for xTB:
+        # --- Geometry --------------------------------------------------------
+        # Fallback strategy for xTB:
         # 1) <basename>.xtbopt.xyz (from --namespace)
         # 2) xtbopt.xyz
-        # 3) <basename>.xyz (original input)
+        # 3) <basename>.xtbopt.log (trajectory — take last frame)
+        # 4) xtbopt.log (trajectory — take last frame)
+        # 5) <basename>.xyz (original input — pre-optimization, last resort)
         file_path = PathLib(logfile_path)
         basename = file_path.stem
         workdir = file_path.parent
-        xyz_candidates = [
-            workdir / f"{basename}.xtbopt.xyz",
-            workdir / "xtbopt.xyz",
-            workdir / f"{basename}.xyz",
-        ]
+
+        sym_to_num = {
+            'H': 1, 'He': 2, 'Li': 3, 'Be': 4, 'B': 5, 'C': 6, 'N': 7, 'O': 8,
+            'F': 9, 'Ne': 10, 'Na': 11, 'Mg': 12, 'Al': 13, 'Si': 14, 'P': 15,
+            'S': 16, 'Cl': 17, 'Ar': 18, 'K': 19, 'Ca': 20, 'Sc': 21, 'Ti': 22,
+            'V': 23, 'Cr': 24, 'Mn': 25, 'Fe': 26, 'Co': 27, 'Ni': 28, 'Cu': 29,
+            'Zn': 30, 'Ga': 31, 'Ge': 32, 'As': 33, 'Se': 34, 'Br': 35, 'Kr': 36,
+            'Rb': 37, 'Sr': 38, 'Y': 39, 'Zr': 40, 'Mo': 42, 'Ru': 44, 'Rh': 45,
+            'Pd': 46, 'Ag': 47, 'Cd': 48, 'In': 49, 'Sn': 50, 'Sb': 51, 'Te': 52,
+            'I': 53, 'Xe': 54, 'Cs': 55, 'Ba': 56, 'La': 57, 'Pt': 78, 'Au': 79,
+            'Hg': 80, 'Pb': 82, 'Bi': 83
+        }
 
         def _read_xyz_geometry(xyz_path):
+            """Read a single-frame .xyz file and return (atomnos, coords)."""
             with open(xyz_path, 'r', encoding='utf-8', errors='ignore') as xf:
                 raw = [ln.rstrip('\n') for ln in xf]
             if len(raw) < 2:
@@ -971,30 +1020,50 @@ def extract_properties_with_xtb(logfile_path):
             atoms = raw[2:2 + nat]
             if len(atoms) != nat:
                 return None, None
-
-            sym_to_num = {
-                'H': 1, 'He': 2, 'Li': 3, 'Be': 4, 'B': 5, 'C': 6, 'N': 7, 'O': 8,
-                'F': 9, 'Ne': 10, 'Na': 11, 'Mg': 12, 'Al': 13, 'Si': 14, 'P': 15,
-                'S': 16, 'Cl': 17, 'Ar': 18, 'K': 19, 'Ca': 20, 'Sc': 21, 'Ti': 22,
-                'V': 23, 'Cr': 24, 'Mn': 25, 'Fe': 26, 'Co': 27, 'Ni': 28, 'Cu': 29,
-                'Zn': 30, 'Ga': 31, 'Ge': 32, 'As': 33, 'Se': 34, 'Br': 35, 'Kr': 36,
-                'Rb': 37, 'Sr': 38, 'Y': 39, 'Zr': 40, 'Mo': 42, 'Ru': 44, 'Rh': 45,
-                'Pd': 46, 'Ag': 47, 'Cd': 48, 'In': 49, 'Sn': 50, 'Sb': 51, 'Te': 52,
-                'I': 53, 'Xe': 54, 'Cs': 55, 'Ba': 56, 'La': 57, 'Pt': 78, 'Au': 79,
-                'Hg': 80, 'Pb': 82, 'Bi': 83
-            }
-
             atomnos = []
             coords = []
             for ln in atoms:
                 parts = ln.split()
                 if len(parts) < 4:
                     return None, None
-                sym = parts[0]
-                atomnos.append(sym_to_num.get(sym, 0))
+                atomnos.append(sym_to_num.get(parts[0], 0))
                 coords.append([float(parts[1]), float(parts[2]), float(parts[3])])
             return np.array(atomnos), np.array(coords, dtype=float)
 
+        def _read_last_xyz_frame(traj_path):
+            """Read the last frame from an xTB trajectory .log file (multi-frame xyz)."""
+            with open(traj_path, 'r', encoding='utf-8', errors='ignore') as xf:
+                raw = [ln.rstrip('\n') for ln in xf]
+            if len(raw) < 3:
+                return None, None
+            try:
+                nat = int(raw[0].strip())
+            except Exception:
+                return None, None
+            frame_size = nat + 2  # natoms line + comment line + atom lines
+            total_frames = len(raw) // frame_size
+            if total_frames < 1:
+                return None, None
+            # Last frame starts at this offset
+            last_start = (total_frames - 1) * frame_size
+            atoms = raw[last_start + 2: last_start + 2 + nat]
+            if len(atoms) != nat:
+                return None, None
+            atomnos = []
+            coords = []
+            for ln in atoms:
+                parts = ln.split()
+                if len(parts) < 4:
+                    return None, None
+                atomnos.append(sym_to_num.get(parts[0], 0))
+                coords.append([float(parts[1]), float(parts[2]), float(parts[3])])
+            return np.array(atomnos), np.array(coords, dtype=float)
+
+        # Try single-frame xyz files first
+        xyz_candidates = [
+            workdir / f"{basename}.xtbopt.xyz",
+            workdir / "xtbopt.xyz",
+        ]
         for cand in xyz_candidates:
             if cand.exists():
                 atomnos, coords = _read_xyz_geometry(cand)
@@ -1003,6 +1072,31 @@ def extract_properties_with_xtb(logfile_path):
                     extracted_props['final_geometry_coords'] = coords
                     extracted_props['num_atoms'] = len(atomnos)
                     break
+
+        # If no xyz found, try trajectory .log files (last frame = optimized geom)
+        if extracted_props['final_geometry_atomnos'] is None:
+            traj_candidates = [
+                workdir / f"{basename}.xtbopt.log",
+                workdir / "xtbopt.log",
+            ]
+            for cand in traj_candidates:
+                if cand.exists():
+                    atomnos, coords = _read_last_xyz_frame(cand)
+                    if atomnos is not None and coords is not None:
+                        extracted_props['final_geometry_atomnos'] = atomnos
+                        extracted_props['final_geometry_coords'] = coords
+                        extracted_props['num_atoms'] = len(atomnos)
+                        break
+
+        # Last resort: original input xyz
+        if extracted_props['final_geometry_atomnos'] is None:
+            input_xyz = workdir / f"{basename}.xyz"
+            if input_xyz.exists():
+                atomnos, coords = _read_xyz_geometry(input_xyz)
+                if atomnos is not None and coords is not None:
+                    extracted_props['final_geometry_atomnos'] = atomnos
+                    extracted_props['final_geometry_coords'] = coords
+                    extracted_props['num_atoms'] = len(atomnos)
 
         if extracted_props['final_geometry_atomnos'] is not None and extracted_props['final_geometry_coords'] is not None:
             try:
