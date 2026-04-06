@@ -9184,7 +9184,10 @@ end
             // Auto-number ref/opt stages: 1st ref → "ref", 2nd → "ref2", etc.
             let refCount = 0;
             let optCount = 0;
-            let text = isMaxprintEnabled() ? '.asc --maxprint,\n' : '.asc,\n';
+            let text = '.asc,\n';
+            if (isMaxprintEnabled()) {
+                text += '--maxprint,\n';
+            }
             protocolStages.forEach((s, idx) => {
                 let name;
                 if (s.type === 'rN') {
@@ -10020,7 +10023,10 @@ H   1.981282  0.134064  0.000000`;
             if (protocolStages.length > 0) {
                 content += `\n# Protocol\n`;
                 content += `# (annealing, (pre)optimization, clustering, separated by "," or ".")\n\n`;
-                content += isMaxprintEnabled() ? `.asc --maxprint,\n` : `.asc,\n`;
+                content += `.asc,\n`;
+                if (isMaxprintEnabled()) {
+                    content += `--maxprint,\n`;
+                }
                 let ascRefCount = 0;
                 let ascOptCount = 0;
                 protocolStages.forEach((stage, idx) => {
