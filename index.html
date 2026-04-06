@@ -2770,7 +2770,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                 <div class="pipeline-visual" id="smart-pipeline-visual">
                     <div class="pipeline-step-compact">
                         <span class="pipeline-step-label annealing">Annealing</span>
-                        <span class="pipeline-step-theory" id="smart-pipe-annealing">PM7</span>
+                        <span class="pipeline-step-theory" id="smart-pipe-annealing">PM3</span>
                     </div>
                     <span class="pipeline-arrow-small">→</span>
                     <div class="pipeline-step-compact">
@@ -2828,7 +2828,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                 <div class="pipeline-visual" id="pipeline-visual">
                     <div class="pipeline-step-compact">
                         <span class="pipeline-step-label annealing">Annealing</span>
-                        <span class="pipeline-step-theory" id="pipe-annealing-theory">PM7</span>
+                        <span class="pipeline-step-theory" id="pipe-annealing-theory">PM3</span>
                     </div>
                     <span class="pipeline-arrow-small">→</span>
                     <div class="pipeline-step-compact">
@@ -2898,9 +2898,20 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <label>Method</label>
                             <div class="custom-inline-control">
                                 <select id="adv-annealing-method" onchange="toggleCustomMethod('adv-annealing'); updateAllPreviews()">
-                                    <option value="PM7" selected>PM7</option>
                                     <option value="PM3">PM3</option>
                                     <option value="AM1">AM1</option>
+                                    <option value="MNDO">MNDO</option>
+                                    <option value="CNDO_1">CNDO/1</option>
+                                    <option value="CNDO_2">CNDO/2</option>
+                                    <option value="CNDO_S">CNDO/S</option>
+                                    <option value="INDO_1">INDO/1</option>
+                                    <option value="INDO_2">INDO/2</option>
+                                    <option value="INDO_S">INDO/S</option>
+                                    <option value="ZINDO_1">ZINDO/1</option>
+                                    <option value="ZINDO_2">ZINDO/2</option>
+                                    <option value="ZINDO_S">ZINDO/S</option>
+                                    <option value="ZNDDO_1">ZNDDO/1</option>
+                                    <option value="ZNDDO_2">ZNDDO/2</option>
                                     <option value="Other">Other...</option>
                                 </select>
                                 <div id="adv-annealing-method-custom-wrap" class="custom-inline-editor">
@@ -3922,7 +3933,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
         // ORCA Method Maps
         const methodsByTheory = {
-            semiempirical: ['PM7', 'AM1', 'PM3', 'MNDO', 'RM1', 'GFN2-xTB', 'GFN1-xTB', 'GFN0-xTB', 'GFN-FF'],
+            semiempirical: ['PM3', 'AM1', 'MNDO', 'CNDO_1', 'CNDO_2', 'CNDO_S', 'INDO_1', 'INDO_2', 'INDO_S', 'ZINDO_1', 'ZINDO_2', 'ZINDO_S', 'ZNDDO_1', 'ZNDDO_2', 'GFN2-xTB', 'GFN1-xTB', 'GFN0-xTB', 'GFN-FF'],
             xtb: ['GFN2-xTB', 'GFN1-xTB', 'GFN0-xTB', 'GFN-FF'],
             dft: ['B3LYP', 'B97-3c', 'r2SCAN-3c', 'PBE0', 'wB97X-D3', 'TPSS', 'PBE', 'BP86'],
             'post-hf': ['MP2', 'HF', 'SCS-MP2', 'CCSD', 'DLPNO-CCSD(T)', 'CCSD(T)'],
@@ -6647,11 +6658,11 @@ H  -0.757000  0.586000  0.000000"></textarea>
         function applySamplingPreset(mode) {
             const selectedMode = mode || 'preliminar';
 
-            // --- Annealing: PM7, 1 proc for all presets ---
+            // --- Annealing: PM3, 1 proc for all presets ---
             const annealTheory = document.getElementById('smart-annealing-theory');
             if (annealTheory) { annealTheory.value = 'semiempirical'; updateSmartAnnealingMethod(); }
             const annealMethod = document.getElementById('smart-annealing-method');
-            if (annealMethod) annealMethod.value = 'PM7';
+            if (annealMethod) annealMethod.value = 'PM3';
             const annealNprocs = document.getElementById('smart-annealing-nprocs');
             if (annealNprocs) annealNprocs.value = '1';
             const annealConcurrent = document.getElementById('smart-annealing-concurrent');
@@ -7099,7 +7110,7 @@ end
         // Update pipeline visual overview
         function updateSmartPipeline() {
             const annealingTheory = document.getElementById('smart-annealing-theory')?.value || 'semiempirical';
-            const annealingMethod = getMethodValue('smart-annealing') || 'PM7';
+            const annealingMethod = getMethodValue('smart-annealing') || 'PM3';
             const optMethod = document.getElementById('smart-opt-method')?.value || 'GFN2-xTB';
             const refMethod = document.getElementById('smart-ref-method')?.value || 'B97-3c';
             const sameCOSMIC = document.getElementById('smart-sim-same')?.checked !== false;
@@ -7971,7 +7982,7 @@ end
             const methodSelect = document.getElementById('basic-method');
             if (!theory || !methodSelect) return;
             
-            const methods = methodsByTheory[theory] || ['PM7'];
+            const methods = methodsByTheory[theory] || ['PM3'];
 
             methodSelect.innerHTML = methods.map((m, i) =>
                 `<option value="${m}" ${i === 0 ? 'selected' : ''}>${m}</option>`
@@ -8003,7 +8014,7 @@ end
         function updateAdvAnnealingMethod() {
             const theory = document.getElementById('adv-annealing-theory').value;
             const methodSelect = document.getElementById('adv-annealing-method');
-            const methods = methodsByTheory[theory] || ['PM7'];
+            const methods = methodsByTheory[theory] || ['PM3'];
             const basisSelect = document.getElementById('adv-annealing-basis');
             const basisCustom = document.getElementById('adv-annealing-basis-custom');
 
@@ -8160,9 +8171,9 @@ end
             const select = document.getElementById(prefix + '-method');
             const customInput = document.getElementById(prefix + '-method-custom');
             if (select && select.value === 'Other' && customInput) {
-                return customInput.value.trim() || 'PM7';
+                return customInput.value.trim() || 'PM3';
             }
-            return select ? select.value : 'PM7';
+            return select ? select.value : 'PM3';
         }
 
         function getAnnealingBasisValue() {
