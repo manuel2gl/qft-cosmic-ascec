@@ -504,6 +504,7 @@ class SystemState:
         self.qm_nproc: Optional[int] = None       # nprocs
         self.qm_additional_keywords: str = ""     # if necessary
         self._orca_exe_checked: bool = False      # Cache ORCA executable check per run
+        self._orca_full_path: Optional[str] = None  # Cached resolved ORCA executable path
         
         # Parallel processing settings for ASCEC
         self.ascec_parallel_cores: int = 1       # Number of cores for ASCEC operations (file I/O, coordinate transformations)
@@ -2565,9 +2566,9 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                 for stage_key, stage_info in sorted_stages:
                     if stage_info.get('status') == 'completed':
                         stage_type = stage_key.split('_')[0].capitalize()
-                        type_map = {'Replication': 'Annealing', 'Calculation': 'Optimization',
-                                  'COSMIC': 'COSMIC', 'Optimization': 'Optimization',
-                                  'Refinement': 'Refinement'}
+                        type_map = {'Replication': 'annealing', 'Calculation': 'geometry_optimization',
+                                  'COSMIC': 'COSMIC', 'Optimization': 'geometry_optimization',
+                                  'Refinement': 'geometry_refinement'}
                         stage_name = type_map.get(stage_type, stage_type)
                         completed_stages.append(stage_name)
                 
@@ -2789,7 +2790,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                     
                     elif stage_type in ('Calculation', 'Optimization'):
                         if 'xyz_source' in result and result['xyz_source']:
-                            xyz_source = result['xyz_source'] if result['xyz_source'] else "Annealing"
+                            xyz_source = result['xyz_source'] if result['xyz_source'] else "annealing"
                             f.write(f"    Inputs from:      {xyz_source}\n")
                         if 'completed' in result and 'total' in result:
                             f.write(f"    Completed:        {result['completed']}/{result['total']} optimizations\n")
@@ -3056,6 +3057,17 @@ def calculate_energy(coords: np.ndarray, atomic_numbers: List[int], state: Syste
 
     # Determine QM command - use alias from input file if provided, otherwise use default
     qm_exe = state.alias if state.alias else qm_program_details[state.ia]["default_exe"]
+    # ORCA requires full path for parallel execution; resolve once and cache
+    if state.qm_program == "orca" and '/' not in qm_exe and '$' not in qm_exe:
+        cached = getattr(state, '_orca_full_path', None)
+        if cached:
+            qm_exe = cached
+        else:
+            detected_path = detect_orca_executable(qm_exe)
+            if detected_path:
+                qm_exe = detected_path
+                setattr(state, '_orca_full_path', detected_path)
+                _print_verbose(f"Resolved ORCA full path: {detected_path}", 1, state)
     if state.qm_program == "gaussian":
         qm_command = f"{qm_exe} < {qm_input_filename} > {qm_output_filename}"
     elif state.qm_program == "orca":
@@ -5760,6 +5772,16 @@ def parse_xtb_options_from_template(template_content: str) -> str:
     if 'FREQ' in content_upper or '/FREQ' in content_upper or '/NUM' in content_upper:
         flags.append('--hess')
 
+    # Parse nprocs from template metadata (e.g. "# nprocs 4")
+    nprocs_match = re.search(r'#\s*nprocs\s+(\d+)', template_content or '', re.IGNORECASE)
+    if nprocs_match:
+        flags.extend(['--parallel', nprocs_match.group(1)])
+
+    # Parse maxiter/cycles from template metadata (e.g. "# maxiter 200")
+    maxiter_match = re.search(r'#\s*max(?:iter|cycles?)\s+(\d+)', template_content or '', re.IGNORECASE)
+    if maxiter_match:
+        flags.extend(['--cycles', maxiter_match.group(1)])
+
     return ' '.join(flags).strip()
 
 
@@ -5894,8 +5916,8 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
     
     # Map internal stage type to filesystem directory name
     _stage_dir_names = {
-        'optimization': 'Geom Optimization',
-        'refinement': 'Geom Refinement',
+        'optimization': 'geometry_optimization',
+        'refinement': 'geometry_refinement',
     }
     output_dir = get_next_dir(_stage_dir_names.get(stage_type, stage_type))
     
@@ -5907,7 +5929,7 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
             if not workflow_mode:
                 print("Found retry_input folder, using structures from previous cosmic analysis")
             for file in os.listdir("retry_input"):
-                if file.endswith(".xyz") and not file.startswith("combined"):
+                if file.endswith(".xyz") and not file.startswith("combined") and ".xtbopt." not in file:
                     xyz_files.append(os.path.join("retry_input", file))
         else:
             # Normal flow: Check for combined files in current directory
@@ -5918,7 +5940,7 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
             # Look for result_*.xyz files recursively in subdirectories
             for root, dirs, files in os.walk("."):
                 for file in files:
-                    if file.startswith("result_") and file.endswith(".xyz") and not file.startswith("resultbox_"):
+                    if file.startswith("result_") and file.endswith(".xyz") and not file.startswith("resultbox_") and ".xtbopt." not in file:
                         xyz_files.append(os.path.join(root, file))
                         
         if not xyz_files:
@@ -5963,11 +5985,11 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
             if xyz_files:
                 first_file = xyz_files[0]
                 if 'result' in first_file or 'annealing' in first_file.lower():
-                    sys._current_workflow_context.optimization_xyz_source = "Annealing"  # type: ignore[attr-defined]
+                    sys._current_workflow_context.optimization_xyz_source = "annealing"  # type: ignore[attr-defined]
                 else:
                     sys._current_workflow_context.optimization_xyz_source = first_file  # type: ignore[attr-defined]
             else:
-                sys._current_workflow_context.optimization_xyz_source = "Annealing"  # type: ignore[attr-defined]
+                sys._current_workflow_context.optimization_xyz_source = "annealing"  # type: ignore[attr-defined]
                 
         if auto_select == 'combined':
             os.makedirs(output_dir, exist_ok=True)
@@ -6516,11 +6538,11 @@ def merge_xyz_files(xyz_files: List[str], output_filename: str, quiet: bool = Fa
             filename = os.path.basename(filepath)
             # Try multiple patterns to extract configuration numbers
             patterns = [
-                r'result_(\d+)\.xyz',           # result_123.xyz
-                r'conf_(\d+)\.xyz',             # conf_20.xyz
-                r'opt\d+_conf_(\d+)\.xyz',      # opt1_conf_20.xyz
-                r'_(\d+)\.xyz',                 # any_123.xyz (general pattern)
-                r'(\d+)\.xyz'                   # 123.xyz (number only)
+                r'result_(\d+)\.\w+',           # result_123.xyz
+                r'conf_(\d+)\.\w+',             # conf_20.xyz
+                r'opt\d+_conf_(\d+)\.\w+',      # opt1_conf_20.xyz
+                r'_(\d+)\.\w+',                 # any_123.xyz (general pattern)
+                r'(\d+)\.\w+'                   # 123.xyz (number only)
             ]
             
             for pattern in patterns:
@@ -6695,7 +6717,7 @@ def create_replicated_runs(input_file_path: str, num_replicas: int, create_launc
     replicated_files = []
     
     # Create parent directory: annealing
-    parent_folder_name = "Annealing"
+    parent_folder_name = "annealing"
     parent_folder_path = os.path.join(input_dir, parent_folder_name)
     os.makedirs(parent_folder_path, exist_ok=True)
     if verbose:
@@ -6767,10 +6789,11 @@ def extract_base(filename):
     """Extract base name from filename by removing extension and known suffixes."""
     # Define optional suffixes that can appear before extensions
     # Note: _rescue must come before _inp/_out to handle _rescue.inp properly
-    KNOWN_SUFFIXES = ['_trj', '_opt', '_property', '_gu', '_xtbrestart', '_engrad', '_xyz', '_out', '_inp', '_tmp', '_rescue']
-    
-    # Remove extension
-    name, *_ = filename.split('.', 1)
+    KNOWN_SUFFIXES = ['_trj', '_opt', '_property', '_gu', '_xtbrestart', '_xtboptok', '_engrad', '_xyz', '_out', '_inp', '_tmp', '_rescue']
+
+    # Remove extension; handle dot-prefixed (hidden) files
+    working = filename.lstrip('.') if filename.startswith('.') else filename
+    name, *_ = working.split('.', 1)
     # Remove all known suffixes (not just the last one) by repeatedly checking
     changed = True
     while changed:
@@ -6902,13 +6925,13 @@ def get_sort_key(filename):
     import re
     # Try multiple patterns in order of specificity
     patterns = [
-        r'u?motif_(\d+)_opt\.xyz',   # umotif_28_opt.xyz or motif_28_opt.xyz
-        r'u?motif_(\d+)\.xyz',        # umotif_28.xyz or motif_28.xyz
-        r'opt_conf_(\d+)\.xyz',      # opt_conf_3.xyz
-        r'result_(\d+)\.xyz',        # result_123.xyz
-        r'conf_(\d+)\.xyz',          # conf_20.xyz
-        r'_(\d+)\.xyz',              # any_123.xyz (general pattern)
-        r'(\d+)\.xyz'                # 123.xyz (number only)
+        r'u?motif_(\d+)_opt\.\w+',   # umotif_28_opt.xyz or motif_28_opt.xtboptok
+        r'u?motif_(\d+)\.\w+',        # umotif_28.xyz or motif_28.xyz
+        r'opt_conf_(\d+)\.\w+',      # opt_conf_3.xyz or opt_conf_1.xtboptok
+        r'result_(\d+)\.\w+',        # result_123.xyz
+        r'conf_(\d+)\.\w+',          # conf_20.xyz
+        r'_(\d+)\.\w+',              # any_123.xyz (general pattern)
+        r'(\d+)\.\w+'                # 123.xyz (number only)
     ]
     
     for pattern in patterns:
@@ -6934,6 +6957,8 @@ def combine_xyz_files(output_filename="combined_results.xyz", exclude_pattern="_
             if file == output_filename or file.startswith("combined_r") or file.startswith("combined_results"):
                 continue
             if exclude_pattern in file:
+                continue
+            if ".xtbopt." in file:
                 continue
             all_xyz_files.append(filepath)
 
@@ -11151,17 +11176,17 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             stype = stage['type']
             if stype == 'optimization':
                 # First optimization uses 'calculation' or 'optimization' dir
-                calc_dir = context.optimization_stage_dir if context.optimization_stage_dir else "Geom Optimization"
+                calc_dir = context.optimization_stage_dir if context.optimization_stage_dir else "geometry_optimization"
                 if not os.path.isdir(calc_dir):
                     calc_dir = "calculation"
                 if os.path.isdir(calc_dir):
                     opt_dirs.append((calc_dir, idx, False))
             elif stype == 'refinement':
-                ref_dir = context.refinement_stage_dir if context.refinement_stage_dir else "Geom Refinement"
+                ref_dir = context.refinement_stage_dir if context.refinement_stage_dir else "geometry_refinement"
                 if os.path.isdir(ref_dir):
                     opt_dirs.append((ref_dir, idx, True))
             elif stype == 'energy_refinement':
-                eref_dir = getattr(context, 'energy_refinement_stage_dir', None) or "Energy Refinement"
+                eref_dir = getattr(context, 'energy_refinement_stage_dir', None) or "energy_refinement"
                 if os.path.isdir(eref_dir):
                     opt_dirs.append((eref_dir, idx, True))
             elif stype == 'cosmic':
@@ -11175,7 +11200,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
         # If context has better info from cache, also scan for dirs directly
         if not opt_dirs:
-            for d in sorted(glob.glob("Geom Optimization*")) + sorted(glob.glob("calculation*")) + sorted(glob.glob("Geom Refinement*")) + sorted(glob.glob("Energy Refinement*")):
+            for d in sorted(glob.glob("geometry_optimization*") + glob.glob("Geom Optimization*")) + sorted(glob.glob("calculation*")) + sorted(glob.glob("geometry_refinement*") + glob.glob("Geom Refinement*")) + sorted(glob.glob("energy_refinement*") + glob.glob("Energy Refinement*")):
                 if os.path.isdir(d):
                     is_ref = "refine" in d.lower()
                     opt_dirs.append((d, -1, is_ref))
@@ -11446,7 +11471,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     removed_count += 1
 
             if verbose and removed_count > 0:
-                label = "Geom Refinement" if is_ref else "Geom Optimization"
+                label = "geometry_refinement" if is_ref else "geometry_optimization"
                 print(f"  Cleaned {calc_dir}/ ({label}): kept {len(kept_root_files)} summary files")
 
         # --- Clean cosmic directories ---
@@ -11828,11 +11853,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     
     # Map stage types to display names
     stage_display_map: Dict[str, str] = {
-        'replication': 'Annealing',
-        'optimization': 'Optimization',
+        'replication': 'annealing',
+        'optimization': 'geometry_optimization',
         'cosmic': 'COSMIC',
-        'refinement': 'Refinement',
-        'energy_refinement': 'Energy Refinement'
+        'refinement': 'geometry_refinement',
+        'energy_refinement': 'energy_refinement'
     }
 
     progress_lines = 0
@@ -12196,7 +12221,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         # If this is a redo attempt and we have recalculated files, copy them to cosmic folder
                         if attempt > 0 and hasattr(context, 'recalculated_files') and context.recalculated_files:
                             # Get calculation and cosmic directories
-                            optimization_dir_path = getattr(context, 'optimization_stage_dir', 'Geom Optimization')
+                            optimization_dir_path = getattr(context, 'optimization_stage_dir', 'geometry_optimization')
                             # Get cosmic orca output directory
                             cosmic_dir = context.cosmic_dir if hasattr(context, 'cosmic_dir') else "COSMIC"
                             
@@ -12580,7 +12605,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     
                     if prev_was_opt:
                         # After refinement: input from refinement dir, output to umotifs
-                        opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "Geom Refinement"
+                        opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "geometry_refinement"
                         cosmic_result['input_dir'] = opt_dir
                         cosmic_result['output_dir'] = os.path.join(cosmic_dir, "umotifs")
                     else:
@@ -12709,7 +12734,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         # If this is a redo attempt and we have recalculated files, copy them to cosmic folder
                         if attempt > 0 and hasattr(context, 'recalculated_files') and context.recalculated_files:
                             # Get optimization and cosmic directories
-                            opt_dir = getattr(context, 'refinement_stage_dir', 'Geom Refinement') or 'Geom Refinement'
+                            opt_dir = getattr(context, 'refinement_stage_dir', 'geometry_refinement') or 'geometry_refinement'
                             # Get cosmic orca output directory
                             cosmic_dir = context.refinement_cosmic_folder if hasattr(context, 'refinement_cosmic_folder') else context.cosmic_dir
                             
@@ -12868,7 +12893,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         if not motifs_dir:
                             motifs_dir = "COSMIC/motifs"  # Fallback
                         
-                        opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "Geom Refinement"
+                        opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "geometry_refinement"
                         opt_result['input_dir'] = motifs_dir
                         opt_result['working_dir'] = opt_dir
                         opt_result['output_dir'] = opt_dir
@@ -12903,7 +12928,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         
                         # Store directories for stage memory
                         cosmic_dir = context.cosmic_dir if context.cosmic_dir else "COSMIC_2"
-                        opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "Geom Refinement"
+                        opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "geometry_refinement"
                         cosmic_result['input_dir'] = opt_dir  # Read from refinement
                         cosmic_result['working_dir'] = cosmic_dir
                         # After optimization: use "umotifs" prefix (unique motifs, second level)
@@ -13128,7 +13153,7 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
     
     # Clean up old annealing folder from previous runs to avoid duplicate replicas
     # (Only in workflow mode - standalone mode keeps it for reference)
-    annealing_folder = os.path.join(os.path.dirname(context.input_file), "Annealing")
+    annealing_folder = os.path.join(os.path.dirname(context.input_file), "annealing")
     if os.path.exists(annealing_folder):
         try:
             shutil.rmtree(annealing_folder)
@@ -13374,7 +13399,7 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
             # Get parent directory (annealing/)
             annealing_parent = os.path.dirname(context.annealing_dirs[0])
             if not annealing_parent:
-                annealing_parent = "Annealing"
+                annealing_parent = "annealing"
             
             combined_diagram = os.path.join(annealing_parent, f"tvse_r{num_replicas}.png")
             if plot_combined_replicas_diagram(all_tvse_files, combined_diagram, num_replicas):
@@ -14879,9 +14904,9 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
     # Process redo structures at the START of the stage (if need_recalculation exists)
     # This ensures that when the workflow restarts this stage after a cosmic failure,
     # we immediately regenerate inputs and delete old outputs before checking completion
-    optimization_dir_path = getattr(context, 'optimization_stage_dir', 'Geom Optimization')
+    optimization_dir_path = getattr(context, 'optimization_stage_dir', 'geometry_optimization')
     if not optimization_dir_path:  # Handle empty string
-        optimization_dir_path = 'Geom Optimization'
+        optimization_dir_path = 'geometry_optimization'
     if os.path.exists(optimization_dir_path):
         redo_result = process_redo_structures(context, optimization_dir_path, template_file, concurrent_jobs=concurrent_jobs)
 
@@ -14895,7 +14920,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
     
     # Get completed calculations from cache
     completed_calcs = cache.get('stages', {}).get(stage_key, {}).get('result', {}).get('completed_files', [])
-    opt_dir_exists = os.path.exists("Geom Optimization")
+    opt_dir_exists = os.path.exists("geometry_optimization") or os.path.exists("Geom Optimization")
     
     # If resuming (cache exists + optimization stage was started before), reuse existing directory  
     # This works even if no runs completed yet (e.g., interrupted during first opt)
@@ -14906,10 +14931,12 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
     if opt_dir_exists and stage_was_started:
         # Use absolute path from context if available, otherwise use relative path
         if not optimization_dir_path:
-            if os.path.exists("Geom Optimization"):
+            if os.path.exists("geometry_optimization"):
+                optimization_dir_path = "geometry_optimization"
+            elif os.path.exists("Geom Optimization"):
                 optimization_dir_path = "Geom Optimization"
             else:
-                optimization_dir_path = "Geom Optimization"
+                optimization_dir_path = "geometry_optimization"
         
         # Check if redo structures exist (files scheduled for recalculation)
         redo_files = set()
@@ -15064,7 +15091,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                 launcher_file = None
         
         # Track existing optimization directories before running calculate_input_files
-        existing_opt_dirs = set(d for d in os.listdir('.') if d.startswith('Geom Optimization') and os.path.isdir(d))
+        existing_opt_dirs = set(d for d in os.listdir('.') if (d.startswith('geometry_optimization') or d.startswith('Geom Optimization')) and os.path.isdir(d))
         
         # Get QM alias from context (read from input.in line 9)
         qm_alias = getattr(context, 'qm_alias', 'orca')
@@ -15088,11 +15115,13 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             return 1
         
         # Find the optimization directory that was just created (may be optimization, optimization_2, etc.)
-        current_opt_dirs = set(d for d in os.listdir('.') if d.startswith('Geom Optimization') and os.path.isdir(d))
+        current_opt_dirs = set(d for d in os.listdir('.') if (d.startswith('geometry_optimization') or d.startswith('Geom Optimization')) and os.path.isdir(d))
         new_opt_dirs = current_opt_dirs - existing_opt_dirs
         if new_opt_dirs:
             # Use the newly created directory
             optimization_dir_path = sorted(new_opt_dirs)[-1]  # Get the highest numbered one
+        elif "geometry_optimization" in current_opt_dirs:
+            optimization_dir_path = "geometry_optimization"
         elif "Geom Optimization" in current_opt_dirs:
             optimization_dir_path = "Geom Optimization"
         else:
@@ -15472,7 +15501,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             return 1
             
     else:
-        print(f"Warning: Geom Optimization directory not found")
+        print(f"Warning: geometry_optimization directory not found")
         return 1
     
     # Clean up retry_input folder if it exists
@@ -15980,7 +16009,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     
     if not launcher_sh:
         # Try to auto-create launcher
-        ref_launcher_dir = "Geom Refinement"
+        ref_launcher_dir = "geometry_refinement"
         if not os.path.exists(ref_launcher_dir):
             os.makedirs(ref_launcher_dir, exist_ok=True)
         auto_launcher = create_auto_launcher(ref_launcher_dir, "orca", qm_alias, quiet=workflow_concise)
@@ -16103,9 +16132,9 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     # Process redo structures at the START of the stage (if need_recalculation exists)
     # This ensures that when the workflow restarts this stage after a cosmic failure,
     # we immediately regenerate inputs and delete old outputs before checking completion
-    opt_dir = getattr(context, 'refinement_stage_dir', 'Geom Refinement')
+    opt_dir = getattr(context, 'refinement_stage_dir', 'geometry_refinement')
     if not opt_dir:  # Handle empty string
-        opt_dir = 'Geom Refinement'
+        opt_dir = 'geometry_refinement'
 
     # Only process redo if optimization directory exists
     # process_optimization_redo will check for skipped_structures internally and return False if none
@@ -16158,7 +16187,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         return 0
     
     # Create refinement directory (or reuse if resuming)
-    opt_dir = "Geom Refinement"
+    opt_dir = "geometry_refinement"
     
     # Check if we're resuming - if so, reuse existing directory
     cache_file = getattr(context, 'cache_file', 'protocol_cache.pkl')
@@ -16406,7 +16435,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         # Scan ALL subdirectories for completed calculations (check for .out files)
         # Files with only .out.backup are being redone and should NOT be counted as completed
         actual_completed = []
-        opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "Geom Refinement"
+        opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "geometry_refinement"
         
         # 1. Check optimization directory subfolders
         if os.path.exists(opt_dir):
@@ -17250,25 +17279,25 @@ def main_ascec_integrated():
                         # Map of directories to delete based on restart stage
                         if 'calculation' in [k.split('_')[0] for k in stages_to_restart]:
                             # Restarting calculation: delete calculation/, cosmic/, geom_optimization/
-                            for dir_name in ['calculation', 'COSMIC', 'Geom Optimization']:
+                            for dir_name in ['calculation', 'COSMIC', 'geometry_optimization', 'Geom Optimization']:
                                 if os.path.exists(dir_name):
                                     print(f"     Removing {dir_name}/")
                                     shutil.rmtree(dir_name)
                             # Also remove numbered variants
-                            for pattern in ['calculation_*', 'COSMIC_*', 'Geom Optimization_*']:
+                            for pattern in ['calculation_*', 'COSMIC_*', 'geometry_optimization_*', 'Geom Optimization_*']:
                                 for dir_path in glob.glob(pattern):
                                     if os.path.isdir(dir_path):
                                         print(f"     Removing {dir_path}/")
                                         shutil.rmtree(dir_path)
 
                         elif 'optimization' in [k.split('_')[0] for k in stages_to_restart]:
-                            # Restarting optimization: delete geom_optimization/ and later cosmic/
-                            for dir_name in ['Geom Optimization']:
+                            # Restarting optimization: delete geometry_optimization/ and later cosmic/
+                            for dir_name in ['geometry_optimization', 'Geom Optimization']:
                                 if os.path.exists(dir_name):
                                     print(f"     Removing {dir_name}/")
                                     shutil.rmtree(dir_name)
                             # Also remove numbered variants
-                            for pattern in ['Geom Optimization_*']:
+                            for pattern in ['geometry_optimization_*', 'Geom Optimization_*']:
                                 for dir_path in glob.glob(pattern):
                                     if os.path.isdir(dir_path):
                                         print(f"     Removing {dir_path}/")
@@ -18454,8 +18483,8 @@ MORE INFORMATION:
                     parent_name = os.path.basename(parent_dir)
                     current_dir_name = os.path.basename(run_dir)
                     
-                    # Check if we're in an "Annealing" directory structure with replicated runs
-                    # Pattern: Annealing/basename_N/ where N is the replica number
+                    # Check if we're in an "annealing" directory structure with replicated runs
+                    # Pattern: annealing/basename_N/ where N is the replica number
                     if parent_name.lower() == "annealing" and '_' in current_dir_name:
                         # Find all sibling replica directories
                         try:
