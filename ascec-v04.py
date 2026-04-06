@@ -12067,13 +12067,6 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
         def _do_detach():
             """Detach by spawning a fully detached child and exiting this process."""
-            # Print detach notice directly to the original terminal fd
-            _orig_stdout.write(
-                f"\n  ASCEC detaching (PID {os.getpid()}) — job keeps running.\n"
-                f"  Use 'ascec status' to monitor or kill.\n\n"
-            )
-            _orig_stdout.flush()
-
             # Flush current log stream before handoff.
             if _log_fh is not None:
                 try:
@@ -12117,6 +12110,13 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 _child_pid = 0
 
             if _child_pid > 0:
+                # Print detach notice with the real background PID.
+                _orig_stdout.write(
+                    f"\n  ASCEC detaching (PID {_child_pid}) — job keeps running.\n"
+                    f"  Use 'ascec status' to monitor or kill.\n\n"
+                )
+                _orig_stdout.flush()
+
                 # Hand off status row to detached child PID.
                 if _job_id:
                     _adopt_ascec_job(
