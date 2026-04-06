@@ -11094,25 +11094,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         except Exception:
             return False
 
-    def _relaunch_detached_background() -> None:
-        """Re-exec ASCEC as a detached child and exit the current background shell job."""
-        try:
-            cmd = [sys.executable, os.path.abspath(__file__)] + sys.argv[1:]
-            env = os.environ.copy()
-            env["ASCEC_DETACHED_CHILD"] = "1"
-            child = subprocess.Popen(
-                cmd,
-                cwd=os.getcwd(),
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-                close_fds=True,
-            )
-            os._exit(0 if child.pid > 0 else 1)
-        except Exception:
-            return
+    _background_tty_launch = use_cache and os.environ.get("ASCEC_DETACHED_CHILD") != "1" and _is_background_tty_run()
 
     # ── Duplicate-run guard (protocol/cached runs only) ─────────────────────
     if use_cache and os.environ.get("ASCEC_DETACHED_CHILD") != "1":
@@ -11130,8 +11112,6 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
     # If launched in the background from the shell, immediately re-exec as a
     # detached child so the shell job does not get stopped by terminal I/O.
-    if use_cache and os.environ.get("ASCEC_DETACHED_CHILD") != "1" and _is_background_tty_run():
-        _relaunch_detached_background()
     # ─────────────────────────────────────────────────────────────────────────
 
     def format_compact_wall_time(seconds: float) -> str:
@@ -12043,6 +12023,16 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             sys.stdout = _TeeStream(_orig_stdout, _log_fh)
             sys.stderr = _TeeStream(_orig_stderr, _log_fh)
 
+        if _background_tty_launch:
+            try:
+                _signal.signal(_signal.SIGTTIN, _signal.SIG_IGN)
+                _signal.signal(_signal.SIGTTOU, _signal.SIG_IGN)
+            except Exception:
+                pass
+            if _log_fh is not None:
+                sys.stdout = _LogOnlyStream(_log_fh)
+                sys.stderr = _LogOnlyStream(_log_fh)
+
         # Register (or rebind) job in the status database
         _reuse_job_id = 0
         try:
@@ -12193,7 +12183,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             except Exception:
                 pass
 
-        if sys.stdin.isatty():
+        if sys.stdin.isatty() and not _background_tty_launch:
             _watcher = _threading.Thread(target=_stdin_ctrl_d_watcher, daemon=True)
             _watcher.start()
     # ──────────────────────────────────────────────────────────────────────────
