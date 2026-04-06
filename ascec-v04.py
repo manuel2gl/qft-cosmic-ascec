@@ -11084,6 +11084,36 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     workflow_start_dt = datetime.now()
     cache_file: Optional[str] = None
 
+    def _is_background_tty_run() -> bool:
+        """Return True when attached to a TTY but not running in the foreground."""
+        try:
+            if not sys.stdin.isatty():
+                return False
+            tty_fd = sys.stdin.fileno()
+            return os.tcgetpgrp(tty_fd) != os.getpgrp()
+        except Exception:
+            return False
+
+    def _relaunch_detached_background() -> None:
+        """Re-exec ASCEC as a detached child and exit the current background shell job."""
+        try:
+            cmd = [sys.executable, os.path.abspath(__file__)] + sys.argv[1:]
+            env = os.environ.copy()
+            env["ASCEC_DETACHED_CHILD"] = "1"
+            child = subprocess.Popen(
+                cmd,
+                cwd=os.getcwd(),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+            os._exit(0 if child.pid > 0 else 1)
+        except Exception:
+            return
+
     # ── Duplicate-run guard (protocol/cached runs only) ─────────────────────
     if use_cache and os.environ.get("ASCEC_DETACHED_CHILD") != "1":
         _abs_input = os.path.abspath(input_file)
@@ -11097,6 +11127,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             print(f"  Job ID: {_dj['id']}  PID: {_dj['pid']}  Started: {_dj['started_at']}")
             print(f"  Run 'ascec status' to view or kill it.")
             return 1
+
+    # If launched in the background from the shell, immediately re-exec as a
+    # detached child so the shell job does not get stopped by terminal I/O.
+    if use_cache and os.environ.get("ASCEC_DETACHED_CHILD") != "1" and _is_background_tty_run():
+        _relaunch_detached_background()
     # ─────────────────────────────────────────────────────────────────────────
 
     def format_compact_wall_time(seconds: float) -> str:
