@@ -2596,7 +2596,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group" style="flex:0 0 85px; margin-bottom:0;">
                             <label>MaxIter</label>
-                            <input type="number" id="smart-opt-maxiter" value="80" min="10">
+                            <input type="number" id="smart-opt-maxiter" value="200" min="10">
                         </div>
                         <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                             <label>Job</label>
@@ -2655,7 +2655,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group" style="flex:0 0 85px; margin-bottom:0;">
                             <label>MaxIter</label>
-                            <input type="number" id="smart-ref-maxiter" value="50" min="10">
+                            <input type="number" id="smart-ref-maxiter" value="80" min="10">
                         </div>
                         <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                             <label>Job</label>
@@ -3197,7 +3197,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group">
                             <label>Max Iterations</label>
-                            <input type="number" id="adv-opt-maxiter" value="100" min="1" oninput="updateAllPreviews()">
+                            <input type="number" id="adv-opt-maxiter" value="200" min="1" oninput="updateAllPreviews()">
                         </div>
                     </div>
                     <div class="form-row">
@@ -3306,7 +3306,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group">
                             <label>Max Iterations</label>
-                            <input type="number" id="adv-ref-maxiter" value="50" min="1" oninput="updateAllPreviews()">
+                            <input type="number" id="adv-ref-maxiter" value="80" min="1" oninput="updateAllPreviews()">
                         </div>
                     </div>
                     <div class="form-row">
@@ -6700,7 +6700,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             const optConcurrent = document.getElementById('smart-opt-concurrent');
             if (optConcurrent) optConcurrent.value = '4';
             const optMaxiter = document.getElementById('smart-opt-maxiter');
-            if (optMaxiter) optMaxiter.value = (selectedMode === 'preliminar') ? '80' : '100';
+            if (optMaxiter) optMaxiter.value = '200';
             const optJob = document.getElementById('smart-opt-job');
             if (optJob) optJob.value = 'Opt';
 
@@ -8426,7 +8426,7 @@ end
             const method = getMethodValue('adv-opt');
             const basis = getAdvancedOptBasisValue();
             const job = document.getElementById('adv-opt-job')?.value || 'Opt NumFreq';
-            const maxiter = document.getElementById('adv-opt-maxiter')?.value || '100';
+            const maxiter = document.getElementById('adv-opt-maxiter')?.value || '200';
             const nprocs = document.getElementById('adv-opt-nprocs')?.value || '4';
             const maxcore = (document.getElementById('adv-opt-memory')?.value || '').trim();
             const charge = document.getElementById('adv-charge')?.value || '0';
@@ -8487,7 +8487,7 @@ end
                         const method = getMethodValue('adv-ref');
                         const basis = getAdvancedRefBasisValue();
             const job = document.getElementById('adv-ref-job')?.value || 'Opt Freq';
-            const maxiter = document.getElementById('adv-ref-maxiter')?.value || '50';
+            const maxiter = document.getElementById('adv-ref-maxiter')?.value || '80';
             const nprocs = document.getElementById('adv-ref-nprocs')?.value || '4';
                         const maxcore = (document.getElementById('adv-ref-memory')?.value || '').trim();
             const charge = document.getElementById('adv-charge')?.value || '0';
@@ -8748,7 +8748,7 @@ end
             const theory = document.getElementById('opt1-theory')?.value || 'xtb';
             const method = document.getElementById('opt1-method')?.value || 'GFN2-xTB';
             const job = document.getElementById('opt1-job')?.value || 'Opt NumFreq';
-            const maxiter = document.getElementById('opt1-maxiter')?.value || '100';
+            const maxiter = document.getElementById('opt1-maxiter')?.value || '200';
             const nprocs = document.getElementById('annealing-nprocs')?.value || '12';
             const memory = document.getElementById('annealing-memory')?.value || '2500';
             const charge = document.getElementById('basic-charge')?.value || '0';
@@ -8785,7 +8785,7 @@ end
             const theory = document.getElementById('opt2-theory')?.value || 'dft';
             const method = document.getElementById('opt2-method')?.value || 'B97-3c';
             const job = document.getElementById('opt2-job')?.value || 'Opt Freq';
-            const maxiter = document.getElementById('opt2-maxiter')?.value || '50';
+            const maxiter = document.getElementById('opt2-maxiter')?.value || '80';
             const nprocs = document.getElementById('annealing-nprocs')?.value || '12';
             const memory = document.getElementById('annealing-memory')?.value || '2500';
             const charge = document.getElementById('basic-charge')?.value || '0';
