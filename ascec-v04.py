@@ -4513,7 +4513,7 @@ def write_tvse_file(tvse_filepath: str, entry: Dict, state: SystemState):
         _print_verbose(f"Error writing energy evolution history to '{tvse_filepath}': {e}", 0, state)
 
 
-def create_launcher_script(replicated_files: List[str], input_dir: str, script_name: str = None) -> str:
+def create_launcher_script(replicated_files: List[str], input_dir: str, script_name: Optional[str] = None) -> str:
     """
     Creates a launcher script for sequential execution of replicated runs.
     Generates a .sh bash script on Linux/macOS and a .bat script on Windows.
@@ -5781,9 +5781,30 @@ def parse_xtb_options_from_launcher(launcher_content: str) -> str:
     return '--gfn 2 --opt'
 
 
+def _xtb_thread_env_prefix() -> str:
+    """Compatibility prefix used by legacy launcher branches; does not set thread count."""
+    return 'ASCEC_XTB_RUNTIME=1'
+
+
+def build_xtb_runtime_options(xtb_options: str, qm_nproc: Optional[int] = None,
+                              xtb_cycles: Optional[int] = None) -> str:
+    """Ensure xTB options include parallel and cycle limits from workflow/index settings."""
+    opts = ' '.join((xtb_options or '').split()).strip()
+
+    if qm_nproc and qm_nproc > 0 and '--parallel' not in opts:
+        opts = f"{opts} --parallel {qm_nproc}".strip()
+
+    if xtb_cycles and xtb_cycles > 0 and '--cycles' not in opts:
+        opts = f"{opts} --cycles {xtb_cycles}".strip()
+
+    return opts
+
+
 def calculate_input_files(template_file: str, launcher_template: Optional[str] = None, 
                           auto_select: str = 'interactive', stage_type: str = "optimization", 
-                          workflow_mode: bool = False, qm_alias: str = "orca") -> str:
+                          workflow_mode: bool = False, qm_alias: str = "orca",
+                          qm_nproc: Optional[int] = None,
+                          xtb_cycles: Optional[int] = None) -> str:
     """
     Unified function to create QM input files and launcher scripts for both
     optimization and refinement stages.
@@ -6035,6 +6056,13 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
     if qm_program == 'xtb' and '--opt' not in xtb_options:
         xtb_options = (xtb_options + ' --opt').strip()
 
+    # Use explicit values first; in workflow mode, fall back to current workflow context.
+    if qm_program == 'xtb':
+        wf_ctx = getattr(sys, '_current_workflow_context', None)
+        effective_qm_nproc = qm_nproc if qm_nproc is not None else getattr(wf_ctx, 'qm_nproc', None)
+        effective_xtb_cycles = xtb_cycles if xtb_cycles is not None else getattr(wf_ctx, 'xtb_cycles', None)
+        xtb_options = build_xtb_runtime_options(xtb_options, effective_qm_nproc, effective_xtb_cycles)
+
     if launcher_template and launcher_content:
         launcher_base_content = launcher_content
     elif qm_program == 'orca':
@@ -6089,7 +6117,7 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
                         cmd = f"{qm_executable} < {input_file} > {output_file}"
                     elif qm_program == 'xtb':
                         xtb_namespace = os.path.splitext(input_file)[0]
-                        cmd = f"{qm_executable} {input_file} {xtb_options} --namespace {xtb_namespace} > {output_file}"
+                        cmd = f"{qm_executable} {input_file} {xtb_options} --namespace {xtb_namespace} > {output_file} 2>&1"
                     else:  # orca
                         cmd = f"{qm_executable} {input_file} > {output_file}"
 
@@ -6124,7 +6152,7 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
                 for i, input_file in enumerate(launcher_input_files):
                     output_file = input_file.replace(input_ext, output_ext)
                     xtb_namespace = os.path.splitext(input_file)[0]
-                    cmd = f"xtb {input_file} {xtb_options} --namespace {xtb_namespace} > {output_file}"
+                    cmd = f"xtb {input_file} {xtb_options} --namespace {xtb_namespace} > {output_file} 2>&1"
                     if i < len(launcher_input_files) - 1:
                         f.write(f"{cmd} ; \\\n")
                     else:
@@ -9505,7 +9533,7 @@ def execute_box_analysis(input_file: str):
         
         # Parse the input file
         read_input_file(state, input_file)
-        state._input_file_path = input_file
+        state.input_file_path = input_file
 
         # Provide box length analysis using the existing function
         provide_box_length_advice(state)
@@ -9552,11 +9580,18 @@ class WorkflowContext:
     workflow_verbose_level: int = 0  # 0: silent, 1: -v, 2: -v2, 3: -v3
     max_launch_retries: int = 10  # Hardcoded retry attempts for launch failures only (instant crashes)
     ascec_parallel_cores: int = 0  # Number of cores for parallel processing (0 = auto-detect, capped at 12)
+    cosmic_opt_only: bool = False
+    optimization_job_wall_time: Optional[float] = None
+    optimization_total_cpu_time: Optional[float] = None
+    refinement_job_wall_time: Optional[float] = None
+    refinement_total_cpu_time: Optional[float] = None
     # Exclude patterns for optimization/refinement stages
     optimization_exclude_patterns: Dict[str, List[int]] = dataclasses.field(default_factory=dict)  # e.g., {'opt1': [2, 5, 6, 7, 8, 9]}
     refinement_exclude_patterns: Dict[str, List[int]] = dataclasses.field(default_factory=dict)  # e.g., {'ref1': [2, 5, 6, 7, 8, 9]}
     # QM program alias from input.in line 9 (e.g., "orca", "g16")
     qm_alias: str = "orca"  # Default to "orca" for ORCA installations
+    qm_nproc: Optional[int] = None  # QM nprocs parsed from index line 11
+    xtb_cycles: Optional[int] = 200  # Default xTB geometry cycle cap (overridden by index line 6)
     # Data capture attributes for protocol summary
     annealing_box_size: Optional[float] = None
     annealing_packing: Optional[float] = None
@@ -11600,9 +11635,16 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             # Only index provided, use default based on index
                             qm_idx = int(parts[0])
                             context.qm_alias = "orca" if qm_idx == 2 else "g16" if qm_idx == 1 else "orca"
+
+                    if config_line_count == 6:  # Line 6: max cycles
+                        parts = line.split('#')[0].strip().split()
+                        if parts:
+                            context.xtb_cycles = int(parts[0])
                     
                     if config_line_count == 11:  # Line 11: nprocs
                         parts = line.split('#')[0].strip().split()
+                        if parts:
+                            context.qm_nproc = int(parts[0])
                         if len(parts) > 1:
                             # User explicitly specified ASCEC cores
                             context.ascec_parallel_cores = int(parts[1])
@@ -11613,6 +11655,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     except (ValueError, IndexError, IOError):
         context.ascec_parallel_cores = 0  # Default to auto-detect if parsing fails
         context.qm_alias = "orca"  # Default alias
+        context.qm_nproc = None
+        context.xtb_cycles = 200
     
     # Use protocol-specific cache filename with random seed to support parallel protocols
     # First, check if there's an existing protocol cache file for THIS input file
@@ -14447,9 +14491,27 @@ def check_qm_output_completed(qm_program: str, output_path: str) -> bool:
             with open(output_path, 'r', encoding='utf-8', errors='replace') as f:
                 output_content = f.read()
             output_lower = output_content.lower()
+
+            if (
+                'normal termination of xtb' in output_lower
+                or 'geometry optimization converged' in output_lower
+                or 'optimized geometry written to' in output_lower
+            ):
+                return True
+
+            output_path_obj = Path(output_path)
+            workdir = output_path_obj.parent
+            basename = output_path_obj.stem
+            xtb_artifacts = [
+                workdir / f'{basename}.xtbopt.xyz',
+                workdir / 'xtbopt.xyz',
+                workdir / f'{basename}.xtbopt.log',
+                workdir / 'xtbopt.log',
+            ]
+            if any(path.exists() for path in xtb_artifacts):
+                return True
+
             return (
-                'normal termination of xtb' in output_lower or
-                'geometry optimization converged' in output_lower or
                 'total energy' in output_lower
             )
 
@@ -14536,7 +14598,8 @@ def _run_single_qm_job(job_info: Dict[str, Any]) -> Dict[str, Any]:
             elif qm_program == 'gaussian':
                 f.write(f"$GAUSS_ROOT/g16 {input_file_relative}\n")
             elif qm_program == 'xtb':
-                f.write(f"xtb {input_file_relative} {xtb_options} --namespace {script_basename} > {output_file_relative}\n")
+                f.write(f"export {_xtb_thread_env_prefix()}\n")
+                f.write(f"{_xtb_thread_env_prefix()} xtb {input_file_relative} {xtb_options} --namespace {script_basename} > {output_file_relative} 2>&1\n")
 
         os.chmod(temp_script, 0o755)
         script_name = os.path.basename(temp_script)
@@ -14672,8 +14735,10 @@ def _run_qm_calculations_with_concurrency(
             display_name = os.path.basename(job['input_file'])
             if not workflow_concise:
                 print(f"  Running: {display_name}...", end='', flush=True)
-            elif callable(getattr(context, 'update_progress', None)):
-                context.update_progress(f"{initial_completed_count + num_completed}/{num_inputs} ...")
+            else:
+                progress_cb = getattr(context, 'update_progress', None)
+                if callable(progress_cb):
+                    progress_cb(f"{initial_completed_count + num_completed}/{num_inputs} ...")
             result = _run_single_qm_job(job)
             _process_result(result)
     else:
@@ -14981,6 +15046,8 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             stage_type="optimization",
             workflow_mode=True,
             qm_alias=qm_alias,
+            qm_nproc=getattr(context, 'qm_nproc', None),
+            xtb_cycles=getattr(context, 'xtb_cycles', None),
         )
         # Check if calculate_input_files succeeded (returns string message)
         # Successfully created files contain "Created" in the message
@@ -15079,6 +15146,12 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                     # Resolve full ORCA path for the launcher
                     orca_exe_for_launcher = "orca"
                     xtb_options_for_launcher = parse_xtb_options_from_launcher(existing_launcher)
+                    if qm_program == 'xtb':
+                        xtb_options_for_launcher = build_xtb_runtime_options(
+                            xtb_options_for_launcher,
+                            getattr(context, 'qm_nproc', None),
+                            getattr(context, 'xtb_cycles', None),
+                        )
                     if qm_program == 'orca' and launcher_env_setup:
                         orca_exe_for_launcher = resolve_orca_executable_from_launcher(
                             launcher_env_setup, getattr(context, 'qm_alias', 'orca'))
@@ -15086,13 +15159,15 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                     with open(launcher_script, 'w') as lf:
                         if launcher_env_setup:
                             lf.write(launcher_env_setup + "\n\n")
+                        if qm_program == 'xtb':
+                            lf.write(f"export {_xtb_thread_env_prefix()}\n\n")
                         lf.write("###\n\n")
                         for i, inp_name in enumerate(launcher_inputs):
                             inp_base = os.path.splitext(inp_name)[0]
                             if qm_program == 'orca':
                                 cmd = f"{orca_exe_for_launcher} {inp_base}.inp > {inp_base}.out"
                             elif qm_program == 'xtb':
-                                cmd = f"xtb {inp_base}.xyz {xtb_options_for_launcher} --namespace {inp_base} > {inp_base}.out"
+                                cmd = f"{_xtb_thread_env_prefix()} xtb {inp_base}.xyz {xtb_options_for_launcher} --namespace {inp_base} > {inp_base}.out 2>&1"
                             else:
                                 cmd = f"g16 {inp_base}.com"
                             if i < len(launcher_inputs) - 1:
@@ -15192,7 +15267,11 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                         'max_launch_retries': max_launch_retries,
                         'launch_failure_threshold': launch_failure_threshold,
                         'orca_exe': orca_exe,
-                        'xtb_options': parse_xtb_options_from_launcher(launcher_content),
+                        'xtb_options': build_xtb_runtime_options(
+                            parse_xtb_options_from_launcher(launcher_content),
+                            getattr(context, 'qm_nproc', None),
+                            getattr(context, 'xtb_cycles', None),
+                        ),
                     })
 
                 # Run calculations with concurrency
@@ -15346,7 +15425,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                         try:
                             with open(_orca_sum_path, 'r') as _sf:
                                 _sc = _sf.read()
-                            _tm = re.search(r'Total execution time:\s+(\d+):(\d+):(\d+\.\d+)', _sc)
+                            _tm = __import__('re').search(r'Total execution time:\s+(\d+):(\d+):(\d+\.\d+)', _sc)
                             if _tm:
                                 context.optimization_total_cpu_time = (
                                     int(_tm.group(1)) * 3600 + int(_tm.group(2)) * 60 + float(_tm.group(3))
@@ -16221,8 +16300,13 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                     # Execute ORCA with full path
                     f.write(f"{orca_exe_for_launcher} {basename}.inp > {basename}.out")
                 elif qm_program == "xtb":
-                    xtb_opts = parse_xtb_options_from_template(template_content)
-                    f.write(f"xtb {basename}.xyz {xtb_opts} --namespace {basename} > {basename}.out")
+                    xtb_opts = build_xtb_runtime_options(
+                        parse_xtb_options_from_template(template_content),
+                        getattr(context, 'qm_nproc', None),
+                        getattr(context, 'xtb_cycles', None),
+                    )
+                    f.write(f"export {_xtb_thread_env_prefix()}\n")
+                    f.write(f"{_xtb_thread_env_prefix()} xtb {basename}.xyz {xtb_opts} --namespace {basename} > {basename}.out 2>&1")
                 else:
                     # For Gaussian, use g16 or g09
                     f.write(f"g16 {basename}.com")
@@ -16715,7 +16799,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                 try:
                     with open(_ref_sum_path, 'r') as _sf:
                         _sc = _sf.read()
-                    _tm = re.search(r'Total execution time:\s+(\d+):(\d+):(\d+\.\d+)', _sc)
+                    _tm = __import__('re').search(r'Total execution time:\s+(\d+):(\d+):(\d+\.\d+)', _sc)
                     if _tm:
                         context.refinement_total_cpu_time = (
                             int(_tm.group(1)) * 3600 + int(_tm.group(2)) * 60 + float(_tm.group(3))
