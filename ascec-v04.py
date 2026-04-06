@@ -17694,11 +17694,31 @@ def show_ascec_status() -> None:
         print(f"{'─'*62}")
         print(f"  Job {job['id']}  —  {job['status']}  ({os.path.basename(job['input_file'])})")
         print(f"{'─'*62}\n")
-        lines = _tail_lines(job['log_file'], 50)
+
+        lines = _tail_lines(job['log_file'], 200)
         if lines:
-            for ln in lines:
-                clean = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', ln.rstrip())
-                print(f"  {clean}")
+            clean_lines = [re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', ln.rstrip()) for ln in lines]
+
+            # Show only the final progress snapshot, not the full stream of redraws.
+            start_idx = None
+            for idx in range(len(clean_lines) - 1, -1, -1):
+                if clean_lines[idx].strip() == '=== COSMIC ASCEC ===':
+                    start_idx = idx
+                    break
+
+            if start_idx is not None:
+                snapshot = clean_lines[start_idx:]
+                for ln in snapshot:
+                    txt = ln.strip()
+                    if not txt:
+                        print()
+                        continue
+                    print(f"  {txt}")
+            else:
+                # Fallback: show only the last few meaningful lines.
+                fallback = [ln.strip() for ln in clean_lines if ln.strip()][-12:]
+                for ln in fallback:
+                    print(f"  {ln}")
         else:
             print("  (no log available)")
         print(f"\n{'─'*62}")
