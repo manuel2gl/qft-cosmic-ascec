@@ -1229,6 +1229,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             margin: 0;
         }
         .smart-pack-mini .custom-inline-editor input[type=number] {
+            appearance: textfield;
             -moz-appearance: textfield;
         }
 
@@ -1760,6 +1761,46 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             gap: 6px;
         }
 
+        .sampling-mode-title-row .smart-maxprint-toggle {
+            margin: 0;
+            gap: 8px;
+            padding: 6px 12px;
+            border: 1px solid #e4b78f;
+            border-radius: 999px;
+            background: linear-gradient(135deg, #fff6ee, #ffe7d3);
+            color: #8d4c16;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            box-shadow: 0 1px 0 rgba(141, 76, 22, 0.15);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .sampling-mode-title-row .smart-maxprint-toggle:hover {
+            border-color: #d68910;
+            box-shadow: 0 5px 14px rgba(214, 137, 16, 0.24);
+            transform: translateY(-1px);
+        }
+
+        .sampling-mode-title-row .smart-maxprint-toggle input[type="checkbox"] {
+            width: 15px;
+            height: 15px;
+            accent-color: #d35400;
+        }
+
+        .sampling-mode-title-row .smart-maxprint-toggle span {
+            font-size: 0.82em;
+            text-transform: uppercase;
+        }
+
+        .sampling-mode-title-row .smart-maxprint-toggle input[type="checkbox"]:checked + span {
+            background: #d35400;
+            color: #ffffff;
+            border-radius: 999px;
+            padding: 1px 8px;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+        }
+
         .sampling-mode-grid {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2171,6 +2212,39 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
         .toast.error { background: linear-gradient(135deg, #c0392b, #e74c3c); }
         .toast.warning { background: linear-gradient(135deg, #d68910, #f39c12); }
         .toast.info { background: linear-gradient(135deg, #2980b9, #3498db); }
+
+        .smart-help-toast {
+            position: fixed;
+            left: 16px;
+            bottom: 16px;
+            max-width: min(540px, calc(100vw - 32px));
+            padding: 10px 14px;
+            border-radius: 10px;
+            color: #ffffff;
+            background: linear-gradient(135deg, #1f5f8b, #2f86c1);
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+            font-size: 0.92em;
+            line-height: 1.35;
+            z-index: 10020;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: opacity 0.18s ease, transform 0.18s ease;
+            pointer-events: none;
+        }
+
+        .smart-help-toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        @media (max-width: 700px) {
+            .smart-help-toast {
+                left: 10px;
+                bottom: 10px;
+                max-width: calc(100vw - 20px);
+                font-size: 0.88em;
+            }
+        }
     </style>
 </head>
 
@@ -2208,7 +2282,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             <!-- Simulation Box Preview (Box 6) -->
             <div class="card smart-simulation-box">
                 <div class="card-title-row">
-                    <h2>Simulation Box</h2>
+                    <h2 id="smart-simulation-box-heading">Simulation Box</h2>
                     <span></span>
                 </div>
                 <div class="smart-simulation-layout">
@@ -2263,8 +2337,8 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                                 </div>
 
                                 <div class="smart-box-controls">
-                                    <button class="btn btn-sm btn-secondary" onclick="updateBasicBoxViewer()">Refresh</button>
-                                    <button class="btn btn-sm btn-secondary" onclick="randomizeBoxView()" style="background:#8e6fad; color:#fff; border-color:#8e6fad;">Visual Test</button>
+                                    <button id="smart-box-refresh-btn" class="btn btn-sm btn-secondary" onclick="updateBasicBoxViewer()">Refresh</button>
+                                    <button id="smart-box-visual-test-btn" class="btn btn-sm btn-secondary" onclick="randomizeBoxView()" style="background:#8e6fad; color:#fff; border-color:#8e6fad;">Visual Test</button>
                                     <button class="btn btn-sm btn-primary" onclick="downloadMoleculesXYZ()">Download XYZ</button>
                                     <button class="btn btn-sm btn-primary" onclick="downloadBoxXYZ()">Download Box XYZ</button>
                                     <div class="form-group" style="flex: 1; margin: 0; min-width: 200px;">
@@ -2334,7 +2408,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                 <!-- Box 8: Molecule Preview & Add -->
                 <div class="card mol-preview-card" id="basic-molecule-preview-card">
                     <div class="mol-preview-header">
-                        <h2 style="margin-bottom:0; flex:1;">Molecule Preview</h2>
+                        <h2 id="basic-molecule-preview-heading" style="margin-bottom:0; flex:1;">Molecule Preview</h2>
                     </div>
                     <div id="basic-molecule-menu" class="molecule-menu-panel" aria-hidden="true">
                         <div class="molecule-menu-head">Added Molecules (<span id="basic-molecule-menu-total">0</span>)</div>
@@ -2362,13 +2436,13 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <div class="inline-group" style="margin-top: 15px; align-items: flex-end; gap: 8px;">
                             <input type="number" id="basic-mol-count" value="1" min="1" max="20"
                                 style="height: 38px; width: 56px; text-align: center; flex-shrink: 0;" title="Count">
-                            <button class="btn btn-success" style="flex: 1.15; min-width: 90px; height: 38px; padding: 0 10px;"
+                            <button id="basic-add-molecule-btn" class="btn btn-success" style="flex: 1.15; min-width: 90px; height: 38px; padding: 0 10px;"
                                 onclick="basicAddMolecule()">➕ Add</button>
                             <button class="btn btn-secondary" style="flex: 0.85; min-width: 78px; height: 38px; padding: 0 10px;" title="Copy XYZ"
                                 onclick="copyBasicXYZ()">📋 XYZ</button>
                             <button class="btn btn-secondary" style="flex: 0.95; min-width: 92px; height: 38px; padding: 0 10px;" title="Copy SMILES"
                                 onclick="copyBasicSMILES()">📋 SMILES</button>
-                            <button class="btn btn-danger" style="flex: 1.15; min-width: 96px; height: 38px; padding: 0 10px;"
+                            <button id="basic-clear-molecules-btn" class="btn btn-danger" style="flex: 1.15; min-width: 96px; height: 38px; padding: 0 10px;"
                                 onclick="clearAllMolecules()">🗑️ Clear (<span id="basic-mol-count-display">0</span>)</button>
                             <button type="button" id="basic-molecule-menu-btn" class="molecule-menu-btn" title="Molecule list" style="height: 38px; width: 38px; flex-shrink: 0;" onclick="toggleBasicMoleculeMenu(event)">☰</button>
                         </div>
@@ -2380,9 +2454,9 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             <div class="card sampling-mode-card">
                 <div class="sampling-mode-title-row">
                     <h2>Sampling Mode</h2>
-                    <label class="auto-box-compact" title="Maxprint saves all QM output files and can consume significant disk space." onmouseenter="showMaxprintDiskAlert()">
+                    <label class="auto-box-compact smart-maxprint-toggle" title="Maxprint saves all QM output files and can consume significant disk space." onmouseenter="showMaxprintDiskAlert()">
                         <input type="checkbox" id="smart-maxprint" onchange="toggleMaxprintFromSmart()">
-                        maxprint
+                        <span>maxprint</span>
                     </label>
                 </div>
                 <div class="sampling-mode-grid">
@@ -2774,7 +2848,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     </div>
                     <span class="pipeline-arrow-small">→</span>
                     <div class="pipeline-step-compact">
-                        <span class="pipeline-step-label optimization">Geo. Optimization</span>
+                        <span class="pipeline-step-label optimization">Geometry Optimization</span>
                         <span class="pipeline-step-theory" id="smart-pipe-opt">GFN2-xTB</span>
                     </div>
                     <span class="pipeline-arrow-small">→</span>
@@ -2784,7 +2858,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     </div>
                     <span class="pipeline-arrow-small" id="smart-pipe-ref-arrow">→</span>
                     <div class="pipeline-step-compact" id="smart-pipe-ref-step">
-                        <span class="pipeline-step-label refinement">Geo. Refinement</span>
+                        <span class="pipeline-step-label refinement">Geometry Refinement</span>
                         <span class="pipeline-step-theory" id="smart-pipe-ref">B97-3c</span>
                     </div>
                     <span class="pipeline-arrow-small" id="smart-pipe-sim2-arrow">→</span>
@@ -2794,7 +2868,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     </div>
                     <span class="pipeline-arrow-small" id="smart-pipe-eref-arrow" style="display:none;">→</span>
                     <div class="pipeline-step-compact" id="smart-pipe-eref-step" style="display:none;">
-                        <span class="pipeline-step-label refinement" style="background:#e74c3c;">E-Refine</span>
+                        <span class="pipeline-step-label refinement" style="background:#e74c3c;">Energy Refinement</span>
                         <span class="pipeline-step-theory" id="smart-pipe-eref">DLPNO-CCSD(T)</span>
                     </div>
                     <span class="pipeline-arrow-small">→</span>
@@ -2832,7 +2906,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     </div>
                     <span class="pipeline-arrow-small">→</span>
                     <div class="pipeline-step-compact">
-                        <span class="pipeline-step-label optimization">Geo. Optimization</span>
+                        <span class="pipeline-step-label optimization">Geometry Optimization</span>
                         <span class="pipeline-step-theory" id="pipe-opt-theory">GFN2-xTB</span>
                     </div>
                     <span class="pipeline-arrow-small">→</span>
@@ -2842,7 +2916,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     </div>
                     <span class="pipeline-arrow-small" id="adv-pipe-ref-arrow">→</span>
                     <div class="pipeline-step-compact" id="adv-pipe-ref-step">
-                        <span class="pipeline-step-label refinement">Geo. Refinement</span>
+                        <span class="pipeline-step-label refinement">Geometry Refinement</span>
                         <span class="pipeline-step-theory" id="pipe-ref-theory">B3LYP</span>
                     </div>
                     <span class="pipeline-arrow-small" id="adv-pipe-sim2-arrow">→</span>
@@ -2852,7 +2926,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     </div>
                     <span class="pipeline-arrow-small" id="adv-pipe-eref-arrow" style="display:none;">→</span>
                     <div class="pipeline-step-compact" id="adv-pipe-eref-step" style="display:none;">
-                        <span class="pipeline-step-label refinement" style="background:#e74c3c;">E-Refine</span>
+                        <span class="pipeline-step-label refinement" style="background:#e74c3c;">Energy Refinement</span>
                         <span class="pipeline-step-theory" id="adv-pipe-eref">DLPNO-CCSD(T)</span>
                     </div>
                     <span class="pipeline-arrow-small">→</span>
@@ -2991,7 +3065,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group">
                             <label>Floor Value</label>
-                            <input type="number" id="mc-floor" value="50" min="1" oninput="updatePreview()">
+                            <input type="number" id="mc-floor" value="10" min="1" oninput="updatePreview()">
                         </div>
                         <div class="form-group">
                             <label>Max Displacement (A)</label>
@@ -4052,6 +4126,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
             // Add drag-drop support to molecule viewer
             setupMolViewerDropZone();
+            setupSmartModeParameterHelp();
 
             // Add change listeners for smart mode tab
             // Exclude top Simulation Box controls; they have dedicated handlers.
@@ -6760,14 +6835,170 @@ H  -0.757000  0.586000  0.000000"></textarea>
             updatePreview();
         }
 
-        let maxprintHoverWarnedAt = 0;
-        function showMaxprintDiskAlert() {
-            const now = Date.now();
-            if (now - maxprintHoverWarnedAt < 4000) return;
-            maxprintHoverWarnedAt = now;
-            if (typeof toast === 'function') {
-                toast('Maxprint saves all QM output files and can consume significant disk space.', 'info', 5000);
+        const SMART_MODE_HELP_TEXTS = {
+            'smart-simulation-box-heading': 'Main area to define and inspect the simulation box before export',
+            'smart-box-size-top': 'Box length in angstroms for the simulation box',
+            'smart-packing-top-input': 'Packing %: The percentage of the box occupied by your system. Set a lower value for a sparse box with plenty of empty space, or a higher value to pack molecules tightly',
+            'smart-packing-top-custom': 'Packing %: The percentage of the box occupied by your system. Set a lower value for a sparse box with plenty of empty space, or a higher value to pack molecules tightly',
+            'smart-use-packing-top': 'Automatically compute box length from packing',
+            'smart-box-refresh-btn': 'Refresh the 3D simulation box view with current values',
+            'smart-box-visual-test-btn': 'Place random test molecules to quickly inspect box occupancy',
+            'smart-maxprint': 'Stores all QM outputs; high disk usage',
+            'smart-annealing-theory': 'Annealing theory family',
+            'smart-annealing-method': 'Annealing method',
+            'smart-annealing-method-custom': 'Custom annealing method',
+            'smart-annealing-basis': 'Annealing basis set',
+            'smart-annealing-basis-custom': 'Custom annealing basis',
+            'smart-annealing-nprocs': 'Cores per annealing job',
+            'smart-annealing-concurrent': 'Parallel annealing jobs',
+            'smart-charge': 'Total molecular charge',
+            'smart-multiplicity': 'Total spin multiplicity for the full system',
+            'smart-use-packing': 'Auto box from packing',
+            'smart-quench-route': 'Cooling route type',
+            'smart-quench-ti': 'Initial quench temperature (K)',
+            'smart-quench-factor': 'Quench factor per step (%)',
+            'smart-quench-steps': 'Number of quench steps',
+            'smart-replicas': 'Independent replicas',
+            'smart-packing': 'Packing %: The percentage of the box occupied by your system. Set a lower value for a sparse box with plenty of empty space, or a higher value to pack molecules tightly',
+            'smart-packing-custom': 'Packing %: The percentage of the box occupied by your system. Set a lower value for a sparse box with plenty of empty space, or a higher value to pack molecules tightly',
+            'smart-box-size': 'Manual box size (A)',
+            'smart-opt-theory': 'Optimization theory family',
+            'smart-opt-method': 'Optimization method',
+            'smart-opt-basis': 'Optimization basis set',
+            'smart-opt-basis-custom': 'Custom optimization basis',
+            'smart-opt-nprocs': 'Cores per optimization job',
+            'smart-opt-concurrent': 'Parallel optimization jobs',
+            'smart-opt-maxiter': 'Optimization max iterations',
+            'smart-opt-job': 'Optimization job type',
+            'smart-ref-enabled': 'Enable geometry refinement',
+            'smart-ref-theory': 'Refinement theory family',
+            'smart-ref-method': 'Refinement method',
+            'smart-ref-basis': 'Refinement basis set',
+            'smart-ref-basis-custom': 'Custom refinement basis',
+            'smart-ref-nprocs': 'Cores per refinement job',
+            'smart-ref-concurrent': 'Parallel refinement jobs',
+            'smart-ref-maxiter': 'Refinement max iterations',
+            'smart-ref-job': 'Refinement job type',
+            'smart-energy-ref-enabled': 'Enable energy refinement',
+            'smart-eref-theory': 'Energy refinement theory family',
+            'smart-eref-method': 'Energy refinement method',
+            'smart-eref-basis': 'Energy refinement basis set',
+            'smart-eref-basis-custom': 'Custom energy basis',
+            'smart-eref-nprocs': 'Cores per energy job',
+            'smart-eref-memory': 'MaxCore memory (MB)',
+            'smart-eref-job': 'Energy job type (SP/Freq)',
+            'smart-sim-same': 'Use same COSMIC settings for both stages',
+            'smart-sim-th': 'COSMIC 1 threshold',
+            'smart-sim-rmsd-th': 'COSMIC 1 RMSD cutoff',
+            'smart-sim-j': 'COSMIC 1 parallel workers',
+            'smart-sim2-th': 'COSMIC 2 threshold',
+            'smart-sim2-rmsd-th': 'COSMIC 2 RMSD cutoff',
+            'smart-sim2-j': 'COSMIC 2 parallel workers',
+            'smart-sim-name': 'Simulation name prefix',
+            'basic-molecule-preview-heading': 'Preview generated molecules before adding them to the simulation box',
+            'basic-mol-count': 'Number of copies to add for the current molecule',
+            'basic-add-molecule-btn': 'Add the current molecule and count to the box',
+            'basic-clear-molecules-btn': 'Remove all molecules currently added to the box',
+            'basic-molecule-menu-btn': 'Open the molecule list menu'
+        };
+
+        const SMART_MODE_SAMPLING_HELP_TEXTS = {
+            preliminar: 'Preliminar: stop after optimization',
+            rigorous: 'Rigorous: includes geometry refinement',
+            complete: 'Complete: includes energy refinement'
+        };
+
+        const SMART_MODE_POPUP_KEYS = new Set([
+            'smart-simulation-box-heading',
+            'smart-box-size-top',
+            'smart-packing-top-input',
+            'smart-packing-top-custom',
+            'smart-packing',
+            'smart-packing-custom',
+            'smart-use-packing-top',
+            'smart-box-refresh-btn',
+            'smart-box-visual-test-btn',
+            'basic-molecule-preview-heading',
+            'basic-mol-count',
+            'basic-add-molecule-btn',
+            'basic-clear-molecules-btn',
+            'basic-molecule-menu-btn',
+            'smart-maxprint'
+        ]);
+
+        let smartHelpToastTimer = null;
+
+        function showSmartHelpPopup(message, duration = 3800) {
+            if (!message) return;
+
+            const previous = document.getElementById('smart-help-toast');
+            if (previous) previous.remove();
+            if (smartHelpToastTimer) {
+                clearTimeout(smartHelpToastTimer);
+                smartHelpToastTimer = null;
             }
+
+            const popup = document.createElement('div');
+            popup.id = 'smart-help-toast';
+            popup.className = 'smart-help-toast';
+            popup.textContent = message;
+            document.body.appendChild(popup);
+
+            requestAnimationFrame(() => popup.classList.add('show'));
+
+            smartHelpToastTimer = setTimeout(() => {
+                popup.classList.remove('show');
+                setTimeout(() => {
+                    if (popup.parentNode) popup.parentNode.removeChild(popup);
+                }, 180);
+            }, duration);
+        }
+
+        function showSmartHelpToast(key, fallbackText) {
+            const message = SMART_MODE_HELP_TEXTS[key] || fallbackText;
+            if (!message) return;
+            showSmartHelpPopup(message, 3800);
+        }
+
+        function bindSmartHelpToElement(element, key, fallbackText) {
+            if (!element || element.dataset.smartHelpBound === '1') return;
+
+            const text = SMART_MODE_HELP_TEXTS[key] || fallbackText;
+            if (text && !element.getAttribute('title')) {
+                element.setAttribute('title', text);
+            }
+
+            if (!SMART_MODE_POPUP_KEYS.has(key)) {
+                element.dataset.smartHelpBound = '1';
+                return;
+            }
+
+            const showHelp = () => showSmartHelpToast(key, fallbackText);
+            element.addEventListener('mouseenter', showHelp);
+            element.addEventListener('focus', showHelp);
+            element.addEventListener('touchstart', showHelp, { passive: true });
+            element.dataset.smartHelpBound = '1';
+        }
+
+        function setupSmartModeParameterHelp() {
+            Object.keys(SMART_MODE_HELP_TEXTS).forEach((id) => {
+                const control = document.getElementById(id);
+                bindSmartHelpToElement(control, id, 'Smart Mode parameter');
+
+                const label = document.querySelector(`label[for="${id}"]`) || control?.closest('label');
+                bindSmartHelpToElement(label, id, SMART_MODE_HELP_TEXTS[id]);
+            });
+
+            document.querySelectorAll('#basic-tab [data-sampling-mode]').forEach((button) => {
+                const mode = button.getAttribute('data-sampling-mode') || 'preliminar';
+                const key = `sampling-${mode}`;
+                const hint = SMART_MODE_SAMPLING_HELP_TEXTS[mode] || '';
+                if (hint && !button.getAttribute('title')) button.setAttribute('title', hint);
+            });
+        }
+
+        function showMaxprintDiskAlert() {
+            showSmartHelpToast('smart-maxprint', SMART_MODE_HELP_TEXTS['smart-maxprint']);
         }
 
         // Update Smart Mode annealing method based on theory
@@ -8435,21 +8666,26 @@ end
             const rescueMethod = sanitizeRescueMethodForFallback(rescueMethodRaw);
             let rescueHess = (document.getElementById('adv-opt-rescue-hess')?.value || '').trim().toLowerCase();
 
-            if (rescueHess !== 'num' && rescueHess !== 'freq') {
-                rescueHess = (rescueMethod.includes('GFN') || rescueMethod.includes('xTB') || rescueMethod.includes('FF')) ? 'num' : 'freq';
-            }
-
             const standaloneXtb = isStandaloneXtbTheory(theory);
+
+            if (rescueHess !== 'num' && rescueHess !== 'freq') {
+                if (standaloneXtb) {
+                    rescueHess = 'freq';  // xTB has analytical Hessian
+                } else {
+                    rescueHess = (rescueMethod.includes('GFN') || rescueMethod.includes('xTB') || rescueMethod.includes('FF')) ? 'num' : 'freq';
+                }
+            }
 
             if (standaloneXtb) {
                 const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
                 const xtbRescue = String(rescueMethod || xtbMethod).replace(/^(Native-)+/, '');
-                // xTB has analytical Hessian, so default to freq
-                const xtbRescueHess = (rescueHess === 'num') ? 'num' : 'freq';
+                const xtbRescueHess = rescueHess;
                 const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? 'Opt Freq' : 'Opt';
                 const input = `#name
 #rescue(${xtbRescue}/${xtbRescueHess})
-# ${xtbMethod} ${xtbJob}`;
+# ${xtbMethod} ${xtbJob}
+# nprocs ${nprocs}
+# maxiter ${maxiter}`;
                 const textarea = document.getElementById('orca-input1');
                 if (textarea) textarea.value = input;
                 return;
@@ -8496,20 +8732,26 @@ end
                         const rescueMethod = sanitizeRescueMethodForFallback(rescueMethodRaw);
                         let rescueHess = (document.getElementById('adv-ref-rescue-hess')?.value || '').trim().toLowerCase();
 
-                        if (rescueHess !== 'num' && rescueHess !== 'freq') {
-                                rescueHess = (rescueMethod.includes('GFN') || rescueMethod.includes('xTB') || rescueMethod.includes('FF')) ? 'num' : 'freq';
-                        }
-
                         const standaloneXtb = isStandaloneXtbTheory(theory);
+
+                        if (rescueHess !== 'num' && rescueHess !== 'freq') {
+                            if (standaloneXtb) {
+                                rescueHess = 'freq';  // xTB has analytical Hessian
+                            } else {
+                                rescueHess = (rescueMethod.includes('GFN') || rescueMethod.includes('xTB') || rescueMethod.includes('FF')) ? 'num' : 'freq';
+                            }
+                        }
 
                         if (standaloneXtb) {
                             const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
                             const xtbRescue = String(rescueMethod || xtbMethod).replace(/^(Native-)+/, '');
-                            const xtbRescueHess = (rescueHess === 'num') ? 'num' : 'freq';
+                            const xtbRescueHess = rescueHess;
                             const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? 'Opt Freq' : 'Opt';
                             const input = `#name
 #rescue(${xtbRescue}/${xtbRescueHess})
-# ${xtbMethod} ${xtbJob}`;
+# ${xtbMethod} ${xtbJob}
+# nprocs ${nprocs}
+# maxiter ${maxiter}`;
                             const textarea = document.getElementById('orca-input2');
                             if (textarea) textarea.value = input;
                             return;
