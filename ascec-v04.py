@@ -11084,6 +11084,21 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     workflow_start_dt = datetime.now()
     cache_file: Optional[str] = None
 
+    # ── Duplicate-run guard (protocol/cached runs only) ─────────────────────
+    if use_cache and os.environ.get("ASCEC_DETACHED_CHILD") != "1":
+        _abs_input = os.path.abspath(input_file)
+        _dup = [j for j in _get_recent_jobs()
+                if j['status'] == 'running'
+                and j['input_file'] == _abs_input
+                and _is_pid_alive(j['pid'])]
+        if _dup:
+            _dj = _dup[0]
+            print(f"\nWARNING: '{input_file}' is already running")
+            print(f"  Job ID: {_dj['id']}  PID: {_dj['pid']}  Started: {_dj['started_at']}")
+            print(f"  Run 'ascec status' to view or kill it.")
+            return 1
+    # ─────────────────────────────────────────────────────────────────────────
+
     def format_compact_wall_time(seconds: float) -> str:
         total_seconds = max(0, int(seconds))
         days = total_seconds // 86400
@@ -11874,6 +11889,280 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             cache['total_stages'] = len(stages)
             save_protocol_cache(cache, cache_file)
     
+    # ── Terminal independence: SIGHUP immunity + tee log + job registry ───────
+    # Only set up background tracking for protocol (cached) runs.
+    # Simple commands like 'ascec input.asc r3' run without tracking overhead.
+    import signal as _signal
+
+    _job_id: int = 0
+    _log_fh = None
+    _orig_stdout = sys.stdout
+    _orig_stderr = sys.stderr
+    _progress_legacy_file: str = os.path.join(os.getcwd(), ".ascec_progress.json")
+    _progress_file: str = _progress_legacy_file
+    _progress_stream = None
+
+    def _remove_progress_file():
+        """Remove .ascec_progress.json and its temp file from the working directory."""
+        # Close process-tied temp stream first (if used).
+        if _progress_stream is not None:
+            try:
+                _progress_stream.close()
+            except Exception:
+                pass
+
+        # Clean legacy on-disk artifacts (fallback mode / old runs).
+        for p in (_progress_legacy_file, _progress_legacy_file + ".tmp"):
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+            except OSError:
+                pass
+
+        # Best-effort cleanup of stale temp progress files from older runs.
+        try:
+            for p in glob.glob(os.path.join(os.getcwd(), ".ascec_progress_*.json")):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    if use_cache:
+        # Low-overhead process-tied progress file: points to an open FD path.
+        # When this process dies (even SIGKILL), the FD vanishes automatically.
+        try:
+            import tempfile as _tempfile
+            _fd, _tmp_path = _tempfile.mkstemp(
+                suffix='.json',
+                prefix='.ascec_progress_',
+                dir=os.getcwd(),
+                text=True,
+            )
+            _progress_stream = os.fdopen(_fd, 'w+')
+            try:
+                # Remove directory entry immediately; file lives only via open FD.
+                os.unlink(_tmp_path)
+            except OSError:
+                pass
+            _progress_file = f"/proc/{os.getpid()}/fd/{_progress_stream.fileno()}"
+        except Exception:
+            _progress_stream = None
+            _progress_file = _progress_legacy_file
+
+        # Survive SSH disconnect / terminal close
+        _signal.signal(_signal.SIGHUP, _signal.SIG_IGN)
+
+        # Open a persistent log file for this run (used by 'ascec status' view)
+        _state_dir = _ascec_state_dir()
+        (_state_dir / "logs").mkdir(parents=True, exist_ok=True)
+        _ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        _safe_name = re.sub(r'[^\w.-]', '_', os.path.basename(input_file))
+        _log_file = str(_state_dir / "logs" / f"{_safe_name}_{_ts_str}.log")
+        try:
+            _log_fh = open(_log_file, 'w', buffering=1)
+        except OSError:
+            _log_fh = None
+
+        # Tee stdout/stderr: write to both terminal and log file.
+        # When the terminal dies (SSH disconnect), writes silently continue to log only.
+        class _TeeStream:
+            def __init__(self, primary, log):
+                self._p = primary
+                self._l = log
+                self._dead = False
+                # Propagate attributes that library code may inspect
+                self.encoding = getattr(primary, 'encoding', 'utf-8')
+                self.errors = getattr(primary, 'errors', 'replace')
+
+            def write(self, data):
+                if self._l is not None:
+                    try:
+                        self._l.write(data)
+                        self._l.flush()
+                    except Exception:
+                        pass
+                if not self._dead:
+                    try:
+                        self._p.write(data)
+                        self._p.flush()
+                    except (OSError, IOError):
+                        self._dead = True
+
+            def flush(self):
+                if self._l is not None:
+                    try: self._l.flush()
+                    except Exception: pass
+
+            def isatty(self):
+                return not self._dead and getattr(self._p, 'isatty', lambda: False)()
+
+            def fileno(self):
+                try:
+                    return self._p.fileno()
+                except (AttributeError, OSError):
+                    raise OSError("stream does not support fileno()")
+
+        if _log_fh is not None:
+            sys.stdout = _TeeStream(_orig_stdout, _log_fh)
+            sys.stderr = _TeeStream(_orig_stderr, _log_fh)
+
+        # Register (or rebind) job in the status database
+        _reuse_job_id = 0
+        try:
+            _reuse_job_id = int(os.environ.get("ASCEC_REUSE_JOB_ID", "0") or "0")
+        except (TypeError, ValueError):
+            _reuse_job_id = 0
+
+        if _reuse_job_id > 0 and _adopt_ascec_job(
+            _reuse_job_id,
+            os.getpid(),
+            _log_file if _log_fh is not None else "",
+            _progress_file,
+        ):
+            _job_id = _reuse_job_id
+        else:
+            _job_id = _register_ascec_job(
+                os.path.abspath(input_file),
+                os.getcwd(),
+                cache_file or "",
+                _log_file if _log_fh is not None else "",
+                _progress_file,
+            )
+
+        # SIGTERM handler: update job status when killed via 'ascec status K <id>'
+        def _handle_sigterm(signum, frame):
+            _update_ascec_job(_job_id, 'killed')
+            _remove_progress_file()
+            sys.stdout = _orig_stdout
+            sys.stderr = _orig_stderr
+            if _log_fh is not None:
+                try: _log_fh.close()
+                except Exception: pass
+            raise SystemExit(1)
+
+        _signal.signal(_signal.SIGTERM, _handle_sigterm)
+
+        # Ctrl+D detach: background thread watches stdin for EOT byte (0x04).
+        # When detected: relaunches this command detached and exits foreground
+        # process so the shell prompt returns immediately on any shell.
+        import threading as _threading
+        import subprocess as _subprocess
+
+        class _LogOnlyStream:
+            """Write-only stream that goes to the log file only (no terminal)."""
+            def __init__(self, log):
+                self._l = log
+                self.encoding = 'utf-8'
+                self.errors = 'replace'
+            def write(self, data):
+                try: self._l.write(data); self._l.flush()
+                except Exception: pass
+            def flush(self):
+                try: self._l.flush()
+                except Exception: pass
+            def isatty(self): return False
+            def fileno(self): raise OSError("detached log-only stream")
+
+        def _do_detach():
+            """Detach by spawning a fully detached child and exiting this process."""
+            # Print detach notice directly to the original terminal fd
+            _orig_stdout.write(
+                f"\n  ASCEC detaching (PID {os.getpid()}) — job keeps running.\n"
+                f"  Use 'ascec status' to monitor or kill.\n\n"
+            )
+            _orig_stdout.flush()
+
+            # Flush current log stream before handoff.
+            if _log_fh is not None:
+                try:
+                    _log_fh.flush()
+                except Exception:
+                    pass
+
+            # Relaunch same command fully detached from terminal/session.
+            _child_pid = 0
+            try:
+                _cmd = [sys.executable, os.path.abspath(__file__)] + sys.argv[1:]
+                _env = os.environ.copy()
+                _env["ASCEC_DETACHED_CHILD"] = "1"
+                if _job_id:
+                    _env["ASCEC_REUSE_JOB_ID"] = str(_job_id)
+
+                _child_log = _subprocess.DEVNULL
+                _child_log_handle = None
+                if _log_fh is not None:
+                    _child_log_handle = open(_log_file, 'a', buffering=1)
+                    _child_log = _child_log_handle
+
+                _child = _subprocess.Popen(
+                    _cmd,
+                    cwd=os.getcwd(),
+                    env=_env,
+                    stdin=_subprocess.DEVNULL,
+                    stdout=_child_log,
+                    stderr=_child_log,
+                    start_new_session=True,
+                    close_fds=True,
+                )
+                _child_pid = int(_child.pid)
+
+                if _child_log_handle is not None:
+                    try:
+                        _child_log_handle.close()
+                    except Exception:
+                        pass
+            except Exception:
+                _child_pid = 0
+
+            if _child_pid > 0:
+                # Hand off status row to detached child PID.
+                if _job_id:
+                    _adopt_ascec_job(
+                        _job_id,
+                        _child_pid,
+                        _log_file if _log_fh is not None else "",
+                        _progress_file,
+                    )
+
+                # Restore terminal streams and close handles before exiting foreground process.
+                sys.stdout = _orig_stdout
+                sys.stderr = _orig_stderr
+                if _log_fh is not None:
+                    try:
+                        _log_fh.close()
+                    except Exception:
+                        pass
+                os._exit(0)
+
+            # Fallback: stay attached if detach relaunch failed.
+            _orig_stdout.write("  Warning: detach failed; continuing in foreground.\n")
+            _orig_stdout.flush()
+
+        def _stdin_ctrl_d_watcher():
+            """Daemon thread: read raw bytes from stdin; trigger detach on Ctrl+D."""
+            try:
+                import select as _sel
+                _stdin_obj = getattr(sys, '__stdin__', None)
+                if _stdin_obj is None:
+                    return
+                fd = _stdin_obj.fileno()
+                while True:
+                    if _sel.select([fd], [], [], 1.0)[0]:
+                        byte = os.read(fd, 1)
+                        # Ctrl+D in cooked mode → empty read (EOF flush) or 0x04
+                        if byte in (b'', b'\x04'):
+                            _do_detach()
+                            break
+            except Exception:
+                pass
+
+        if sys.stdin.isatty():
+            _watcher = _threading.Thread(target=_stdin_ctrl_d_watcher, daemon=True)
+            _watcher.start()
+    # ──────────────────────────────────────────────────────────────────────────
+
     # Pre-scan stages to extract cosmic args for use in optimization stage
     for stage in stages:
         if stage['type'] == 'cosmic':
@@ -11983,6 +12272,34 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             print(line)
         progress_lines = len(lines)
         last_progress_render = render_snapshot
+
+        # Write machine-readable progress state for 'ascec status' re-attachment.
+        # Prefer process-tied stream (auto-vanishes on process death); fallback
+        # to legacy on-disk file with atomic replace.
+        try:
+            _prog_state = {
+                "job_id": _job_id,
+                "input_file": input_file,
+                "stages_total": total,
+                "stages_completed": completed_stages,
+                "current_stage_num": current_stage_num,
+                "pct": round(pct, 1),
+                "sub_progress": sub_progress,
+                "stage_lines": stage_lines,
+                "updated": time.strftime('%Y-%m-%d %H:%M:%S'),
+            }
+            if _progress_stream is not None:
+                _progress_stream.seek(0)
+                _progress_stream.truncate(0)
+                json.dump(_prog_state, _progress_stream)
+                _progress_stream.flush()
+            else:
+                _tmp_prog = _progress_file + ".tmp"
+                with open(_tmp_prog, 'w') as _pf:
+                    json.dump(_prog_state, _pf)
+                os.replace(_tmp_prog, _progress_file)
+        except Exception:
+            pass
 
     context.completed_stage_count = 0
     last_progress_call: Optional[Tuple[int, int, str]] = None
@@ -12170,10 +12487,12 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     if total_energy_evals > 0:
                         result_data['energy_evals'] = total_energy_evals
                     
-                    update_protocol_cache(stage_key, 'completed', 
-                                        result=result_data, 
+                    update_protocol_cache(stage_key, 'completed',
+                                        result=result_data,
                                         cache_file=cache_file)
-                
+                    if use_cache and cache_file:
+                        generate_protocol_summary(cache_file=cache_file)
+
                 if result != 0:
                     print(f"\nError: Annealing failed with code {result}")
                     return result
@@ -12435,6 +12754,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
                         update_protocol_cache(calc_key, 'completed',
                                             result=calc_result, cache_file=cache_file)
+                        if use_cache and cache_file:
+                            generate_protocol_summary(cache_file=cache_file)
 
                         cosmic_result = {}
 
@@ -12500,6 +12821,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
                         update_protocol_cache(cosmic_key, 'completed',
                                             result=cosmic_result, cache_file=cache_file)
+                        if use_cache and cache_file:
+                            generate_protocol_summary(cache_file=cache_file)
 
                     # Check if workflow should pause after optimization stage
                     if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
@@ -12685,6 +13008,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
                     update_protocol_cache(cosmic_key, 'completed',
                                         result=cosmic_result, cache_file=cache_file)
+                    if use_cache and cache_file:
+                        generate_protocol_summary(cache_file=cache_file)
 
                 if result != 0:
                     print(f"\nError: Optimization failed with code {result}")
@@ -12955,9 +13280,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             opt_result['cosmic_folder'] = context.refinement_cosmic_folder
 
                         update_protocol_cache(opt_key, 'completed', result=opt_result, cache_file=cache_file)
-                        
+                        if use_cache and cache_file:
+                            generate_protocol_summary(cache_file=cache_file)
+
                         cosmic_result = {}
-                        
+
                         # Store directories for stage memory
                         cosmic_dir = context.cosmic_dir if context.cosmic_dir else "COSMIC_2"
                         opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "geometry_refinement"
@@ -13023,6 +13350,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             cosmic_result['opt_only'] = True
 
                         update_protocol_cache(cosmic_key, 'completed', result=cosmic_result, cache_file=cache_file)
+                        if use_cache and cache_file:
+                            generate_protocol_summary(cache_file=cache_file)
 
                     # Check if workflow should pause after refinement stage
                     if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
@@ -13076,9 +13405,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         opt_result['cosmic_folder'] = context.refinement_cosmic_folder
                     
                     # Save to cache
-                    update_protocol_cache(opt_key, 'completed', 
+                    update_protocol_cache(opt_key, 'completed',
                                         result=opt_result, cache_file=cache_file)
-                
+                    if use_cache and cache_file:
+                        generate_protocol_summary(cache_file=cache_file)
+
                 if result != 0:
                     print(f"\nError: Refinement failed with code {result}")
                     return result
@@ -13094,9 +13425,16 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 print(f"Error: Unknown stage type '{stage_type}'")
                 return 1
                 
+        except KeyboardInterrupt:
+            print(f"\nInterrupted by user during stage {stage_num} ({stage_type}).")
+            if _job_id:
+                _update_ascec_job(_job_id, 'killed')
+            _remove_progress_file()
+            raise
         except Exception as e:
             print(f"\nError executing stage {stage_num} ({stage_type}): {e}")
             traceback.print_exc()
+            _remove_progress_file()
             return 1
     
     if context.workflow_verbose_level >= 1:
@@ -13146,6 +13484,16 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     # Miniprint cleanup: reduce disk usage unless --maxprint was specified
     if not context.maxprint:
         miniprint_cleanup()
+
+    # Mark job as completed and restore original streams
+    if _job_id:
+        _update_ascec_job(_job_id, 'completed')
+    sys.stdout = _orig_stdout
+    sys.stderr = _orig_stderr
+    if _log_fh is not None:
+        try: _log_fh.close()
+        except Exception: pass
+    _remove_progress_file()
 
     return 0
 
@@ -16908,6 +17256,596 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
 
     return 0
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job Registry: background process tracking (SQLite, per-user state)
+# ─────────────────────────────────────────────────────────────────────────────
+import sqlite3 as _sqlite3
+
+
+def _ascec_state_dir() -> Path:
+    """Return ~/.local/state/ascec, creating it if needed."""
+    d = Path.home() / ".local" / "state" / "ascec"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _ascec_db_path() -> Path:
+    return _ascec_state_dir() / "jobs.db"
+
+
+def _init_ascec_db(conn) -> None:
+    conn.execute("""CREATE TABLE IF NOT EXISTS jobs (
+        id            INTEGER PRIMARY KEY,
+        pid           INTEGER,
+        input_file    TEXT,
+        working_dir   TEXT,
+        cache_file    TEXT,
+        log_file      TEXT,
+        progress_file TEXT,
+        status        TEXT,
+        started_at    TEXT,
+        updated_at    TEXT
+    )""")
+    conn.commit()
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """Check whether a PID is still running (signal 0 = existence check)."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _register_ascec_job(input_file: str, working_dir: str, cache_file: str,
+                        log_file: str, progress_file: str) -> int:
+    """Insert a new running-job entry; returns the new row ID (0 on failure)."""
+    try:
+        conn = _sqlite3.connect(str(_ascec_db_path()))
+        _init_ascec_db(conn)
+        now = time.strftime('%Y-%m-%d %H:%M:%S')
+        conn.execute(
+            "INSERT INTO jobs (pid,input_file,working_dir,cache_file,"
+            "log_file,progress_file,status,started_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (os.getpid(), input_file, working_dir, cache_file,
+             log_file, progress_file, 'running', now, now),
+        )
+        conn.commit()
+        job_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.close()
+        return job_id
+    except Exception:
+        return 0
+
+
+def _update_ascec_job(job_id: int, status: str) -> None:
+    """Update a job's status in the registry."""
+    if not job_id:
+        return
+    try:
+        conn = _sqlite3.connect(str(_ascec_db_path()))
+        _init_ascec_db(conn)
+        conn.execute(
+            "UPDATE jobs SET status=?, updated_at=? WHERE id=?",
+            (status, time.strftime('%Y-%m-%d %H:%M:%S'), job_id),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def _remove_progress_artifacts(progress_file: str) -> None:
+    """Best-effort removal of progress JSON and temp file."""
+    if not progress_file:
+        return
+    for p in (progress_file, progress_file + ".tmp"):
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except OSError:
+            pass
+
+
+def _adopt_ascec_job(job_id: int, pid: int, log_file: str = "", progress_file: str = "") -> bool:
+    """Rebind an existing job row to a new PID (used for detach handoff)."""
+    if not job_id or pid <= 0:
+        return False
+    try:
+        conn = _sqlite3.connect(str(_ascec_db_path()))
+        _init_ascec_db(conn)
+        now = time.strftime('%Y-%m-%d %H:%M:%S')
+        conn.execute(
+            "UPDATE jobs SET pid=?, log_file=?, progress_file=?, status='running', updated_at=? WHERE id=?",
+            (pid, log_file, progress_file, now, job_id),
+        )
+        conn.commit()
+        changed = conn.total_changes > 0
+        conn.close()
+        return changed
+    except Exception:
+        return False
+
+
+def _cleanup_stale_jobs(conn) -> None:
+    """Mark 'running' jobs whose PID no longer exists as 'crashed'."""
+    rows = conn.execute("SELECT id, pid, progress_file FROM jobs WHERE status='running'").fetchall()
+    now = time.strftime('%Y-%m-%d %H:%M:%S')
+    for job_id, pid, progress_file in rows:
+        if not _is_pid_alive(pid):
+            conn.execute(
+                "UPDATE jobs SET status='crashed', updated_at=? WHERE id=?", (now, job_id)
+            )
+            _remove_progress_artifacts(progress_file or "")
+    conn.commit()
+
+
+def _get_recent_jobs() -> list:
+    """Return all running jobs plus recent history from the last 7 days."""
+    try:
+        conn = _sqlite3.connect(str(_ascec_db_path()))
+        _init_ascec_db(conn)
+        _cleanup_stale_jobs(conn)
+        cutoff = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+
+        running_rows = conn.execute(
+            "SELECT id,pid,input_file,working_dir,log_file,progress_file,"
+            "status,started_at,updated_at FROM jobs "
+            "WHERE status='running' ORDER BY id ASC"
+        ).fetchall()
+
+        # Keep a bounded history list for readability.
+        history_rows = conn.execute(
+            "SELECT id,pid,input_file,working_dir,log_file,progress_file,"
+            "status,started_at,updated_at FROM jobs "
+            "WHERE status!='running' AND updated_at >= ? ORDER BY id DESC LIMIT 10",
+            (cutoff,)
+        ).fetchall()
+
+        rows = running_rows + history_rows
+        conn.close()
+        cols = ['id', 'pid', 'input_file', 'working_dir', 'log_file',
+                'progress_file', 'status', 'started_at', 'updated_at']
+        return [dict(zip(cols, r)) for r in rows]
+    except Exception:
+        return []
+
+
+def show_ascec_status() -> None:
+    """Interactive ASCEC job status viewer."""
+    import signal as _sig
+
+    def _collect_descendant_pids(root_pid: int) -> List[int]:
+        """Collect root PID and all descendants using /proc parent links (Linux)."""
+        if root_pid <= 0:
+            return []
+        children: Dict[int, List[int]] = {}
+        try:
+            for entry in os.listdir('/proc'):
+                if not entry.isdigit():
+                    continue
+                pid = int(entry)
+                try:
+                    with open(f"/proc/{pid}/stat", 'r') as sf:
+                        stat_line = sf.read().strip()
+                    # Format: pid (comm) state ppid ... ; split after final ') '
+                    tail = stat_line.rsplit(') ', 1)[1].split()
+                    ppid = int(tail[1])
+                    children.setdefault(ppid, []).append(pid)
+                except Exception:
+                    continue
+        except Exception:
+            return [root_pid]
+
+        out = []
+        seen = set()
+        queue = [root_pid]
+        while queue:
+            cur = queue.pop(0)
+            if cur in seen:
+                continue
+            seen.add(cur)
+            out.append(cur)
+            queue.extend(children.get(cur, []))
+        return out
+
+    def _is_non_zombie_pid_alive(pid: int) -> bool:
+        """Return True only when PID exists and is not a zombie."""
+        if not _is_pid_alive(pid):
+            return False
+        try:
+            with open(f"/proc/{pid}/stat", 'r') as sf:
+                stat_line = sf.read().strip()
+            tail = stat_line.rsplit(') ', 1)[1].split()
+            state = tail[0]
+            return state != 'Z'
+        except Exception:
+            return _is_pid_alive(pid)
+
+    def _collect_qm_related_pids(working_dir: str, input_file: str) -> List[int]:
+        """Find likely ORCA/QM worker processes for this job (Linux /proc).
+
+        Match by executable/cmdline keywords plus cwd rooted at job working dir.
+        """
+        if not working_dir:
+            return []
+        try:
+            wd_real = os.path.realpath(working_dir)
+        except Exception:
+            wd_real = working_dir
+
+        input_base = os.path.splitext(os.path.basename(input_file or ""))[0].lower()
+        qm_terms = (
+            'orca', 'xtb', 'crest', 'g16', 'gaussian', 'qchem', 'nwchem',
+            'psi4', 'cp2k', 'mopac', 'molpro', 'turbomole'
+        )
+
+        found: List[int] = []
+        try:
+            for entry in os.listdir('/proc'):
+                if not entry.isdigit():
+                    continue
+                pid = int(entry)
+                try:
+                    cwd = os.path.realpath(os.readlink(f'/proc/{pid}/cwd'))
+                except Exception:
+                    continue
+
+                if not (cwd == wd_real or cwd.startswith(wd_real + os.sep)):
+                    continue
+
+                try:
+                    with open(f'/proc/{pid}/cmdline', 'rb') as cf:
+                        raw = cf.read().replace(b'\x00', b' ').strip().lower()
+                    cmd = raw.decode('utf-8', errors='ignore')
+                except Exception:
+                    cmd = ""
+
+                if any(t in cmd for t in qm_terms) or (input_base and input_base in cmd):
+                    found.append(pid)
+                    continue
+
+                # Fallback to executable name when cmdline is sparse.
+                try:
+                    exe = os.path.basename(os.readlink(f'/proc/{pid}/exe')).lower()
+                except Exception:
+                    exe = ""
+                if any(t in exe for t in qm_terms):
+                    found.append(pid)
+        except Exception:
+            return []
+
+        return sorted(set(found))
+
+    def _prepare_ui_jobs(raw_jobs: list) -> list:
+        """Return jobs ordered for display with user-facing IDs.
+
+        Running jobs are listed first, then history. UI IDs are reassigned from 1.
+        Original database row ID is preserved in 'db_id'.
+        """
+        running = [j for j in raw_jobs if j.get('status') == 'running']
+        done = [j for j in raw_jobs if j.get('status') != 'running']
+        running.sort(key=lambda j: j.get('id', 0))
+        # Show history newest-first.
+        done.sort(key=lambda j: j.get('id', 0), reverse=True)
+        ordered = running + done
+
+        ui_jobs = []
+        for idx, j in enumerate(ordered, start=1):
+            item = dict(j)
+            item['db_id'] = j.get('id', 0)
+            item['id'] = idx
+            ui_jobs.append(item)
+        return ui_jobs
+
+    def _render_bar(pct: float, width: int = 30) -> str:
+        filled = int(min(pct / 100.0, 1.0) * width)
+        return "█" * filled + "░" * (width - filled)
+
+    def _tail_lines(path: str, n: int = 10) -> List[str]:
+        try:
+            with open(path) as f:
+                return f.readlines()[-n:]
+        except Exception:
+            return []
+
+    def _display_menu(jobs: list) -> None:
+        os.system('clear')
+        now_str = time.strftime('%Y-%m-%d %H:%M:%S')
+
+        def _fit(text: str, width: int) -> str:
+            if width <= 0:
+                return ""
+            if len(text) <= width:
+                return text
+            if width <= 3:
+                return text[:width]
+            return text[:width - 3] + "..."
+
+        try:
+            term_w = os.get_terminal_size().columns
+        except OSError:
+            term_w = 100
+        sep_w = max(78, min(term_w, 140))
+        dash_sep = "  " + "-" * (sep_w - 2)
+
+        run_input_w = max(18, min(40, sep_w - 40))
+        hist_input_w = max(18, min(40, sep_w - 34))
+
+        print(f"{'─'*sep_w}")
+        print(f"  ASCEC STATUS  ({now_str})")
+        print(f"{'─'*sep_w}")
+        running = [j for j in jobs if j['status'] == 'running']
+        done = [j for j in jobs if j['status'] != 'running']
+        if running:
+            print(f"\n  Running:")
+            print(f"    {'ID':>3}  {'PID':>7}  {'INPUT FILE':<{run_input_w}}  STARTED")
+            print(f"    {'─'*3}  {'─'*7}  {'─'*run_input_w}  {'─'*19}")
+            for j in running:
+                fname = os.path.basename(j['input_file'])
+                print(f"    {j['id']:>3}  {j['pid']:>7}  {_fit(fname, run_input_w):<{run_input_w}}  {j['started_at']}")
+        else:
+            print("\n  No running jobs.")
+
+        # Clear visual separation between live jobs and history.
+        print(f"\n{dash_sep}")
+
+        if done:
+            print(f"\n  History runs:")
+            print()
+            print(f"    {'ID':>3}  {'STATUS':<10}  {'INPUT FILE':<{hist_input_w}}  UPDATED")
+            print(f"    {'─'*3}  {'─'*10}  {'─'*hist_input_w}  {'─'*19}")
+            for j in done:
+                fname = os.path.basename(j['input_file'])
+                print(f"    {j['id']:>3}  {j['status']:<10}  {_fit(fname, hist_input_w):<{hist_input_w}}  {j['updated_at']}")
+
+        print(f"\n{dash_sep}")
+        print(f"{'─'*sep_w}")
+        print("  [V <id>] Attach/View   [K <id>] Kill   [R] Refresh   [Q] Quit")
+        print(f"{'─'*sep_w}")
+
+    def _show_progress_screen(job: dict, data: dict) -> None:
+        os.system('clear')
+        jid = job['id']
+        pct = data.get('pct', 0.0)
+        bar = _render_bar(pct, width=30)
+        upd = data.get('updated', '')
+        print("")
+        print("=== COSMIC ASCEC ===")
+        print("-" * 60)
+        print(f"Progress [{bar}] {pct:.1f}%")
+        print("-" * 60)
+        for line in data.get('stage_lines', []):
+            print(line)
+        print("")
+        if upd:
+            print(f"Attached: job {jid} ({os.path.basename(job['input_file'])})   updated: {upd}")
+        else:
+            print(f"Attached: job {jid} ({os.path.basename(job['input_file'])})")
+        print("Ctrl+C or Ctrl+D to detach (job keeps running)")
+        print("")
+
+    def _attach_view(job: dict) -> None:
+        prog_file = job['progress_file']
+        last_mtime = 0.0
+        last_data: Dict[str, Any] = {}
+
+        # Try to set up raw terminal input so single-keypress 'D' works
+        _old_settings = None
+        _has_raw = False
+        _select = None
+        try:
+            import termios as _termios, tty as _tty, select as _select_mod
+            _select = _select_mod
+            if sys.stdin.isatty():
+                _old_settings = _termios.tcgetattr(sys.stdin)
+                _tty.setcbreak(sys.stdin.fileno())
+                _has_raw = True
+        except (ImportError, OSError):
+            _has_raw = False
+
+        try:
+            while True:
+                if not _is_pid_alive(job['pid']):
+                    os.system('clear')
+                    print(f"\n  Job {job['id']} has finished.")
+                    input("  Press Enter to return to menu...")
+                    return
+                try:
+                    mtime = os.stat(prog_file).st_mtime
+                    if mtime != last_mtime:
+                        last_mtime = mtime
+                        with open(prog_file) as f:
+                            last_data = json.load(f)
+                        _show_progress_screen(job, last_data)
+                except (FileNotFoundError, json.JSONDecodeError, OSError):
+                    pass
+
+                # Non-blocking check for 'D' keypress
+                if _has_raw and _select is not None:
+                    try:
+                        if _select.select([sys.stdin], [], [], 0.15)[0]:
+                            ch = sys.stdin.read(1)
+                            if ch in ('', '\x04') or ch.lower() == 'd':
+                                raise KeyboardInterrupt
+                    except (IOError, OSError):
+                        time.sleep(0.15)
+                else:
+                    time.sleep(0.15)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            # Restore terminal settings
+            if _old_settings is not None:
+                try:
+                    import termios as _termios
+                    _termios.tcsetattr(sys.stdin, _termios.TCSADRAIN, _old_settings)
+                except Exception:
+                    pass
+
+        print(f"\n  Detached — job {job['id']} running in background.")
+        print(f"  Safe to close terminal (SIGHUP is ignored by the running process).")
+        time.sleep(0.8)
+
+    def _view_completed(job: dict) -> None:
+        os.system('clear')
+        print(f"{'─'*62}")
+        print(f"  Job {job['id']}  —  {job['status']}  ({os.path.basename(job['input_file'])})")
+        print(f"{'─'*62}\n")
+        lines = _tail_lines(job['log_file'], 50)
+        if lines:
+            for ln in lines:
+                clean = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', ln.rstrip())
+                print(f"  {clean}")
+        else:
+            print("  (no log available)")
+        print(f"\n{'─'*62}")
+        input("  Press Enter to return to menu...")
+
+    while True:
+        jobs = _prepare_ui_jobs(_get_recent_jobs())
+        _display_menu(jobs)
+        try:
+            raw = input("  Choice: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            break
+        if not raw:
+            continue
+        if raw.lower() == 'q':
+            break
+        if raw.lower() == 'r':
+            continue
+        m = re.match(r'^\s*([VKvk])\s*(\d+)\s*$', raw)
+        if not m:
+            continue
+        action = m.group(1).upper()
+        target_id = int(m.group(2))
+        job = next((j for j in jobs if j['id'] == target_id), None)
+        if not job:
+            print(f"  No job with id {target_id}")
+            time.sleep(1)
+            continue
+        if action == 'V':
+            if job['status'] == 'running':
+                _attach_view(job)
+            else:
+                _view_completed(job)
+        elif action == 'K':
+            if job['status'] == 'running' and _is_pid_alive(job['pid']):
+                try:
+                    _self_pid = os.getpid()
+                    _self_pgid = os.getpgrp()
+                    _root_pid = int(job['pid'])
+                    _tree = [p for p in _collect_descendant_pids(_root_pid) if p != _self_pid]
+
+                    # Include likely ORCA/QM workers that may have detached from parent tree.
+                    _qm_pids = [
+                        p for p in _collect_qm_related_pids(
+                            str(job.get('working_dir', '') or ''),
+                            str(job.get('input_file', '') or ''),
+                        )
+                        if p != _self_pid
+                    ]
+                    _tree = sorted(set([_root_pid] + _tree + _qm_pids))
+
+                    # Also target process groups of discovered descendants.
+                    _pgids = set()
+
+                    # Always include the main job process group when safe.
+                    try:
+                        _root_pgid = os.getpgid(_root_pid)
+                        if _root_pgid > 0 and _root_pgid != _self_pgid:
+                            _pgids.add(_root_pgid)
+                    except OSError:
+                        pass
+
+                    for _p in _tree:
+                        try:
+                            _pg = os.getpgid(_p)
+                            if _pg > 0 and _pg != _self_pgid:
+                                _pgids.add(_pg)
+                        except OSError:
+                            pass
+
+                    # Graceful termination first.
+                    for _pg in sorted(_pgids):
+                        try:
+                            os.killpg(_pg, _sig.SIGTERM)
+                        except OSError:
+                            pass
+
+                    # Always signal root PID directly as anchor.
+                    try:
+                        os.kill(_root_pid, _sig.SIGTERM)
+                    except OSError:
+                        pass
+
+                    for _p in _tree:
+                        try:
+                            os.kill(_p, _sig.SIGTERM)
+                        except OSError:
+                            pass
+                    print(f"  Sent SIGTERM to {len(_tree)} process(es) across {len(_pgids)} group(s).")
+
+                    # Wait for shutdown.
+                    for _ in range(20):
+                        if not any(_is_non_zombie_pid_alive(p) for p in _tree):
+                            break
+                        time.sleep(0.1)
+
+                    # Escalate remaining to SIGKILL.
+                    _alive = [p for p in _tree if _is_non_zombie_pid_alive(p)]
+                    if _alive:
+                        _alive_pgids = set()
+                        for _p in _alive:
+                            try:
+                                _pg = os.getpgid(_p)
+                                if _pg > 0 and _pg != _self_pgid:
+                                    _alive_pgids.add(_pg)
+                            except OSError:
+                                pass
+                        for _pg in sorted(_alive_pgids):
+                            try:
+                                os.killpg(_pg, _sig.SIGKILL)
+                            except OSError:
+                                pass
+
+                        # Always hard-kill root PID too if still around.
+                        try:
+                            if _is_non_zombie_pid_alive(_root_pid):
+                                os.kill(_root_pid, _sig.SIGKILL)
+                        except OSError:
+                            pass
+
+                        for _p in _alive:
+                            try:
+                                os.kill(_p, _sig.SIGKILL)
+                            except OSError:
+                                pass
+                        print(f"  Escalated SIGKILL to {len(_alive)} remaining process(es).")
+
+                        for _ in range(20):
+                            if not any(_is_non_zombie_pid_alive(p) for p in _alive):
+                                break
+                            time.sleep(0.1)
+
+                    _remaining = [p for p in _tree if _is_non_zombie_pid_alive(p)]
+                    if _remaining:
+                        print(f"  Warning: {len(_remaining)} process(es) still alive: {_remaining[:6]}")
+                        print("  Try running kill again or terminate with elevated privileges.")
+                    else:
+                        _remove_progress_artifacts(job.get('progress_file', ''))
+                        _update_ascec_job(job.get('db_id', 0), 'killed')
+                        print(f"  Job {job['id']} marked as killed.")
+                except OSError as e:
+                    print(f"  Could not kill PID {job['pid']}: {e}")
+            else:
+                print(f"  Job {target_id} is not running.")
+            time.sleep(1)
+
+
 def main_ascec_integrated():
     # Ensure glob is accessible throughout this function (imported at module level)
     import glob as _glob_module
@@ -16924,7 +17862,12 @@ def main_ascec_integrated():
     if len(sys.argv) >= 2 and sys.argv[1] in ["--version", "-V", "version"]:
         print_version_banner("ASCEC")
         return
-    
+
+    # CHECK FOR STATUS COMMAND
+    if len(sys.argv) >= 2 and sys.argv[1].lower() == "status":
+        show_ascec_status()
+        return
+
     # CHECK FOR EXCLUDE COMMAND (pause protocol and add exclusions)
     if len(sys.argv) >= 3 and sys.argv[2].lower() == "exclude":
         # Syntax: ascec04 <protocol.in> exclude [stage] [pattern]
@@ -17412,7 +18355,17 @@ def main_ascec_integrated():
                 sys.exit(1)
         
         # Execute workflow with caching enabled
-        result = execute_workflow_stages(input_file, stages, use_cache=True, protocol_text=protocol_text)
+        result = 1
+        try:
+            result = execute_workflow_stages(input_file, stages, use_cache=True, protocol_text=protocol_text)
+        except KeyboardInterrupt:
+            result = 130
+        finally:
+            # Ensure progress file is cleaned up on any exit
+            _pf = os.path.join(os.getcwd(), ".ascec_progress.json")
+            for _p in (_pf, _pf + ".tmp"):
+                try: os.remove(_p)
+                except OSError: pass
         os._exit(result)
 
     # AUTO-DETECT EMBEDDED PROTOCOL (single input-file invocation)
@@ -17440,7 +18393,17 @@ def main_ascec_integrated():
                     print("Error: No valid workflow stages found in embedded protocol")
                     sys.exit(1)
 
-                result = execute_workflow_stages(input_file, stages, use_cache=True, protocol_text=protocol_text)
+                result = 1
+                try:
+                    result = execute_workflow_stages(input_file, stages, use_cache=True, protocol_text=protocol_text)
+                except KeyboardInterrupt:
+                    result = 130
+                finally:
+                    # Ensure progress file is cleaned up on any exit
+                    _pf = os.path.join(os.getcwd(), ".ascec_progress.json")
+                    for _p in (_pf, _pf + ".tmp"):
+                        try: os.remove(_p)
+                        except OSError: pass
                 os._exit(result)
 
     # CHECK FOR WORKFLOW MODE (',' or 'then' separator-based commands)
@@ -17503,6 +18466,7 @@ COMMANDS:
     launcher                    Consolidate launcher scripts
     input.asc protocol [N]      Execute automated multi-stage workflow
     input.asc exclude [STAGE] [PATTERN]  Exclude structures from paused protocol
+    status                      Show running and recently completed jobs
 
 WORKFLOW:
   Typical manual workflow:
