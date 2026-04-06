@@ -12042,15 +12042,18 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                         result=result_data, 
                                         cache_file=cache_file)
                 
+                if result != 0:
+                    print(f"\nError: Annealing failed with code {result}")
+                    return result
+
                 # Check if workflow should pause after this stage
-                if result == 0:
-                    if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
-                        return 0  # Paused successfully
-                
+                if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
+                    return 0  # Paused successfully
+
                 stage_idx += 1
                 completed_stage_count = stage_num
                 context.completed_stage_count = completed_stage_count
-                
+
             elif stage_type == 'optimization':
                 # Increment optimization stage counter
                 optimization_stage_counter += 1
@@ -12551,15 +12554,18 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     update_protocol_cache(cosmic_key, 'completed',
                                         result=cosmic_result, cache_file=cache_file)
 
+                if result != 0:
+                    print(f"\nError: Optimization failed with code {result}")
+                    return result
+
                 # Check if workflow should pause after this stage
-                if result == 0:
-                    if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
-                        return 0  # Paused successfully
+                if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
+                    return 0  # Paused successfully
 
                 stage_idx += 1
                 completed_stage_count = stage_num
                 context.completed_stage_count = completed_stage_count
-                
+
             elif stage_type == 'refinement':
                 # Check if next stage is cosmic - if so, handle opt+cosmic with retry
                 next_is_cosmic = (stage_idx + 1 < len(stages) and 
@@ -12941,18 +12947,17 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     update_protocol_cache(opt_key, 'completed', 
                                         result=opt_result, cache_file=cache_file)
                 
+                if result != 0:
+                    print(f"\nError: Refinement failed with code {result}")
+                    return result
+
                 # Check if workflow should pause after this stage
-                if result == 0:
-                    if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
-                        return 0  # Paused successfully
-                
+                if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
+                    return 0  # Paused successfully
+
                 stage_idx += 1
                 completed_stage_count = stage_num
                 context.completed_stage_count = completed_stage_count
-                
-                if result != 0:
-                    print(f"\nError: Stage {stage_num} ({stage_type}) failed with code {result}")
-                    return result
             else:
                 print(f"Error: Unknown stage type '{stage_type}'")
                 return 1
