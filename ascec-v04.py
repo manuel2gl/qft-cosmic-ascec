@@ -12019,9 +12019,32 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 except (AttributeError, OSError):
                     raise OSError("stream does not support fileno()")
 
-        if _log_fh is not None:
-            sys.stdout = _TeeStream(_orig_stdout, _log_fh)
-            sys.stderr = _TeeStream(_orig_stderr, _log_fh)
+        class _LogOnlyStream:
+            """Write-only stream that goes to the log file only (no terminal)."""
+            def __init__(self, log):
+                self._l = log
+                self.encoding = 'utf-8'
+                self.errors = 'replace'
+            def write(self, data):
+                try: self._l.write(data); self._l.flush()
+                except Exception: pass
+            def flush(self):
+                try: self._l.flush()
+                except Exception: pass
+            def isatty(self): return False
+            def fileno(self): raise OSError("detached log-only stream")
+
+        def _set_output_streams(log_only: bool = False) -> None:
+            if _log_fh is None:
+                return
+            if log_only:
+                sys.stdout = _LogOnlyStream(_log_fh)
+                sys.stderr = _LogOnlyStream(_log_fh)
+            else:
+                sys.stdout = _TeeStream(_orig_stdout, _log_fh)
+                sys.stderr = _TeeStream(_orig_stderr, _log_fh)
+
+        _set_output_streams(log_only=False)
 
         if _background_tty_launch:
             try:
@@ -12029,9 +12052,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 _signal.signal(_signal.SIGTTOU, _signal.SIG_IGN)
             except Exception:
                 pass
-            if _log_fh is not None:
-                sys.stdout = _LogOnlyStream(_log_fh)
-                sys.stderr = _LogOnlyStream(_log_fh)
+            _set_output_streams(log_only=True)
 
         # Register (or rebind) job in the status database
         _reuse_job_id = 0
@@ -12074,21 +12095,6 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         # process so the shell prompt returns immediately on any shell.
         import threading as _threading
         import subprocess as _subprocess
-
-        class _LogOnlyStream:
-            """Write-only stream that goes to the log file only (no terminal)."""
-            def __init__(self, log):
-                self._l = log
-                self.encoding = 'utf-8'
-                self.errors = 'replace'
-            def write(self, data):
-                try: self._l.write(data); self._l.flush()
-                except Exception: pass
-            def flush(self):
-                try: self._l.flush()
-                except Exception: pass
-            def isatty(self): return False
-            def fileno(self): raise OSError("detached log-only stream")
 
         def _do_detach():
             """Detach by spawning a fully detached child and exiting this process."""
