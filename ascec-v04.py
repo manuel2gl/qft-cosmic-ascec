@@ -5776,6 +5776,8 @@ def parse_xtb_options_from_launcher(launcher_content: str) -> str:
         if match:
             opts = ' '.join(match.group(1).split()).strip()
             if opts:
+                # Namespace is injected by command builders; keep launcher-parsed options portable.
+                opts = re.sub(r'\s--namespace(?:\s+\S+|=\S+)?', '', f' {opts}').strip()
                 return opts
 
     return '--gfn 2 --opt'
@@ -5788,13 +5790,18 @@ def _xtb_thread_env_prefix() -> str:
 
 def build_xtb_runtime_options(xtb_options: str, qm_nproc: Optional[int] = None,
                               xtb_cycles: Optional[int] = None) -> str:
-    """Ensure xTB options include parallel and cycle limits from workflow/index settings."""
+    """Ensure xTB options use workflow/index parallel and cycle settings when provided."""
     opts = ' '.join((xtb_options or '').split()).strip()
 
-    if qm_nproc and qm_nproc > 0 and '--parallel' not in opts:
+    # Remove pre-existing runtime controls so index/workflow settings can take precedence.
+    opts = re.sub(r'\s--parallel(?:\s+\S+|=\S+)?', '', f' {opts}').strip()
+    opts = re.sub(r'\s--cycles(?:\s+\S+|=\S+)?', '', f' {opts}').strip()
+    opts = re.sub(r'\s--namespace(?:\s+\S+|=\S+)?', '', f' {opts}').strip()
+
+    if qm_nproc and qm_nproc > 0:
         opts = f"{opts} --parallel {qm_nproc}".strip()
 
-    if xtb_cycles and xtb_cycles > 0 and '--cycles' not in opts:
+    if xtb_cycles and xtb_cycles > 0:
         opts = f"{opts} --cycles {xtb_cycles}".strip()
 
     return opts
@@ -8442,14 +8449,38 @@ def parse_xtb_output(filepath):
     else:
         results['converged'] = None
 
-    # Extract optimization cycles
-    cycle_matches = re.findall(r'^\s*\.\.\.\.\.\. (?:value|geom)\s.*$', content, re.MULTILINE)
-    if cycle_matches:
-        results['cycles'] = len(cycle_matches)
-    else:
-        # Try ANC optimizer step count
-        step_matches = re.findall(r'^\s*\d+\s+[-+]?\d+\.\d+', content, re.MULTILINE)
-        results['cycles'] = None
+    # Extract optimization cycles (support multiple xTB output formats)
+    results['cycles'] = None
+    cycle_patterns = [
+        r'GEOMETRY\s+OPTIMIZATION\s+CONVERGED[^\n]*?(?:AFTER|IN)\s+(\d+)\s+(?:ITERATIONS?|CYCLES?|STEPS?)',
+        r'optimized\s+geometry\s+written\s+to[^\n]*?after\s+(\d+)\s+(?:iterations?|cycles?|steps?)',
+        r'(?:total\s+number\s+of|number\s+of)\s+(?:optimization\s+)?cycles?\s*[:=]\s*(\d+)',
+        r'optimization\s+(?:took|finished|converged)[^\n]{0,40}?(\d+)\s+(?:iterations?|cycles?|steps?)',
+        r'ANC[^\n]{0,80}?(?:steps?|cycles?)\s*[:=]\s*(\d+)',
+    ]
+
+    for pattern in cycle_patterns:
+        matches = re.findall(pattern, content, re.IGNORECASE)
+        if matches:
+            try:
+                results['cycles'] = int(matches[-1])
+                break
+            except (TypeError, ValueError):
+                continue
+
+    if results['cycles'] is None:
+        # Fallback: infer from optimization step table, using the last step index.
+        # This pattern targets lines like: "  12  -123.456789  0.12E-03  ..."
+        step_matches = re.findall(
+            r'^\s*(\d+)\s+[-+]?\d+\.\d+(?:[EeDd][+-]?\d+)?\s+[-+]?\d+\.\d+(?:[EeDd][+-]?\d+)?',
+            content,
+            re.MULTILINE,
+        )
+        if step_matches:
+            try:
+                results['cycles'] = int(step_matches[-1])
+            except (TypeError, ValueError):
+                results['cycles'] = None
 
     # Extract wall time
     time_match = re.search(
