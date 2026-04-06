@@ -1778,6 +1778,38 @@ def extract_protocol_from_input(input_file: str) -> Optional[str]:
     return None
 
 
+def consume_protocol_maxprint_flag(protocol_text: str) -> Tuple[str, bool]:
+    """Strip embedded --maxprint token from protocol text and report if present.
+
+    Supports both inline and split-line styles, e.g.:
+      .asc --maxprint,
+      .asc,
+      --maxprint,
+    """
+    if not protocol_text:
+        return protocol_text, False
+
+    found_maxprint = False
+
+    def _strip_flag(match: re.Match) -> str:
+        nonlocal found_maxprint
+        found_maxprint = True
+        return match.group(1) or ''
+
+    cleaned = re.sub(
+        r'(?i)(^|[\s,])--maxprint(?=\s|,|$)\s*,?',
+        _strip_flag,
+        protocol_text,
+    )
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    cleaned = re.sub(r'\s+,', ',', cleaned)
+    cleaned = re.sub(r',\s+', ', ', cleaned)
+    while ',,' in cleaned:
+        cleaned = cleaned.replace(',,', ',')
+
+    return cleaned, found_maxprint
+
+
 def extract_embedded_qm_template(input_file: str, template_label: str) -> Optional[Tuple[str, str]]:
     """
     Extract an embedded QM template block by label from an input file.
@@ -17141,6 +17173,11 @@ def main_ascec_integrated():
         
         # Store original protocol text for summary
         protocol_text = protocol.strip()
+
+        # Allow embedded --maxprint in protocol text (single-line or split-line).
+        protocol, protocol_has_maxprint = consume_protocol_maxprint_flag(protocol)
+        if protocol_has_maxprint:
+            _ascec_maxprint_requested = True
         
         # Replace .asc or .asc, placeholder with actual input filename
         # Handle both ".asc" and ".asc," patterns
@@ -17386,6 +17423,9 @@ def main_ascec_integrated():
             protocol = extract_protocol_from_input(input_file)
             if protocol:
                 protocol_text = protocol
+                protocol, protocol_has_maxprint = consume_protocol_maxprint_flag(protocol)
+                if protocol_has_maxprint:
+                    _ascec_maxprint_requested = True
 
                 # Replace placeholder ".asc," with actual input filename
                 import re
