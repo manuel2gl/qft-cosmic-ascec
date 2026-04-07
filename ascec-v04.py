@@ -11575,6 +11575,26 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             if verbose and removed_count > 0:
                 print(f"  Cleaned {cosmic_dir}/: removed {removed_count} intermediate entries")
 
+        # --- Consolidate COSMIC folders into a single COSMIC/ directory ---
+        # Keep only the last (most refined) COSMIC folder and rename to COSMIC/
+        if len(cosmic_dirs) > 1:
+            last_cosmic_dir = cosmic_dirs[-1][0]
+            # Remove all intermediate COSMIC folders (keep only last)
+            for cosmic_dir, _ in cosmic_dirs[:-1]:
+                if os.path.isdir(cosmic_dir) and cosmic_dir != last_cosmic_dir:
+                    shutil.rmtree(cosmic_dir)
+                    if verbose:
+                        print(f"  Removed intermediate {cosmic_dir}/")
+
+            # Rename the last COSMIC folder to COSMIC/ (if not already)
+            if last_cosmic_dir != "COSMIC":
+                target = os.path.join(input_root, "COSMIC")
+                if os.path.exists(target):
+                    shutil.rmtree(target)
+                os.rename(os.path.join(input_root, last_cosmic_dir), target)
+                if verbose:
+                    print(f"  Renamed {last_cosmic_dir}/ → COSMIC/")
+
         # --- Clean root-level protocol cache files ---
         for pkl in glob.glob(os.path.join(input_root, "protocol_*.pkl")):
             os.remove(pkl)
@@ -11711,6 +11731,13 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             shutil.copy2(source_mol, os.path.join(input_root, f'{ensemble_name}.mol'))
             copied_any = True
             copied_mol = True
+
+        # Copy the last Boltzmann distribution to root alongside the ensemble
+        boltz_src = os.path.join(resolved_cosmic_dir, "boltzmann_distribution.txt")
+        if os.path.exists(boltz_src):
+            boltz_dst = os.path.join(input_root, "boltzmann_distribution.txt")
+            shutil.copy2(boltz_src, boltz_dst)
+            copied_any = True
 
         if copied_any:
             if opt_only:
@@ -13448,6 +13475,337 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 # Check if workflow should pause after this stage
                 if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
                     return 0  # Paused successfully
+
+                stage_idx += 1
+                completed_stage_count = stage_num
+                context.completed_stage_count = completed_stage_count
+
+            elif stage_type == 'energy_refinement':
+                # Energy refinement: single-point calculations on motifs, then composite COSMIC
+                next_is_cosmic = (stage_idx + 1 < len(stages) and
+                                  stages[stage_idx + 1]['type'] == 'cosmic')
+
+                if next_is_cosmic:
+                    # Extract redo parameters
+                    opt_args = stage['args']
+                    max_redos = 3
+                    max_critical = 0
+                    max_skipped = None
+                    concurrent_jobs = 1
+
+                    for arg in opt_args:
+                        if arg.startswith('--redo='):
+                            max_redos = int(arg.split('=')[1])
+                        elif arg.startswith('--critical='):
+                            max_critical = float(arg.split('=')[1])
+                        elif arg.startswith('--skipped='):
+                            max_skipped = float(arg.split('=')[1])
+                        elif arg.startswith('--concurrent='):
+                            try:
+                                concurrent_jobs = max(1, int(arg.split('=')[1]))
+                            except ValueError:
+                                pass
+
+                    if max_critical is not None and max_skipped is not None:
+                        print("✗ Error: Cannot use both --critical and --skipped flags")
+                        return 1
+
+                    if max_redos > 1:
+                        if context.workflow_verbose_level >= 1:
+                            if max_critical is not None:
+                                print(f"  Stage redo enabled: max {max_redos} redo attempts, target critical ≤ {max_critical}%")
+                            elif max_skipped is not None:
+                                print(f"  Stage redo enabled: max {max_redos} redo attempts, target skipped ≤ {max_skipped}%")
+
+                    final_attempt = 0
+                    initial_critical = None
+                    initial_skipped = None
+                    initial_critical_count = None
+                    initial_skipped_count = None
+                    for attempt in range(max_redos + 1):
+                        final_attempt = attempt
+                        if attempt > 0 and context.workflow_verbose_level >= 1:
+                            print(f"\n{'-' * 60}")
+                            print(f"Redo {attempt}/{max_redos}")
+
+                        result = execute_energy_refinement_stage(context, stage)
+                        if result != 0:
+                            print(f"\nError: Energy refinement failed with code {result}")
+                            opt_key = f"energy_refinement_{stage_num}"
+                            if use_cache and 'stages' in cache and opt_key in cache['stages']:
+                                del cache['stages'][opt_key]
+                                with open(cache_file, 'wb') as f:
+                                    pickle.dump(cache, f)
+                                print(f"  Cache invalidated for stage {stage_num}")
+                            return result
+
+                        # Redo: copy recalculated files to cosmic orca_out folder
+                        if attempt > 0 and hasattr(context, 'recalculated_files') and context.recalculated_files:
+                            opt_dir = getattr(context, 'energy_refinement_stage_dir', 'energy_refinement') or 'energy_refinement'
+                            cosmic_dir = getattr(context, 'eref_cosmic_folder', None) or context.cosmic_dir
+
+                            base_cosmic_dir = cosmic_dir
+                            if base_cosmic_dir and 'orca_out' in base_cosmic_dir:
+                                base_cosmic_dir = os.path.dirname(base_cosmic_dir)
+
+                            cosmic_orca_dir = None
+                            preferred_cosmic_folder = getattr(context, 'eref_cosmic_folder', None)
+                            if isinstance(preferred_cosmic_folder, str) and preferred_cosmic_folder:
+                                preferred_path = os.path.abspath(preferred_cosmic_folder)
+                                if os.path.isdir(preferred_path) and os.path.basename(preferred_path).startswith('orca_out_'):
+                                    cosmic_orca_dir = preferred_path
+
+                            if cosmic_orca_dir is None:
+                                if cosmic_dir and ('orca_out' in cosmic_dir or 'gaussian_out' in cosmic_dir):
+                                    cosmic_orca_dir = cosmic_dir
+                                elif cosmic_dir:
+                                    orca_dirs = sorted(glob.glob(os.path.join(cosmic_dir, "orca_out*")), key=natural_sort_key)
+                                    if orca_dirs:
+                                        cosmic_orca_dir = orca_dirs[-1]
+
+                            if cosmic_orca_dir:
+                                if base_cosmic_dir and os.path.exists(base_cosmic_dir):
+                                    items_to_remove = [
+                                        'dendrogram_images', 'extracted_clusters', 'extracted_data',
+                                        'skipped_structures', 'clustering_summary.txt', 'boltzmann_distribution.txt'
+                                    ]
+                                    for item in os.listdir(base_cosmic_dir):
+                                        if item.startswith('motifs_') or item.startswith('umotifs_'):
+                                            items_to_remove.append(item)
+                                    for item in items_to_remove:
+                                        item_path = os.path.join(base_cosmic_dir, item)
+                                        if os.path.exists(item_path):
+                                            try:
+                                                if os.path.isdir(item_path):
+                                                    shutil.rmtree(item_path)
+                                                else:
+                                                    os.remove(item_path)
+                                            except Exception:
+                                                pass
+
+                                for basename in context.recalculated_files:
+                                    short_name = basename.replace('_opt', '').replace('_calc', '')
+                                    opt_subdir = os.path.join(opt_dir, short_name)
+                                    opt_out_file = os.path.join(opt_subdir, f"{basename}.out")
+                                    if os.path.exists(opt_out_file):
+                                        cosmic_out_file = os.path.join(cosmic_orca_dir, f"{basename}.out")
+                                        shutil.copy2(opt_out_file, cosmic_out_file)
+                            else:
+                                print(f"\n  Warning: No orca_out directory found (cosmic_dir={cosmic_dir})")
+
+                        if attempt == 0 and context.workflow_verbose_level >= 1:
+                            print(f"\n{'-' * 60}")
+                            print(f"[{stage_idx + 2}/{len(stages)}] COSMIC")
+                            print('-' * 60)
+
+                        cosmic_stage = stages[stage_idx + 1]
+                        result = execute_cosmic_stage(context, cosmic_stage)
+                        if result != 0:
+                            print(f"\nError: COSMIC failed with code {result}")
+                            return result
+
+                        if getattr(context, 'cosmic_opt_only', False):
+                            break
+
+                        summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
+                        if os.path.exists(summary_file):
+                            critical_pct, skipped_pct = parse_cosmic_summary(summary_file)
+
+                            if attempt == 0:
+                                initial_critical = critical_pct
+                                initial_skipped = skipped_pct
+                                cosmic_dir = context.cosmic_dir if context.cosmic_dir else "COSMIC_3"
+                                init_crit_count, init_skip_count = parse_cosmic_output(cosmic_dir)
+                                initial_critical_count = init_crit_count
+                                initial_skipped_count = init_skip_count
+
+                            if context.workflow_verbose_level >= 1:
+                                print(f"\nResults: {critical_pct:.1f}% critical, {skipped_pct:.1f}% skipped")
+
+                            threshold_met = True
+                            if max_critical is not None:
+                                threshold_met = critical_pct <= max_critical
+                                if threshold_met:
+                                    if context.workflow_verbose_level >= 1:
+                                        print(f"→ Threshold met (critical ≤ {max_critical}%)")
+                                    break
+                                else:
+                                    if context.workflow_verbose_level >= 1:
+                                        print(f"→ Threshold exceeded (critical {critical_pct:.1f}% > {max_critical}%)")
+                            elif max_skipped is not None:
+                                threshold_met = skipped_pct <= max_skipped
+                                if threshold_met:
+                                    if context.workflow_verbose_level >= 1:
+                                        print(f"→ Threshold met (skipped ≤ {max_skipped}%)")
+                                    break
+                                else:
+                                    if context.workflow_verbose_level >= 1:
+                                        print(f"→ Threshold exceeded (skipped {skipped_pct:.1f}% > {max_skipped}%)")
+                            else:
+                                break
+
+                            if not threshold_met and attempt >= max_redos:
+                                if context.workflow_verbose_level >= 1:
+                                    print(f"Max attempts reached")
+                        else:
+                            if context.workflow_verbose_level >= 1:
+                                print("⚠ Warning: Could not find clustering_summary.txt")
+                            break
+
+                    # Cache results for energy_refinement and cosmic stages
+                    final_critical = None
+                    final_skipped = None
+                    summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
+                    if os.path.exists(summary_file):
+                        final_critical, final_skipped = parse_cosmic_summary(summary_file)
+
+                    if use_cache:
+                        opt_key = f"energy_refinement_{stage_num}"
+                        cosmic_key = f"cosmic_{stage_num + 1}"
+
+                        opt_result: Dict[str, Any] = {
+                            'attempts': final_attempt,
+                            'max_redos': max_redos,
+                        }
+
+                        motifs_dir = context.get_previous_stage_output_dir('cosmic')
+                        if not motifs_dir:
+                            motifs_dir = "COSMIC_2/motifs"
+
+                        opt_dir = getattr(context, 'energy_refinement_stage_dir', 'energy_refinement') or 'energy_refinement'
+                        opt_result['input_dir'] = motifs_dir
+                        opt_result['working_dir'] = opt_dir
+                        opt_result['output_dir'] = opt_dir
+
+                        if max_critical is not None:
+                            opt_result['critical_threshold'] = max_critical
+                        if max_skipped is not None:
+                            opt_result['skipped_threshold'] = max_skipped
+
+                        eref_ms = getattr(context, 'eref_motifs_source', None)
+                        if eref_ms:
+                            opt_result['motifs_source'] = eref_ms
+                        eref_c = getattr(context, 'eref_completed', None)
+                        if eref_c is not None:
+                            opt_result['completed'] = eref_c
+                        eref_t = getattr(context, 'eref_total', None)
+                        if eref_t is not None:
+                            opt_result['total'] = eref_t
+
+                        opt_result['concurrent_jobs'] = concurrent_jobs
+                        eref_cpu = getattr(context, 'eref_total_cpu_time', None)
+                        if eref_cpu is not None:
+                            opt_result['total_cpu_time'] = eref_cpu
+
+                        eref_cf = getattr(context, 'eref_cosmic_folder', None)
+                        if eref_cf:
+                            opt_result['cosmic_folder'] = eref_cf
+
+                        update_protocol_cache(opt_key, 'completed', result=opt_result, cache_file=cache_file)
+                        if use_cache and cache_file:
+                            generate_protocol_summary(cache_file=cache_file)
+
+                        cosmic_result = {}
+                        cosmic_dir = context.cosmic_dir if context.cosmic_dir else "COSMIC_3"
+                        cosmic_result['input_dir'] = opt_dir
+                        cosmic_result['working_dir'] = cosmic_dir
+                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, "umotifs")
+
+                        if final_critical is not None:
+                            cosmic_result['critical_pct'] = final_critical
+                        if final_skipped is not None:
+                            cosmic_result['skipped_pct'] = final_skipped
+
+                        critical_count, skipped_count = parse_cosmic_output(cosmic_dir)
+                        cosmic_result['critical_count'] = critical_count
+                        cosmic_result['skipped_count'] = skipped_count
+
+                        cosmic_stage = stages[stage_idx + 1] if stage_idx + 1 < len(stages) else {}
+                        cosmic_args = cosmic_stage.get('args', [])
+                        for arg in cosmic_args:
+                            if arg.startswith('--th=') or arg.startswith('--threshold='):
+                                cosmic_result['threshold'] = float(arg.split('=')[1])
+                            elif arg.startswith('--rmsd='):
+                                cosmic_result['rmsd_threshold'] = float(arg.split('=')[1])
+
+                        if hasattr(context, 'cosmic_folder'):
+                            cosmic_result['cosmic_folder'] = context.cosmic_folder
+                        if hasattr(context, 'cosmic_motifs_created'):
+                            cosmic_result['motifs_created'] = context.cosmic_motifs_created
+
+                        ref_cosmic_stage_num = stage_num + 1
+                        input_cnt_r = getattr(context, 'cosmic_stage_input_counts', {}).get(ref_cosmic_stage_num)
+                        if input_cnt_r:
+                            cosmic_result['input_count'] = input_cnt_r
+
+                        if initial_critical is not None:
+                            cosmic_result['initial_critical'] = initial_critical
+                        if initial_skipped is not None:
+                            cosmic_result['initial_skipped'] = initial_skipped
+                        if initial_critical_count is not None:
+                            cosmic_result['initial_critical_count'] = initial_critical_count
+                        if initial_skipped_count is not None:
+                            cosmic_result['initial_skipped_count'] = initial_skipped_count
+
+                        cosmic_result['attempts'] = final_attempt
+                        if max_critical is not None:
+                            cosmic_result['threshold_type'] = 'critical'
+                            cosmic_result['threshold_value'] = max_critical
+                            cosmic_result['threshold_met'] = (final_critical is not None and final_critical <= max_critical)
+                        elif max_skipped is not None:
+                            cosmic_result['threshold_type'] = 'skipped'
+                            cosmic_result['threshold_value'] = max_skipped
+                            cosmic_result['threshold_met'] = (final_skipped is not None and final_skipped <= max_skipped)
+
+                        if getattr(context, 'cosmic_opt_only', False):
+                            cosmic_result['opt_only'] = True
+
+                        update_protocol_cache(cosmic_key, 'completed', result=cosmic_result, cache_file=cache_file)
+                        if use_cache and cache_file:
+                            generate_protocol_summary(cache_file=cache_file)
+
+                    if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
+                        return 0
+
+                    if stage_idx + 1 < len(stages):
+                        cosmic_stage = stages[stage_idx + 1]
+                        if not check_workflow_pause(cosmic_stage, stage_num + 1, len(stages), cache_file, use_cache):
+                            return 0
+
+                    stage_idx += 2
+                    completed_stage_count = stage_num + 1
+                    context.completed_stage_count = completed_stage_count
+                    continue
+                else:
+                    # No cosmic after eref - standalone run
+                    result = execute_energy_refinement_stage(context, stage)
+
+                if result == 0 and use_cache and not next_is_cosmic:
+                    opt_key = f"energy_refinement_{stage_num}"
+                    from datetime import datetime as dt_now
+                    opt_result = {'status': 'completed', 'end_time': dt_now.now().isoformat()}
+                    eref_ms = getattr(context, 'eref_motifs_source', None)
+                    if eref_ms:
+                        opt_result['motifs_source'] = eref_ms
+                    eref_c = getattr(context, 'eref_completed', None)
+                    if eref_c is not None:
+                        opt_result['completed'] = eref_c
+                    eref_t = getattr(context, 'eref_total', None)
+                    if eref_t is not None:
+                        opt_result['total'] = eref_t
+                    eref_cf = getattr(context, 'eref_cosmic_folder', None)
+                    if eref_cf:
+                        opt_result['cosmic_folder'] = eref_cf
+                    update_protocol_cache(opt_key, 'completed', result=opt_result, cache_file=cache_file)
+                    if use_cache and cache_file:
+                        generate_protocol_summary(cache_file=cache_file)
+
+                if result != 0:
+                    print(f"\nError: Energy refinement failed with code {result}")
+                    return result
+
+                if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
+                    return 0
 
                 stage_idx += 1
                 completed_stage_count = stage_num
@@ -16138,6 +16496,14 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
                 f.write(f"{basename}\n")
         cmd.extend(['--update-cache', update_list_file])
     
+    # If previous stage was eref, pass --prev-out-dir for composite energy calculation.
+    # eref_motifs_source is the COSMIC base folder that eref took motifs from; it also
+    # contains the orca_out_*/ with the ref-level G and E_elec needed for thermal corrections.
+    eref_source = getattr(context, 'eref_motifs_source', None)
+    if eref_source and os.path.isdir(eref_source):
+        cmd.extend(['--prev-out-dir', os.path.abspath(eref_source)])
+        context.eref_motifs_source = None  # consume after use
+
     if verbose:
         print(f"{' '.join(cmd)}\n")
         print(f"Working directory: {cosmic_base}\n")
@@ -16361,12 +16727,39 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
         print(f"Error running cosmic analysis: {e}")
         return 1
 
-def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int:
-    """Execute refinement stage (for motifs from cosmic clustering)."""
+def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _stage_kind: str = 'refinement') -> int:
+    """Execute refinement stage (for motifs from cosmic clustering).
+
+    Args:
+        _stage_kind: 'refinement' (geometry_refinement dir, context.refinement_*) or
+                     'energy_refinement' (energy_refinement dir, context.eref_*)
+    """
     # Very similar to optimization stage, but uses motifs from cosmic analysis
-    
+
     # Store context globally for helper functions
     sys._current_workflow_context = context  # type: ignore[attr-defined]
+
+    # --- Stage-kind specific configuration ---
+    if _stage_kind == 'energy_refinement':
+        _opt_dir_name = 'energy_refinement'
+        _attr_stage_dir = 'energy_refinement_stage_dir'
+        _attr_cosmic_folder = 'eref_cosmic_folder'
+        _attr_motifs_source = 'eref_motifs_source'
+        _attr_completed = 'eref_completed'
+        _attr_total = 'eref_total'
+        _attr_job_wall_time = 'eref_job_wall_time'
+        _attr_total_cpu_time = 'eref_total_cpu_time'
+        _stage_label = 'Energy refinement'
+    else:
+        _opt_dir_name = 'geometry_refinement'
+        _attr_stage_dir = 'refinement_stage_dir'
+        _attr_cosmic_folder = 'refinement_cosmic_folder'
+        _attr_motifs_source = 'refinement_motifs_source'
+        _attr_completed = 'refinement_completed'
+        _attr_total = 'refinement_total'
+        _attr_job_wall_time = 'refinement_job_wall_time'
+        _attr_total_cpu_time = 'refinement_total_cpu_time'
+        _stage_label = 'Refinement'
     
     # Parse arguments - defaults for when flags are not explicitly provided
     max_stage_redos = 3   # --redo: redo entire opt+cosmic
@@ -16396,7 +16789,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     context.use_skipped_threshold = (max_skipped is not None)
     
     if not template_inp:
-        print("Error: Refinement requires template input file or embedded template label")
+        print(f"Error: {_stage_label} requires template input file or embedded template label")
         return 1
 
     # Resolve path or embedded label from the workflow input file.
@@ -16420,7 +16813,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     
     if not launcher_sh:
         # Try to auto-create launcher
-        ref_launcher_dir = "geometry_refinement"
+        ref_launcher_dir = _opt_dir_name
         if not os.path.exists(ref_launcher_dir):
             os.makedirs(ref_launcher_dir, exist_ok=True)
         auto_launcher = create_auto_launcher(ref_launcher_dir, "orca", qm_alias, quiet=workflow_concise)
@@ -16496,22 +16889,22 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         else:
             expected_cosmic_folder = "COSMIC_2"
 
-    existing_ref_sim_raw = getattr(context, 'refinement_cosmic_folder', None)
+    existing_ref_sim_raw = getattr(context, _attr_cosmic_folder, None)
     existing_ref_sim: Optional[str] = existing_ref_sim_raw if isinstance(existing_ref_sim_raw, str) else None
     existing_ref_base: Optional[str] = _cosmic_base_name(existing_ref_sim) if existing_ref_sim else existing_ref_sim
     if isinstance(existing_ref_base, str) and existing_ref_base == expected_cosmic_folder:
         used_cosmic_folder: str = str(existing_ref_base)
     else:
         used_cosmic_folder = str(expected_cosmic_folder)
-    
-    # Store in refinement_cosmic_folder (optimization's dedicated variable)
-    context.refinement_cosmic_folder = used_cosmic_folder
+
+    # Store cosmic folder in stage-specific context attribute
+    setattr(context, _attr_cosmic_folder, used_cosmic_folder)
     # Also update cosmic_dir so the cosmic stage knows where to look
     context.cosmic_dir = used_cosmic_folder
     context.pending_cosmic_folder = used_cosmic_folder
-    
+
     # Store motifs source in context
-    context.refinement_motifs_source = motif_dir
+    setattr(context, _attr_motifs_source, motif_dir)
     
     # CRITICAL: When resuming optimization stage (with -i flag), clean the OUTPUT cosmic folder
     # This must happen BEFORE process_optimization_redo() checks for skipped_structures
@@ -16543,9 +16936,9 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
     # Process redo structures at the START of the stage (if need_recalculation exists)
     # This ensures that when the workflow restarts this stage after a cosmic failure,
     # we immediately regenerate inputs and delete old outputs before checking completion
-    opt_dir = getattr(context, 'refinement_stage_dir', 'geometry_refinement')
+    opt_dir = getattr(context, _attr_stage_dir, _opt_dir_name)
     if not opt_dir:  # Handle empty string
-        opt_dir = 'geometry_refinement'
+        opt_dir = _opt_dir_name
 
     # Only process redo if optimization directory exists
     # process_optimization_redo will check for skipped_structures internally and return False if none
@@ -16598,7 +16991,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         return 0
     
     # Create refinement directory (or reuse if resuming)
-    opt_dir = "geometry_refinement"
+    opt_dir = _opt_dir_name
     
     # Check if we're resuming - if so, reuse existing directory
     cache_file = getattr(context, 'cache_file', 'protocol_cache.pkl')
@@ -16644,7 +17037,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         is_redo = False
 
     # Persist the refinement working directory for downstream stages.
-    context.refinement_stage_dir = opt_dir
+    setattr(context, _attr_stage_dir, opt_dir)
     
     # Choose files to process:
     # - If only 1 motif file and a combined file exists: use only the single motif file
@@ -16846,8 +17239,8 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         # Scan ALL subdirectories for completed calculations (check for .out files)
         # Files with only .out.backup are being redone and should NOT be counted as completed
         actual_completed = []
-        opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "geometry_refinement"
-        
+        opt_dir = getattr(context, _attr_stage_dir, None) or _opt_dir_name
+
         # 1. Check optimization directory subfolders
         if os.path.exists(opt_dir):
             for item in os.listdir(opt_dir):
@@ -16902,18 +17295,18 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         parent_dir = os.getcwd()
         
         # Determine which cosmic folder belongs to THIS optimization stage
-        refinement_cosmic_folder = getattr(context, 'refinement_cosmic_folder', None)
-        
+        refinement_cosmic_folder = getattr(context, _attr_cosmic_folder, None)
+
         # CRITICAL: Strip orca_out_X suffix if present
-        # organize step may set refinement_cosmic_folder to "cosmic_2/orca_out_5"
+        # organize step may set the folder to "cosmic_2/orca_out_5"
         # but we need just "cosmic_2" to scan for orca_out subdirectories
         if refinement_cosmic_folder and '/' in refinement_cosmic_folder:
             refinement_cosmic_folder = _cosmic_base_name(refinement_cosmic_folder)
-        
+
         if not refinement_cosmic_folder:
             # Calculate the expected folder based on motifs source
-            if hasattr(context, 'refinement_motifs_source'):
-                motifs_source = context.refinement_motifs_source
+            if hasattr(context, _attr_motifs_source):
+                motifs_source = getattr(context, _attr_motifs_source)
                 # Extract base folder (e.g., "COSMIC" from "COSMIC/motifs_03/")
                 calc_base = _cosmic_base_name(motifs_source)
                 
@@ -17073,7 +17466,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             cache_file=cache_file,
             stage_key_prefix='optimization',
         )
-        context.refinement_job_wall_time = time.time() - _ref_wall_start
+        setattr(context, _attr_job_wall_time, time.time() - _ref_wall_start)
 
         # Print status
         # Recalculate num_inputs from the updated set to reflect newly completed optimizations
@@ -17087,8 +17480,8 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             print(f"\nStatus: {total_completed}/{num_inputs} optimizations completed")
         
         # Store for protocol summary (use total)
-        context.refinement_completed = total_completed
-        context.refinement_total = num_inputs
+        setattr(context, _attr_completed, total_completed)
+        setattr(context, _attr_total, num_inputs)
         
         # Clean up old failed files if they exist and all succeeded
         if not failed_optimizations:
@@ -17127,10 +17520,11 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
             # Organize results - run full sort/organize for both redo and normal mode
             saved_cwd = os.getcwd()
             try:
-                # Determine cosmic folder - use refinement_cosmic_folder (set earlier in this function)
-                if hasattr(context, 'refinement_cosmic_folder') and context.refinement_cosmic_folder:
-                    # Use the folder determined at the start of execute_optimization_stage
-                    cosmic_base = _cosmic_base_name(context.refinement_cosmic_folder)
+                # Determine cosmic folder - use the stage-specific cosmic folder attribute
+                _ctx_cosmic = getattr(context, _attr_cosmic_folder, None)
+                if _ctx_cosmic:
+                    # Use the folder determined at the start of this function
+                    cosmic_base = _cosmic_base_name(_ctx_cosmic)
                 else:
                     # Calculate next cosmic folder
                     root_dir = os.getcwd()
@@ -17213,7 +17607,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                     if 'Summary written to' in output:
                         print("\nSummary file(s) generated")
                 if cosmic_folder:
-                    context.refinement_cosmic_folder = cosmic_folder
+                    setattr(context, _attr_cosmic_folder, cosmic_folder)
                     cosmic_base = _cosmic_base_name(cosmic_folder)
                     context.pending_cosmic_folder = cosmic_base
                 if 'Copied' in output and 'COSMIC' in output:
@@ -17226,7 +17620,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                             match = re.search(r'to\s+(COSMIC[^\s]*)', line)
                             if match:
                                 cosmic_folder = match.group(1)
-                                context.refinement_cosmic_folder = cosmic_folder
+                                setattr(context, _attr_cosmic_folder, cosmic_folder)
                                 # Also set as pending for next cosmic stage
                                 cosmic_base = _cosmic_base_name(cosmic_folder)
                                 context.pending_cosmic_folder = cosmic_base
@@ -17272,9 +17666,8 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
                         _sc = _sf.read()
                     _tm = __import__('re').search(r'Total execution time:\s+(\d+):(\d+):(\d+\.\d+)', _sc)
                     if _tm:
-                        context.refinement_total_cpu_time = (
-                            int(_tm.group(1)) * 3600 + int(_tm.group(2)) * 60 + float(_tm.group(3))
-                        )
+                        setattr(context, _attr_total_cpu_time,
+                                int(_tm.group(1)) * 3600 + int(_tm.group(2)) * 60 + float(_tm.group(3)))
                 except Exception:
                     pass
 
@@ -17286,6 +17679,17 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) ->
         return 1
 
     return 0
+
+
+def execute_energy_refinement_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int:
+    """Execute energy refinement stage (single-point calculations on motifs from COSMIC).
+
+    Runs high-level single-point energy calculations on motifs from the previous COSMIC
+    stage and stores results in energy_refinement/.  Stores context.eref_motifs_source
+    pointing to the source COSMIC folder so the following cosmic stage can compute
+    composite Gibbs energies: G = E_eref + (G_prev - E_prev).
+    """
+    return execute_refinement_stage(context, stage, _stage_kind='energy_refinement')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
