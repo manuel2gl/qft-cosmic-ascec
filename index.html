@@ -8931,11 +8931,12 @@ end
                 protocolStages.push({ type: 'cosmic', args: sim2Args });
             }
 
-            // Energy Refinement (optional 2nd ref + cosmic)
+            // Energy Refinement (optional eref + cosmic)
             const erefEnabled = document.getElementById('smart-energy-ref-enabled')?.checked;
             if (erefEnabled) {
                 updateSmartEnergyRefPreview();
-                protocolStages.push({ type: 'ref', args: refConcurrentVal > 1 ? `--concurrent=${refConcurrentVal} input3` : 'input3' });
+                const erefConcurrentVal = parseInt(document.getElementById('adv-ref-concurrent')?.value || '1');
+                protocolStages.push({ type: 'eref', args: erefConcurrentVal > 1 ? `--concurrent=${erefConcurrentVal} input3` : 'input3' });
                 protocolStages.push({ type: 'cosmic', args: sim2Args });
             }
 
@@ -10029,6 +10030,8 @@ H   1.981282  0.134064  0.000000`;
                     let stageName;
                     if (stage.type === 'rN') {
                         stageName = `r${stage.n || 1}`;
+                    } else if (stage.type === 'eref') {
+                        stageName = 'eref';
                     } else if (stage.type === 'ref') {
                         ascRefCount++;
                         stageName = ascRefCount <= 1 ? 'ref' : `ref${ascRefCount}`;
@@ -10076,7 +10079,8 @@ H   1.981282  0.134064  0.000000`;
             // Energy Refinement input3 (optional)
             const orcaInput3 = document.getElementById('orca-input3')?.value || '';
             if (orcaInput3) {
-                content += `\n#orca input3\n`;
+                const erefTemplateHeader = isStandaloneXtbTheory(document.getElementById('adv-eref-theory')?.value || '') ? 'xtb' : 'orca';
+                content += `\n#${erefTemplateHeader} input3\n`;
                 const cleanedInput3 = orcaInput3.trimStart();
                 if (cleanedInput3.startsWith('#name')) {
                     content += orcaInput3 + '\n';
