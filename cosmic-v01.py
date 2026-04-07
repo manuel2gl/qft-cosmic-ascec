@@ -87,15 +87,20 @@ def print_version_banner():
 VERBOSE = False  # Control verbosity of output
 _CPU_COUNT_CACHE = None  # Cache CPU count to avoid repeated calls
 _DATASET_HAS_FREQ = True  # Set by perform_clustering_and_analysis; True = freq mode (original), False = opt-only
+_DATASET_HAS_COMPOSITE = False  # Set True when composite_gibbs is applied from --prev-out-dir
 
 
 def _sorting_energy(mol_data):
     """Return the energy value to use for sorting/selection of representatives.
 
+    Composite mode (_DATASET_HAS_COMPOSITE=True): uses composite_gibbs (E_eref + thermal_correction).
     In freq mode (_DATASET_HAS_FREQ=True): uses Gibbs free energy (original behaviour).
     In opt-only mode (_DATASET_HAS_FREQ=False): uses electronic energy.
     Returns float('inf') when no valid energy is found so the structure sorts last.
     """
+    c = mol_data.get('composite_gibbs')
+    if c is not None:
+        return c
     if _DATASET_HAS_FREQ:
         g = mol_data.get('gibbs_free_energy')
         if g is not None:
@@ -4016,8 +4021,65 @@ def plot_annotated_dendrogram(linkage_matrix, optimal_k, cut_height,
     plt.close(fig2)
 
 
+def apply_composite_energies(dataset, prev_out_dir):
+    """Apply composite energies: G_composite = E_eref + (G_prev - E_prev).
+
+    Reads QM output files from prev_out_dir/orca_out_*/ (or gaussian_out_*/, opt_out_*/)
+    to get the previous-stage electronic and Gibbs energies, then computes the thermal
+    correction and adds composite_gibbs to each matched molecule in dataset.
+
+    Args:
+        dataset: list of mol dicts (already extracted from eref outputs)
+        prev_out_dir: path to the previous COSMIC base directory (e.g. "COSMIC_2")
+
+    Returns:
+        Number of structures that received a composite_gibbs value.
+    """
+    # Collect all .out/.log files from prev_out_dir output subfolders
+    output_subdir_patterns = ["orca_out_*", "opt_out_*", "gaussian_out_*", "calc_out_*", "xtb_out_*"]
+    prev_files = []
+    for pattern in output_subdir_patterns:
+        for subdir in glob.glob(os.path.join(prev_out_dir, pattern)):
+            if os.path.isdir(subdir):
+                prev_files.extend(glob.glob(os.path.join(subdir, "*.out")))
+                prev_files.extend(glob.glob(os.path.join(subdir, "*.log")))
+
+    if not prev_files:
+        print(f"  Warning: No output files found in {prev_out_dir}/ for composite energy calculation")
+        return 0
+
+    # Build lookup: base_stem → {final_electronic_energy, gibbs_free_energy}
+    prev_data = {}
+    for fpath in prev_files:
+        stem = os.path.splitext(os.path.basename(fpath))[0]
+        props = extract_properties_from_logfile(fpath)
+        if props:
+            elec = props.get('final_electronic_energy')
+            gibbs = props.get('gibbs_free_energy')
+            if elec is not None and gibbs is not None:
+                prev_data[stem] = {'elec': elec, 'gibbs': gibbs}
+
+    if not prev_data:
+        print(f"  Warning: Could not extract energies from {prev_out_dir}/ files")
+        return 0
+
+    n_matched = 0
+    for mol in dataset:
+        stem = os.path.splitext(os.path.basename(mol.get('filename', '')))[0]
+        if stem in prev_data:
+            e_prev = prev_data[stem]['elec']
+            g_prev = prev_data[stem]['gibbs']
+            e_eref = mol.get('final_electronic_energy')
+            if e_eref is not None:
+                thermal_correction = g_prev - e_prev
+                mol['composite_gibbs'] = e_eref + thermal_correction
+                n_matched += 1
+
+    return n_matched
+
+
 # Modified to accept rmsd_threshold and output_base_dir
-def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False):
+def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None):
     """
     Performs hierarchical clustering and comprehensive analysis on molecular structures.
     This is the main analysis function that orchestrates the entire clustering workflow.
@@ -4397,6 +4459,18 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
     # automatically use the correct mode without needing explicit parameters.
     global _DATASET_HAS_FREQ
     _DATASET_HAS_FREQ = _dataset_has_freq
+
+    # --- Apply composite energies from previous stage (eref workflow) ---
+    global _DATASET_HAS_COMPOSITE
+    _DATASET_HAS_COMPOSITE = False
+    if prev_out_dir and os.path.isdir(prev_out_dir):
+        n_matched = apply_composite_energies(clean_data_for_clustering, prev_out_dir)
+        if n_matched > 0:
+            _DATASET_HAS_COMPOSITE = True
+            _DATASET_HAS_FREQ = True  # treat composite as freq mode for sorting/output
+            print_step(f"Composite energies applied to {n_matched}/{len(clean_data_for_clustering)} structures (prev: {prev_out_dir})")
+        else:
+            print(f"  Warning: No composite energies could be matched from {prev_out_dir}")
 
     # --- H-bond grouping decision ---
     # By default, all structures go into a single pool and property-based
@@ -5195,11 +5269,12 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
             rep = min(valid_members,
                       key=lambda x: (_sorting_energy(x), x['filename']))
 
-            if rep.get('gibbs_free_energy') is not None:
+            energy_for_boltz = rep.get('composite_gibbs') or rep.get('gibbs_free_energy')
+            if energy_for_boltz is not None:
                 final_representatives.append({
                     'cluster_id': final_cluster_id,
                     'filename': rep['filename'],
-                    'energy': rep['gibbs_free_energy'],
+                    'energy': energy_for_boltz,
                     'cluster_size': len(cluster_members)
                 })
     
@@ -5321,7 +5396,8 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
                 
             boltzmann_file_content_lines.append(cluster_line)
             boltzmann_file_content_lines.append(f"  From structure: {os.path.splitext(data['filename'])[0]}")
-            boltzmann_file_content_lines.append(f"  Gibbs Energy: {data['energy']:.6f} Hartree ({hartree_to_kcal_mol(data['energy']):.2f} kcal/mol, {hartree_to_ev(data['energy']):.2f} eV)")
+            energy_label = "Composite Gibbs Energy" if _DATASET_HAS_COMPOSITE else "Gibbs Energy"
+            boltzmann_file_content_lines.append(f"  {energy_label}: {data['energy']:.6f} Hartree ({hartree_to_kcal_mol(data['energy']):.2f} kcal/mol, {hartree_to_ev(data['energy']):.2f} eV)")
             boltzmann_file_content_lines.append(f"  Population: {data['population']:.2f} %")
             boltzmann_file_content_lines.append("")
 
@@ -5495,7 +5571,9 @@ MORE INFORMATION:
                         help="direct comparison mode (minimum 2 files)")
     parser.add_argument("-T", "--temperature", type=float, default=298.15, metavar="FLOAT",
                         help="temperature for Boltzmann analysis in K (default: 298.15)")
-    
+    parser.add_argument("--prev-out-dir", type=str, default=None, metavar="PATH",
+                        help="previous stage COSMIC base directory for composite energy: G = E_eref + (G_prev - E_prev)")
+
     # Output control
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="enable detailed progress output")
@@ -5719,7 +5797,7 @@ MORE INFORMATION:
                 display_name = "./"
             print(f"\nProcessing folder: {display_name}\n")
 
-            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb)
+            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir)
 
             print(f"\nFinished processing folder: {display_name}\n")
 
