@@ -2599,7 +2599,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                     if stage_info.get('status') == 'completed':
                         stage_type = stage_key.split('_')[0].capitalize()
                         type_map = {'Replication': 'annealing', 'Calculation': 'geometry_optimization',
-                                  'COSMIC': 'COSMIC', 'Optimization': 'geometry_optimization',
+                                  'cosmic': 'cosmic', 'COSMIC': 'cosmic', 'Optimization': 'geometry_optimization',
                                   'Refinement': 'geometry_refinement'}
                         stage_name = type_map.get(stage_type, stage_type)
                         completed_stages.append(stage_name)
@@ -2627,7 +2627,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                         stage_type = stage_key.split('_')[0].capitalize()
                         
                         # Skip cosmic stages in timing (no QM time)
-                        if stage_type == 'COSMIC':
+                        if stage_type == 'cosmic' or stage_type == 'COSMIC':
                             continue
                         
                         wall_time = stage_info.get('wall_time')
@@ -2693,7 +2693,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                     
                     stage_type = stage_key.split('_')[0].capitalize()
                     type_map = {'Replication': 'Annealing', 'Calculation': 'Optimization',
-                              'COSMIC': 'COSMIC', 'Optimization': 'Optimization',
+                              'cosmic': 'cosmic', 'COSMIC': 'cosmic', 'Optimization': 'Optimization',
                               'Refinement': 'Refinement'}
                     stage_name = type_map.get(stage_type, stage_type)
                     
@@ -2721,7 +2721,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                         if 'total_accepted' in result:
                             f.write(f"    Accepted:         {result['total_accepted']} configurations\n")
                     
-                    elif stage_type == 'COSMIC':
+                    elif stage_type == 'cosmic' or stage_type == 'COSMIC':
                         live_critical_pct = None
                         live_skipped_pct = None
                         live_critical_count = None
@@ -2866,7 +2866,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                             f.write(f"    Outputs to:       {format_concise_path(result['cosmic_folder'])}\n")
 
                     # Wall time for non-cosmic stages
-                    if wall_time and stage_type != 'COSMIC':
+                    if wall_time and stage_type != 'cosmic' and stage_type != 'COSMIC':
                         f.write(f"    Wall time:        {format_wall_time_timing(wall_time)}\n")
                     
                     f.write("\n")
@@ -6802,15 +6802,16 @@ def create_replicated_runs(input_file_path: str, num_replicas: int, create_launc
 def _cosmic_base_name(path: str) -> str:
     """Extract the cosmic base folder name from a path.
 
-    For absolute paths like '/home/user/project/COSMIC/orca_out_126',
-    returns 'COSMIC'.  For relative paths like 'COSMIC/orca_out_126',
-    returns 'COSMIC'.  For plain names like 'COSMIC', returns as-is.
+    For absolute paths like '/home/user/project/cosmic/orca_out_126',
+    returns 'cosmic'.  For relative paths like 'cosmic/orca_out_126',
+    returns 'cosmic'.  For plain names like 'cosmic', returns as-is.
+    Case-insensitive (legacy 'COSMIC' directories still match) for resume safety.
     """
     if os.path.isabs(path):
-        # Walk up from the leaf until we find a 'COSMIC*' component
+        # Walk up from the leaf until we find a 'cosmic*' component
         parts = path.split(os.sep)
         for part in reversed(parts):
-            if part.startswith('COSMIC'):
+            if part.lower().startswith('cosmic'):
                 return part
         # Fallback: parent of last component
         return os.path.basename(os.path.dirname(path))
@@ -8890,9 +8891,9 @@ def collect_out_files():
 
     # Create cosmic directory at parent level
     parent_directory = os.path.dirname(current_directory)
-    cosmic_path = os.path.join(parent_directory, "COSMIC")
+    cosmic_path = os.path.join(parent_directory, "cosmic")
     os.makedirs(cosmic_path, exist_ok=True)
-    
+
     destination_folder_name = get_unique_folder_name(base_destination_folder_name, cosmic_path)
     destination_path = os.path.join(cosmic_path, destination_folder_name)
 
@@ -8908,7 +8909,7 @@ def collect_out_files():
         except Exception as e:
             return f"Error copying {os.path.basename(file_path)}: {e}"
 
-    print(f"Copying {num_files} {file_type_desc} to 'COSMIC/{destination_folder_name}' in parallel...")
+    print(f"Copying {num_files} {file_type_desc} to 'cosmic/{destination_folder_name}' in parallel...")
     
     # Use parallel processing for file copying
     import multiprocessing as mp
@@ -8935,7 +8936,7 @@ def collect_out_files():
             except Exception as e:
                 print(f"  Unexpected error: {e}")
 
-    print(f"\nCopied {successful_copies}/{num_files} {file_type_desc} to COSMIC/{destination_folder_name}")
+    print(f"\nCopied {successful_copies}/{num_files} {file_type_desc} to cosmic/{destination_folder_name}")
     print("Process complete. Original files remain untouched.")
     return True
 
@@ -9168,16 +9169,21 @@ def collect_out_files_with_tracking(reuse_existing=False, target_cosmic_folder=N
                 else:
                     return os.path.join(parent_directory, target_cosmic_folder)
 
-            base_name = "COSMIC"
+            base_name = "cosmic"
+            # Resume safety: if a legacy uppercase "COSMIC" tree already exists
+            # in this project, keep using uppercase so we don't split state
+            # across two trees.
+            if os.path.exists(os.path.join(parent_directory, "COSMIC")):
+                base_name = "COSMIC"
             cosmic_path = os.path.join(parent_directory, base_name)
-            
+
             # If reuse_existing is True, return the base path if it exists
             if reuse_existing and os.path.exists(cosmic_path):
                 return cosmic_path
-            
+
             if not os.path.exists(cosmic_path):
                 return cosmic_path
-            
+
             counter = 2
             while True:
                 cosmic_dir_name = f"{base_name}_{counter}"
@@ -9464,11 +9470,11 @@ def execute_sort_command(include_summary=True, target_cosmic_folder=None, reuse_
         print("=" * 50)
         
         # Suggest cosmic analysis if .out files were collected
-        # Check if any cosmic folder exists at the parent level
+        # Check if any cosmic folder exists at the parent level (accept legacy uppercase too)
         parent_dir = os.path.dirname(os.getcwd())
         cosmic_dirs = []
         for item in os.listdir(parent_dir):
-            if item == "COSMIC" or item.startswith("COSMIC_"):
+            if item.lower() == "cosmic" or item.lower().startswith("cosmic_"):
                 cosmic_path = os.path.join(parent_dir, item)
                 if os.path.isdir(cosmic_path):
                     cosmic_dirs.append(item)
@@ -9698,6 +9704,8 @@ class WorkflowContext:
     refinement_completed: Optional[int] = None
     refinement_total: Optional[int] = None
     refinement_cosmic_folder: Optional[str] = None
+    eref_cosmic_folder: Optional[str] = None  # Folder for energy refinement cosmic stage
+    eref_motifs_source: Optional[str] = None  # Motifs source for energy refinement
     recalculated_files: Optional[List[str]] = None  # List of basenames for files being recalculated in redo
     pending_cosmic_folder: Optional[str] = None  # Folder set by optimization/refinement for the next cosmic stage
     use_skipped_threshold: bool = False  # True if --skipped flag is used, False if --critical (default)
@@ -9718,7 +9726,7 @@ class WorkflowContext:
             Output directory path or None if not found
             
         Example:
-            context.get_previous_stage_output_dir('cosmic')  # Returns 'COSMIC/motifs'
+            context.get_previous_stage_output_dir('cosmic')  # Returns 'cosmic/motifs'
             context.get_previous_stage_output_dir('optimization')  # Returns 'calculation'
         """
         if not self.cache_file:
@@ -9934,7 +9942,7 @@ def finalize_stage(stage_args: List[str], pause_after: bool = False) -> Optional
             stage_dict['pause_after'] = True
         return stage_dict
     
-    # COSMIC stage: cosmic ... or cosmic ...
+    # cosmic stage: cosmic ...
     elif first_arg in ['cosmic', 'cosmic']:
         stage_dict = {
             'type': 'cosmic',
@@ -10919,21 +10927,21 @@ def validate_cached_optimization_cosmic(cache: dict, stage: Dict[str, Any], stag
         # Print skipped cosmic stage
         cosmic_stage_cache = cache['stages'][next_stage_key]
         print(f"\n{'-' * 60}")
-        print(f"[{next_stage_num}/{len(stages)}] COSMIC (cached)")
+        print(f"[{next_stage_num}/{len(stages)}] cosmic (cached)")
         print(f"  ✓ Skipped (completed at {cosmic_stage_cache.get('timestamp', 'unknown')})")
         print('-' * 60)
         return True, stage_idx + 1
     
     # Get cosmic directory from cache and validate
     cosmic_cache = cache['stages'][next_stage_key]
-    cosmic_dir = cosmic_cache.get('result', {}).get('working_dir', 'COSMIC')
+    cosmic_dir = cosmic_cache.get('result', {}).get('working_dir', 'cosmic')
     summary_file = os.path.join(cosmic_dir, "clustering_summary.txt")
     
     if not os.path.exists(summary_file):
         # Can't validate, accept cache
         cosmic_stage_cache = cache['stages'][next_stage_key]
         print(f"\n{'-' * 60}")
-        print(f"[{next_stage_num}/{len(stages)}] COSMIC (cached)")
+        print(f"[{next_stage_num}/{len(stages)}] cosmic (cached)")
         print(f"  ✓ Skipped (completed at {cosmic_stage_cache.get('timestamp', 'unknown')})")
         print('-' * 60)
         return True, stage_idx + 1
@@ -11013,21 +11021,21 @@ def validate_cached_refinement_cosmic(cache: dict, stage: Dict[str, Any], stage_
         # Print skipped cosmic stage
         cosmic_stage_cache = cache['stages'][next_stage_key]
         print(f"\n{'-' * 60}")
-        print(f"[{next_stage_num}/{len(stages)}] COSMIC (cached)")
+        print(f"[{next_stage_num}/{len(stages)}] cosmic (cached)")
         print(f"  ✓ Skipped (completed at {cosmic_stage_cache.get('timestamp', 'unknown')})")
         print('-' * 60)
         return True, stage_idx + 1
     
     # Get cosmic directory from cache and validate
     cosmic_cache = cache['stages'][next_stage_key]
-    cosmic_dir = cosmic_cache.get('result', {}).get('working_dir', 'COSMIC')
+    cosmic_dir = cosmic_cache.get('result', {}).get('working_dir', 'cosmic')
     summary_file = os.path.join(cosmic_dir, "clustering_summary.txt")
     
     if not os.path.exists(summary_file):
         # Can't validate, accept cache
         cosmic_stage_cache = cache['stages'][next_stage_key]
         print(f"\n{'-' * 60}")
-        print(f"[{next_stage_num}/{len(stages)}] COSMIC (cached)")
+        print(f"[{next_stage_num}/{len(stages)}] cosmic (cached)")
         print(f"  ✓ Skipped (completed at {cosmic_stage_cache.get('timestamp', 'unknown')})")
         print('-' * 60)
         return True, stage_idx + 1
@@ -11148,7 +11156,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
             if stage_type == 'cosmic':
                 cosmic_counter += 1
-                stage_name = "COSMIC" if cosmic_counter == 1 else f"COSMIC_{cosmic_counter}"
+                stage_name = "cosmic" if cosmic_counter == 1 else f"cosmic_{cosmic_counter}"
                 stage_key = f"cosmic_{idx}"
                 stage_data = cache_stages.get(stage_key, {}) if isinstance(cache_stages, dict) else {}
                 stage_result = stage_data.get('result', {}) if isinstance(stage_data, dict) else {}
@@ -11254,9 +11262,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             elif stype == 'cosmic':
                 cosmic_counter += 1
                 if cosmic_counter == 1:
-                    cosmic_dir = "COSMIC"
+                    cosmic_dir = "cosmic"
+                    # Legacy fallback
+                    if not os.path.isdir(cosmic_dir) and os.path.isdir("COSMIC"):
+                        cosmic_dir = "COSMIC"
                 else:
-                    cosmic_dir = f"COSMIC_{cosmic_counter}"
+                    cosmic_dir = f"cosmic_{cosmic_counter}"
+                    if not os.path.isdir(cosmic_dir) and os.path.isdir(f"COSMIC_{cosmic_counter}"):
+                        cosmic_dir = f"COSMIC_{cosmic_counter}"
                 if os.path.isdir(cosmic_dir):
                     cosmic_dirs.append((cosmic_dir, idx))
 
@@ -11267,8 +11280,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     is_ref = "refine" in d.lower()
                     opt_dirs.append((d, -1, is_ref))
         if not cosmic_dirs:
-            for d in sorted(glob.glob("COSMIC*")):
-                if os.path.isdir(d) and not d.startswith("COSMIC_tmp"):
+            for d in sorted(glob.glob("cosmic*") + glob.glob("COSMIC*")):
+                if os.path.isdir(d) and not d.lower().startswith("cosmic_tmp"):
                     cosmic_dirs.append((d, -1))
 
         # --- Determine the LAST optimization/refinement stage ---
@@ -11575,18 +11588,18 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             if verbose and removed_count > 0:
                 print(f"  Cleaned {cosmic_dir}/: removed {removed_count} intermediate entries")
 
-        # --- Consolidate COSMIC folders into a single cosmic/ directory ---
-        # Keep only the last (most refined) COSMIC folder and rename to cosmic/
+        # --- Consolidate cosmic folders into a single cosmic/ directory ---
+        # Keep only the last (most refined) cosmic folder and rename to cosmic/
         if len(cosmic_dirs) > 1:
             last_cosmic_dir = cosmic_dirs[-1][0]
-            # Remove all intermediate COSMIC folders (keep only last)
+            # Remove all intermediate cosmic folders (keep only last)
             for cosmic_dir, _ in cosmic_dirs[:-1]:
                 if os.path.isdir(cosmic_dir) and cosmic_dir != last_cosmic_dir:
                     shutil.rmtree(cosmic_dir)
                     if verbose:
                         print(f"  Removed intermediate {cosmic_dir}/")
 
-            # Rename the last COSMIC folder to cosmic/ (lowercase)
+            # Rename the last cosmic folder to cosmic/ (lowercase)
             if last_cosmic_dir != "cosmic":
                 target = os.path.join(input_root, "cosmic")
                 if os.path.exists(target):
@@ -12245,7 +12258,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     stage_display_map: Dict[str, str] = {
         'replication': 'annealing',
         'optimization': 'geometry_optimization',
-        'cosmic': 'COSMIC',
+        'cosmic': 'cosmic',
         'refinement': 'geometry_refinement',
         'energy_refinement': 'energy_refinement'
     }
@@ -12640,7 +12653,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             # Get calculation and cosmic directories
                             optimization_dir_path = getattr(context, 'optimization_stage_dir', 'geometry_optimization')
                             # Get cosmic orca output directory
-                            cosmic_dir = context.cosmic_dir if hasattr(context, 'cosmic_dir') else "COSMIC"
+                            cosmic_dir = context.cosmic_dir if hasattr(context, 'cosmic_dir') else "cosmic"
                             
                             # Find the orca_out directory in cosmic (deterministic target)
                             cosmic_orca_dir = None
@@ -12694,13 +12707,13 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         # Run cosmic; stage header is only shown in verbose mode.
                         if attempt == 0 and context.workflow_verbose_level >= 1:
                             print(f"\n{'-' * 60}")
-                            print(f"[{stage_idx + 2}/{len(stages)}] COSMIC")
+                            print(f"[{stage_idx + 2}/{len(stages)}] cosmic")
                             print('-' * 60)
-                        
+
                         cosmic_stage = stages[stage_idx + 1]
                         result = execute_cosmic_stage(context, cosmic_stage)
                         if result != 0:
-                            print(f"\nError: COSMIC failed with code {result}")
+                            print(f"\nError: cosmic failed with code {result}")
                             return result
 
                         # In opt-only mode, no true minima / no critical structures → skip redo.
@@ -12711,13 +12724,13 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
                         if os.path.exists(summary_file):
                             critical_pct, skipped_pct = parse_cosmic_summary(summary_file)
-                            
+
                             # Capture initial values on first attempt
                             if attempt == 0:
                                 initial_critical = critical_pct
                                 initial_skipped = skipped_pct
                                 # Get counts for initial attempt
-                                cosmic_dir = context.cosmic_dir if context.cosmic_dir else "COSMIC"
+                                cosmic_dir = context.cosmic_dir if context.cosmic_dir else "cosmic"
                                 init_crit_count, init_skip_count = parse_cosmic_output(cosmic_dir)
                                 initial_critical_count = init_crit_count
                                 initial_skipped_count = init_skip_count
@@ -12826,7 +12839,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         cosmic_result = {}
 
                         # Store directories for stage memory
-                        cosmic_dir = context.cosmic_dir if context.cosmic_dir else "COSMIC"
+                        cosmic_dir = context.cosmic_dir if context.cosmic_dir else "cosmic"
                         optimization_dir_path = context.optimization_stage_dir if context.optimization_stage_dir else "calculation"
                         cosmic_result['input_dir'] = optimization_dir_path  # Read from calculation
                         cosmic_result['working_dir'] = cosmic_dir
@@ -13018,8 +13031,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     }
                     
                     # Store directories for stage memory
-                    cosmic_dir = context.cosmic_dir if context.cosmic_dir else "COSMIC"
-                    
+                    cosmic_dir = context.cosmic_dir if context.cosmic_dir else "cosmic"
+
                     # Determine input directory and output prefix based on previous stage
                     # Check if previous stage was refinement or optimization
                     prev_was_opt = (stage_idx > 0 and stages[stage_idx - 1]['type'] == 'refinement')
@@ -13224,13 +13237,13 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         # Run cosmic; stage header is only shown in verbose mode.
                         if attempt == 0 and context.workflow_verbose_level >= 1:
                             print(f"\n{'-' * 60}")
-                            print(f"[{stage_idx + 2}/{len(stages)}] COSMIC")
+                            print(f"[{stage_idx + 2}/{len(stages)}] cosmic")
                             print('-' * 60)
-                        
+
                         cosmic_stage = stages[stage_idx + 1]
                         result = execute_cosmic_stage(context, cosmic_stage)
                         if result != 0:
-                            print(f"\nError: COSMIC failed with code {result}")
+                            print(f"\nError: cosmic failed with code {result}")
                             return result
 
                         # In opt-only mode, no true minima / no critical structures → skip redo.
@@ -13241,13 +13254,13 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
                         if os.path.exists(summary_file):
                             critical_pct, skipped_pct = parse_cosmic_summary(summary_file)
-                            
+
                             # Capture initial values on first attempt
                             if attempt == 0:
                                 initial_critical = critical_pct
                                 initial_skipped = skipped_pct
                                 # Get counts for initial attempt
-                                cosmic_dir = context.cosmic_dir if context.cosmic_dir else "COSMIC_2"
+                                cosmic_dir = context.cosmic_dir if context.cosmic_dir else "cosmic_2"
                                 init_crit_count, init_skip_count = parse_cosmic_output(cosmic_dir)
                                 initial_critical_count = init_crit_count
                                 initial_skipped_count = init_skip_count
@@ -13314,7 +13327,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         # Get input dir from previous cosmic stage
                         motifs_dir = context.get_previous_stage_output_dir('cosmic')
                         if not motifs_dir:
-                            motifs_dir = "COSMIC/motifs"  # Fallback
+                            motifs_dir = "cosmic/motifs"  # Fallback
                         
                         opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "geometry_refinement"
                         opt_result['input_dir'] = motifs_dir
@@ -13352,7 +13365,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         cosmic_result = {}
 
                         # Store directories for stage memory
-                        cosmic_dir = context.cosmic_dir if context.cosmic_dir else "COSMIC_2"
+                        cosmic_dir = context.cosmic_dir if context.cosmic_dir else "cosmic_2"
                         opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "geometry_refinement"
                         cosmic_result['input_dir'] = opt_dir  # Read from refinement
                         cosmic_result['working_dir'] = cosmic_dir
@@ -13603,13 +13616,13 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
                         if attempt == 0 and context.workflow_verbose_level >= 1:
                             print(f"\n{'-' * 60}")
-                            print(f"[{stage_idx + 2}/{len(stages)}] COSMIC")
+                            print(f"[{stage_idx + 2}/{len(stages)}] cosmic")
                             print('-' * 60)
 
                         cosmic_stage = stages[stage_idx + 1]
                         result = execute_cosmic_stage(context, cosmic_stage)
                         if result != 0:
-                            print(f"\nError: COSMIC failed with code {result}")
+                            print(f"\nError: cosmic failed with code {result}")
                             return result
 
                         if getattr(context, 'cosmic_opt_only', False):
@@ -13622,7 +13635,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             if attempt == 0:
                                 initial_critical = critical_pct
                                 initial_skipped = skipped_pct
-                                cosmic_dir = context.cosmic_dir if context.cosmic_dir else "COSMIC_3"
+                                cosmic_dir = context.cosmic_dir if context.cosmic_dir else "cosmic_3"
                                 init_crit_count, init_skip_count = parse_cosmic_output(cosmic_dir)
                                 initial_critical_count = init_crit_count
                                 initial_skipped_count = init_skip_count
@@ -13678,7 +13691,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
                         motifs_dir = context.get_previous_stage_output_dir('cosmic')
                         if not motifs_dir:
-                            motifs_dir = "COSMIC_2/motifs"
+                            motifs_dir = "cosmic_2/motifs"
 
                         opt_dir = getattr(context, 'energy_refinement_stage_dir', 'energy_refinement') or 'energy_refinement'
                         opt_result['input_dir'] = motifs_dir
@@ -13714,7 +13727,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             generate_protocol_summary(cache_file=cache_file)
 
                         cosmic_result = {}
-                        cosmic_dir = context.cosmic_dir if context.cosmic_dir else "COSMIC_3"
+                        cosmic_dir = context.cosmic_dir if context.cosmic_dir else "cosmic_3"
                         cosmic_result['input_dir'] = opt_dir
                         cosmic_result['working_dir'] = cosmic_dir
                         cosmic_result['output_dir'] = os.path.join(cosmic_dir, "umotifs")
@@ -13846,7 +13859,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     
     # Clean up temporary folders from retry attempts (final safety cleanup)
     temp_calc_folders = glob.glob("calculation_tmp_*")
-    temp_cosmic_folders = glob.glob("COSMIC_tmp_*")
+    temp_cosmic_folders = glob.glob("cosmic_tmp_*") + glob.glob("COSMIC_tmp_*")
     retry_input = ["retry_input"] if os.path.exists("retry_input") else []
     all_temp = temp_calc_folders + temp_cosmic_folders + retry_input
     
@@ -14248,19 +14261,19 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
         # For optimization stages, check for cosmic_2, cosmic_3, etc.
         # For optimization stages, use cosmic
         if 'optimization' in stage_dir.lower():
-            # Check for cosmic_2 first (most common for first optimization)
-            if os.path.exists('COSMIC_2'):
-                cosmic_dir = 'COSMIC_2'
-            elif os.path.exists('COSMIC_3'):
-                cosmic_dir = 'COSMIC_3'
-            elif os.path.exists('COSMIC_4'):
-                cosmic_dir = 'COSMIC_4'
+            # Check for cosmic_2 first (most common for first optimization).
+            # Accept legacy uppercase COSMIC_* as fallback for resume safety.
+            for candidate in ('cosmic_2', 'COSMIC_2', 'cosmic_3', 'COSMIC_3',
+                              'cosmic_4', 'COSMIC_4'):
+                if os.path.exists(candidate):
+                    cosmic_dir = candidate
+                    break
             else:
-                # Fallback to COSMIC if none found
-                cosmic_dir = 'COSMIC'
+                # Fallback to cosmic if none found
+                cosmic_dir = 'cosmic' if os.path.exists('cosmic') else 'COSMIC'
         else:
-            # Calculation stage - use COSMIC
-            cosmic_dir = 'COSMIC'
+            # Calculation stage - use cosmic
+            cosmic_dir = 'cosmic' if os.path.exists('cosmic') else 'COSMIC'
     
     if not os.path.exists(cosmic_dir):
         return False
@@ -14829,7 +14842,7 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
     Specialized redo processing for optimization stage.
     Handles the specific directory structure of optimization/cosmic interactions.
     """
-    # 1. Determine COSMIC Directory
+    # 1. Determine cosmic Directory
     # For optimization, we look for the cosmic folder that THIS optimization feeds into.
     # Usually cosmic_2, cosmic_3, etc.
     # Use refinement_cosmic_folder (the dedicated variable for optimization outputs)
@@ -14841,13 +14854,11 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
             print(*args, **kwargs)
     
     if not cosmic_dir:
-        # Try to guess based on existence
-        if os.path.exists('COSMIC_2'):
-            cosmic_dir = 'COSMIC_2'
-        elif os.path.exists('COSMIC_3'):
-            cosmic_dir = 'COSMIC_3'
-        elif os.path.exists('COSMIC_4'):
-            cosmic_dir = 'COSMIC_4'
+        # Try to guess based on existence (lowercase first, then uppercase for legacy)
+        for candidate in ('cosmic_2', 'COSMIC_2', 'cosmic_3', 'COSMIC_3', 'cosmic_4', 'COSMIC_4'):
+            if os.path.exists(candidate):
+                cosmic_dir = candidate
+                break
         else:
             return False
     
@@ -15671,9 +15682,9 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
     # This prevents redo/resume runs from drifting to cosmic_3, cosmic_4, etc.
     optimization_cycle = getattr(context, 'optimization_stage_number', 1)
     if optimization_cycle <= 1:
-        fixed_opt_cosmic_base = "COSMIC"
+        fixed_opt_cosmic_base = "cosmic"
     else:
-        fixed_opt_cosmic_base = f"COSMIC_{optimization_cycle}"
+        fixed_opt_cosmic_base = f"cosmic_{optimization_cycle}"
 
     context.cosmic_dir = fixed_opt_cosmic_base
     context.pending_cosmic_folder = fixed_opt_cosmic_base
@@ -15760,8 +15771,10 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
         
         # 2. Check cosmic/orca_out_* folders (files moved there after sorting)
         # This is CRITICAL for showing correct counts (e.g. 11/11) when resuming
-        cosmic_dir = getattr(context, 'cosmic_dir', 'COSMIC')
-        if os.path.exists(cosmic_dir):
+        cosmic_dir = getattr(context, 'cosmic_dir', 'cosmic')
+        if os.path.exists(cosmic_dir) or os.path.exists('COSMIC'):  # Try fallbacks
+            if not os.path.exists(cosmic_dir) and os.path.exists('COSMIC'):
+                cosmic_dir = 'COSMIC'
             for item in os.listdir(cosmic_dir):
                 if item.startswith('orca_out_') or item.startswith('gaussian_out_') or item.startswith('calc_out_'):
                     out_dir = os.path.join(cosmic_dir, item)
@@ -15784,7 +15797,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
         # This is needed if we have multiple cosmic stages
         parent_dir = os.getcwd()
         for item in os.listdir(parent_dir):
-            if item.startswith('COSMIC_') and os.path.isdir(item):
+            if (item.startswith('cosmic_') or item.startswith('COSMIC_')) and os.path.isdir(item):
                 cosmic_dir_n = item
                 for subitem in os.listdir(cosmic_dir_n):
                     if subitem.startswith('orca_out_') or subitem.startswith('gaussian_out_') or subitem.startswith('calc_out_'):
@@ -16166,7 +16179,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                     try:
                         # Pin this stage to a deterministic cosmic base folder so redo attempts
                         # and resumes do not create extra folders (cosmic_3, cosmic_4, ...).
-                        # COSMIC folder lives inside the project directory (cwd), not its parent.
+                        # cosmic folder lives inside the project directory (cwd), not its parent.
                         project_dir = os.getcwd()
 
                         target_cosmic_base = fixed_opt_cosmic_base
@@ -16228,14 +16241,14 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                                 cosmic_base = _cosmic_base_name(cosmic_folder)
                                 context.pending_cosmic_folder = cosmic_base
                             # Look for cosmic folder reference
-                            if 'Copied' in output and 'COSMIC' in output:
+                            if 'Copied' in output and ('cosmic' in output.lower() or 'COSMIC' in output):
                                 for line in output.split('\n'):
                                     if 'Copied' in line and '.out files to' in line:
                                         if context.workflow_verbose_level >= 1:
                                             print(line)
-                                        # Extract cosmic folder name (e.g., "COSMIC/orca_out_3")
+                                        # Extract cosmic folder name (e.g., "cosmic/orca_out_3" or "COSMIC/orca_out_3")
                                         import re
-                                        match = re.search(r'to\s+(COSMIC[^\s]*)', line)
+                                        match = re.search(r'to\s+([cC][oO][sS][mM][iI][cC][^\s]*)', line)
                                         if match:
                                             cosmic_folder = match.group(1)
                                             context.optimization_cosmic_folder = cosmic_folder
@@ -16335,10 +16348,16 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
         # Clear it after checking so stale values don't affect later stages
         context.pending_cosmic_folder = None
 
-    # Fallback: check what optimization_cosmic_folder or refinement_cosmic_folder were set
+    # Fallback: check what optimization_cosmic_folder, refinement_cosmic_folder, or eref_cosmic_folder were set
     if not cosmic_base:
+        # If eref_cosmic_folder is set (from energy refinement stage), prefer it
+        if hasattr(context, 'eref_cosmic_folder') and context.eref_cosmic_folder:
+            eref_base = _cosmic_base_name(context.eref_cosmic_folder)
+            if os.path.exists(eref_base):
+                cosmic_base = eref_base
+
         # If refinement_cosmic_folder is more recent (set after optimization_cosmic_folder), prefer it
-        if hasattr(context, 'refinement_cosmic_folder') and context.refinement_cosmic_folder:
+        if not cosmic_base and hasattr(context, 'refinement_cosmic_folder') and context.refinement_cosmic_folder:
             opt_base = _cosmic_base_name(context.refinement_cosmic_folder)
             if os.path.exists(opt_base):
                 cosmic_base = opt_base
@@ -16353,18 +16372,18 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
     if not cosmic_base:
         cosmic_candidates = [
             d for d in os.listdir('.')
-            if d.startswith('COSMIC') and os.path.isdir(d)
+            if (d.lower().startswith('cosmic') and d[0] in 'cC') and os.path.isdir(d)
         ]
         if cosmic_candidates:
             def _cosmic_sort_key(name: str) -> int:
-                if name == 'COSMIC':
+                if name.lower() == 'cosmic':
                     return 1
-                match = re.search(r'^COSMIC_(\d+)$', name)
+                match = re.search(r'^[cC][oO][sS][mM][iI][cC]_(\d+)$', name)
                 return int(match.group(1)) if match else 0
 
             cosmic_base = sorted(cosmic_candidates, key=_cosmic_sort_key)[-1]
         else:
-            print("Warning: COSMIC folder not found")
+            print("Warning: cosmic folder not found")
             if getattr(context, 'is_workflow', False):
                 return 1
             return 0
@@ -16373,13 +16392,13 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
     if not os.path.isdir(cosmic_base):
         cosmic_candidates = [
             d for d in os.listdir('.')
-            if d.startswith('COSMIC') and os.path.isdir(d)
+            if (d.lower().startswith('cosmic') and d[0] in 'cC') and os.path.isdir(d)
         ]
         if cosmic_candidates:
             def _cosmic_sort_key(name: str) -> int:
-                if name == 'COSMIC':
+                if name.lower() == 'cosmic':
                     return 1
-                match = re.search(r'^COSMIC_(\d+)$', name)
+                match = re.search(r'^[cC][oO][sS][mM][iI][cC]_(\d+)$', name)
                 return int(match.group(1)) if match else 0
 
             cosmic_base = sorted(cosmic_candidates, key=_cosmic_sort_key)[-1]
@@ -16512,8 +16531,11 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
     # eref_motifs_source is the COSMIC base folder that eref took motifs from; it also
     # contains the orca_out_*/ with the ref-level G and E_elec needed for thermal corrections.
     eref_source = getattr(context, 'eref_motifs_source', None)
-    if eref_source and os.path.isdir(eref_source):
-        cmd.extend(['--prev-out-dir', os.path.abspath(eref_source)])
+    if eref_source:
+        # Strip to cosmic base only (in case eref_motifs_source includes subpath like cosmic_2/orca_out_5)
+        eref_source = _cosmic_base_name(eref_source)
+        if os.path.isdir(eref_source):
+            cmd.extend(['--prev-out-dir', os.path.abspath(eref_source)])
         context.eref_motifs_source = None  # consume after use
 
     if verbose:
@@ -16653,7 +16675,7 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
                     context.cosmic_stage_input_counts[stage_num] = cosmic_input_count
         
         if verbose:
-            print("\n✓ COSMIC analysis completed")
+            print("\n✓ cosmic analysis completed")
         
         # Check if files were saved to need_recalculation directory
         # This happens when structures with imaginary frequencies need to be recalculated
@@ -16720,7 +16742,7 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
         return 0
         
     except subprocess.CalledProcessError as e:
-        print(f"Error: COSMIC analysis failed with code {e.returncode}")
+        print(f"Error: cosmic analysis failed with code {e.returncode}")
         if e.stderr:
             print(f"Error output: {e.stderr}")
         # Cleanup temp file if it exists
@@ -16837,27 +16859,35 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
             print("Error: No launcher script provided and could not auto-detect ORCA")
             return 1
     
-    # CRITICAL: Optimization needs to READ motifs from calculation's cosmic folder
-    # The optimization stage created motifs in cosmic/motifs_XX/ (or umotifs in cosmic_N/)
-    # Optimization will READ from cosmic/ and WRITE outputs to cosmic_2/ (or next numbered)
-    # The subsequent cosmic will create umotifs_YY/ (since input came from optimization)
-    
-    # Step 1: Find where the MOTIFS are (from calculation's cosmic stage)
+    # CRITICAL: Refinement/Energy_refinement needs to READ motifs from the previous cosmic stage
+    # For refinement: reads from cosmic_1 (optimization output), writes to cosmic_2
+    # For energy_refinement: reads from cosmic_2 or cosmic_3 (refinement output), writes to cosmic_3 or cosmic_4
+
+    # Step 1: Find where the MOTIFS are
     motifs_source_folder = None
-    
-    # Check if optimization stage set a cosmic folder
-    if hasattr(context, 'optimization_cosmic_folder') and context.optimization_cosmic_folder:
-        # Extract base folder (e.g., "COSMIC" from "COSMIC/orca_out_10")
-        calc_base = _cosmic_base_name(context.optimization_cosmic_folder)
-        motifs_source_folder = calc_base
+
+    # For energy_refinement, use refinement_cosmic_folder; otherwise use optimization_cosmic_folder
+    if _stage_kind == 'energy_refinement':
+        if hasattr(context, 'refinement_cosmic_folder') and context.refinement_cosmic_folder:
+            # Extract base folder (e.g., "cosmic_3" from "cosmic_3/orca_out_10")
+            calc_base = _cosmic_base_name(context.refinement_cosmic_folder)
+            motifs_source_folder = calc_base
     else:
-        # Fallback: search for existing cosmic folders with motifs
-        parent_dir = os.getcwd()
+        # For regular refinement, use optimization_cosmic_folder
+        if hasattr(context, 'optimization_cosmic_folder') and context.optimization_cosmic_folder:
+            # Extract base folder (e.g., "cosmic" from "cosmic/orca_out_10")
+            calc_base = _cosmic_base_name(context.optimization_cosmic_folder)
+            motifs_source_folder = calc_base
+
+    if not motifs_source_folder:
+        # Cosmic folders are created at the parent level of stage directories.
+        search_root = os.path.dirname(os.getcwd())
         existing_sims = []
-        for item in os.listdir(parent_dir):
-            if item.startswith("COSMIC") and os.path.isdir(item):
+        for item in os.listdir(search_root):
+            item_path = os.path.join(search_root, item)
+            if (item.lower().startswith('cosmic') and item[0] in 'cC') and os.path.isdir(item_path):
                 existing_sims.append(item)
-        
+
         if existing_sims:
             # Sort numerically
             existing_sims.sort(key=lambda x: (int(m.group(1)) if (m := re.search(r'_(\d+)', x)) else 0))
@@ -16866,14 +16896,14 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
                 if glob.glob(os.path.join(cosmic_folder, "motifs_*/")) or glob.glob(os.path.join(cosmic_folder, "umotifs_*/")):
                     motifs_source_folder = cosmic_folder
                     break
-    
+
     if not motifs_source_folder:
-        motifs_source_folder = "COSMIC"  # Default
-    
+        motifs_source_folder = "cosmic"  # Default
+
     # Step 2: Find motifs or umotifs in the source folder (prefer umotifs if both exist)
     umotif_dirs = glob.glob(os.path.join(motifs_source_folder, "umotifs_*/"))
     motif_dirs = glob.glob(os.path.join(motifs_source_folder, "motifs_*/"))
-    
+
     # Prefer umotifs over motifs (more refined clustering)
     if umotif_dirs:
         motif_dirs = umotif_dirs
@@ -16881,25 +16911,25 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
         print(f"Warning: No motif/umotif directories found in {motifs_source_folder}/")
         print("  Skipping optimization stage")
         return 0
-    
+
     # Use the most recent motifs directory
     motif_dirs.sort()
     motif_dir = motif_dirs[-1]
-    
+
     # Step 3: Determine where optimization OUTPUTS will go
     # This is typically the next cosmic folder (cosmic_2, cosmic_3, etc.)
     # Always prefer the expected folder from motifs_source_folder and only reuse cached
     # refinement_cosmic_folder if it matches; this prevents stale folder drift.
-    if motifs_source_folder == "COSMIC":
-        expected_cosmic_folder: str = "COSMIC_2"
+    if motifs_source_folder.lower() == "cosmic":
+        expected_cosmic_folder: str = "cosmic_2"
     else:
         # Extract number and increment
-        match = re.search(r'COSMIC_(\d+)', motifs_source_folder)
+        match = re.search(r'[cC][oO][sS][mM][iI][cC]_(\d+)', motifs_source_folder)
         if match:
             next_num = int(match.group(1)) + 1
-            expected_cosmic_folder = f"COSMIC_{next_num}"
+            expected_cosmic_folder = f"cosmic_{next_num}"
         else:
-            expected_cosmic_folder = "COSMIC_2"
+            expected_cosmic_folder = "cosmic_2"
 
     existing_ref_sim_raw = getattr(context, _attr_cosmic_folder, None)
     existing_ref_sim: Optional[str] = existing_ref_sim_raw if isinstance(existing_ref_sim_raw, str) else None
@@ -17319,20 +17349,20 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
             # Calculate the expected folder based on motifs source
             if hasattr(context, _attr_motifs_source):
                 motifs_source = getattr(context, _attr_motifs_source)
-                # Extract base folder (e.g., "COSMIC" from "COSMIC/motifs_03/")
+                # Extract base folder (e.g., "cosmic" from "cosmic/motifs_03/")
                 calc_base = _cosmic_base_name(motifs_source)
-                
+
                 # Optimization outputs go to the NEXT cosmic folder
-                if calc_base == "COSMIC":
-                    refinement_cosmic_folder = "COSMIC_2"
+                if calc_base.lower() == "cosmic":
+                    refinement_cosmic_folder = "cosmic_2"
                 else:
                     # Extract number and increment
-                    match = re.search(r'COSMIC_(\d+)', calc_base)
+                    match = re.search(r'[cC][oO][sS][mM][iI][cC]_(\d+)', calc_base)
                     if match:
                         next_num = int(match.group(1)) + 1
-                        refinement_cosmic_folder = f"COSMIC_{next_num}"
+                        refinement_cosmic_folder = f"cosmic_{next_num}"
                     else:
-                        refinement_cosmic_folder = "COSMIC_2"
+                        refinement_cosmic_folder = "cosmic_2"
         
         # Only check the optimization's designated cosmic folder
         if refinement_cosmic_folder and os.path.isdir(refinement_cosmic_folder):
@@ -17540,10 +17570,10 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
                 else:
                     # Calculate next cosmic folder
                     root_dir = os.getcwd()
-                    base_name = "COSMIC"
+                    base_name = "cosmic"
                     counter = 2
                     cosmic_base = base_name
-                    
+
                     if os.path.exists(os.path.join(root_dir, cosmic_base)):
                         while True:
                             cosmic_base = f"{base_name}_{counter}"
@@ -17622,14 +17652,14 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
                     setattr(context, _attr_cosmic_folder, cosmic_folder)
                     cosmic_base = _cosmic_base_name(cosmic_folder)
                     context.pending_cosmic_folder = cosmic_base
-                if 'Copied' in output and 'COSMIC' in output:
+                if 'Copied' in output and ('cosmic' in output.lower() or 'COSMIC' in output):
                     # Extract the copy message and cosmic folder
                     for line in output.split('\n'):
                         if 'Copied' in line and '.out files to' in line:
                             if context.workflow_verbose_level >= 1:
                                 print(line)
                             # Extract cosmic folder name
-                            match = re.search(r'to\s+(COSMIC[^\s]*)', line)
+                            match = re.search(r'to\s+([cC][oO][sS][mM][iI][cC][^\s]*)', line)
                             if match:
                                 cosmic_folder = match.group(1)
                                 setattr(context, _attr_cosmic_folder, cosmic_folder)
@@ -18726,12 +18756,12 @@ def main_ascec_integrated():
                         # Map of directories to delete based on restart stage
                         if 'calculation' in [k.split('_')[0] for k in stages_to_restart]:
                             # Restarting calculation: delete calculation/, cosmic/, geom_optimization/
-                            for dir_name in ['calculation', 'COSMIC', 'geometry_optimization', 'Geom Optimization']:
+                            for dir_name in ['calculation', 'cosmic', 'COSMIC', 'geometry_optimization', 'Geom Optimization']:
                                 if os.path.exists(dir_name):
                                     print(f"     Removing {dir_name}/")
                                     shutil.rmtree(dir_name)
                             # Also remove numbered variants
-                            for pattern in ['calculation_*', 'COSMIC_*', 'geometry_optimization_*', 'Geom Optimization_*']:
+                            for pattern in ['calculation_*', 'cosmic_*', 'COSMIC_*', 'geometry_optimization_*', 'Geom Optimization_*']:
                                 for dir_path in glob.glob(pattern):
                                     if os.path.isdir(dir_path):
                                         print(f"     Removing {dir_path}/")
@@ -18750,7 +18780,7 @@ def main_ascec_integrated():
                                         print(f"     Removing {dir_path}/")
                                         shutil.rmtree(dir_path)
                             # Remove cosmic folders that come after optimization
-                            cosmic_dirs = sorted(glob.glob('COSMIC*'))
+                            cosmic_dirs = sorted(glob.glob('cosmic*') + glob.glob('COSMIC*'))
                             for cosmic_dir in cosmic_dirs:
                                 if os.path.isdir(cosmic_dir):
                                     # Check if it's cosmic_N where N > optimization-stage cosmic index
@@ -19181,7 +19211,7 @@ MORE INFORMATION:
         
         # Legacy _tmp_ folders (no longer created, but might exist from old runs)
         temp_calc_folders = glob.glob("calculation_tmp_*")
-        temp_cosmic_folders = glob.glob("COSMIC_tmp_*")
+        temp_cosmic_folders = glob.glob("cosmic_tmp_*") + glob.glob("COSMIC_tmp_*")
         
         # Current temporary folders
         retry_input = ["retry_input"] if os.path.exists("retry_input") else []
