@@ -3593,11 +3593,11 @@ ROTATIONAL_CONSTANT_SUBFEATURES = [
     'rotational_constants_C'
 ]
 
-# Default feature weights for clustering.  Values < 1.0 down-weight noisy
-# features that can cause geometrically identical structures to appear
-# distinct in the Z-standardised feature space.  Users can override any
-# weight via --weights.
-DEFAULT_WEIGHTS = {
+# Tuned feature weights for semiempirical / standalone xTB output.  Values < 1.0
+# down-weight noisy features that cause geometrically identical structures to
+# appear distinct in the Z-standardised feature space.  Activated via the
+# --semiweights flag; layer user overrides on top via --weights.
+SEMIEMPIRICAL_WEIGHTS = {
     'electronic_energy': 1.0,        # Direct SCF output, most reliable
     'gibbs_free_energy': 0.9,        # Thermal corrections add noise
     'homo_energy': 0.85,             # Semi-empirical methods show variance
@@ -3613,6 +3613,10 @@ DEFAULT_WEIGHTS = {
     'rotational_constants_B': 1.0,   # Geometric, index-independent
     'rotational_constants_C': 1.0,   # Geometric, index-independent
 }
+
+# Uniform default weights.  Used unless --semiweights is passed.  Keeps COSMIC
+# method-agnostic by default so DFT / post-HF runs are not silently re-weighted.
+DEFAULT_WEIGHTS = {k: 1.0 for k in SEMIEMPIRICAL_WEIGHTS}
 
 
 def is_valid_scalar(value):
@@ -4107,7 +4111,7 @@ def apply_composite_energies(dataset, prev_out_dir):
 
 
 # Modified to accept rmsd_threshold and output_base_dir
-def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None):
+def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None, semiweights=False):
     """
     Performs hierarchical clustering and comprehensive analysis on molecular structures.
     This is the main analysis function that orchestrates the entire clustering workflow.
@@ -4599,7 +4603,11 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
     
     if rmsd_threshold is not None:
         summary_file_content_lines.append(f"RMSD validation threshold: {rmsd_threshold:.3f} Å")
-    # Print non-default weights
+    # Report the active weight profile and any non-default weights
+    if semiweights:
+        summary_file_content_lines.append("Weight profile: semiempirical (--semiweights)")
+    else:
+        summary_file_content_lines.append("Weight profile: uniform (1.0)")
     if weights:
         non_default = {k: v for k, v in weights.items() if v != 1.0}
         if non_default:
@@ -5612,6 +5620,11 @@ MORE INFORMATION:
     parser.add_argument("--group-hb", action="store_true",
                         help="group structures by H-bond count before clustering (separate dendrograms per HB family)")
 
+    parser.add_argument("--semiweights", action="store_true",
+                        help="apply tuned weights for semiempirical / standalone xTB output "
+                             "(down-weights noisy orbital, dipole, and H-bond features). "
+                             "Recommended for PM3/AM1/xTB; leave off for DFT/post-HF.")
+
     # Hidden/advanced options
     parser.add_argument("--min-std-threshold", type=float, default=1e-6,
                         help=argparse.SUPPRESS)
@@ -5639,9 +5652,11 @@ MORE INFORMATION:
     output_directory = args.output_dir
     force_reprocess_cache = args.reprocess_files
     user_weights_dict = parse_weights_argument(args.weights)
-    # Merge user-provided weights on top of defaults (user overrides take precedence)
-    weights_dict = dict(DEFAULT_WEIGHTS)
-    weights_dict.update(user_weights_dict)
+    # Pick tuned semiempirical baseline only when --semiweights is passed;
+    # otherwise stay method-agnostic with a flat 1.0 baseline.
+    base_weights = SEMIEMPIRICAL_WEIGHTS if args.semiweights else DEFAULT_WEIGHTS
+    weights_dict = dict(base_weights)
+    weights_dict.update(user_weights_dict)  # user --weights override the baseline
     min_std_threshold_val = args.min_std_threshold
     abs_tolerances_dict = parse_abs_tolerance_argument(args.abs_tolerance)
     num_cores = args.cores if args.cores is not None else get_cpu_count_fast()
@@ -5713,7 +5728,8 @@ MORE INFORMATION:
             abs_tolerances=abs_tolerances_dict,
             num_cores=num_cores,
             temperature_k=temperature_k,
-            group_hb=args.group_hb
+            group_hb=args.group_hb,
+            semiweights=args.semiweights
         )
         print(f"\n--- Finished comparing {len(compare_files)} files: {', '.join(file_names)} ---\n")
 
@@ -5829,7 +5845,7 @@ MORE INFORMATION:
                 display_name = "./"
             print(f"\nProcessing folder: {display_name}\n")
 
-            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir)
+            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir, semiweights=args.semiweights)
 
             print(f"\nFinished processing folder: {display_name}\n")
 
