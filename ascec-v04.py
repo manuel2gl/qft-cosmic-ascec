@@ -11499,10 +11499,10 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         elif opt_only_stages and final_motif_mapping:
             # No refinement stages — extract from the last optimization stage
             last_opt_dir = opt_only_stages[-1][0]
-            out_dir = os.path.join(input_root, "geom_opt_out")
+            out_dir = os.path.join(input_root, last_opt_dir, "geom_opt_out")
             count = extract_motif_folders(last_opt_dir, final_motif_mapping, out_dir, "motif")
             if verbose and count > 0:
-                print(f"  Created geom_opt_out/ with {count} motif folders")
+                print(f"  Created {last_opt_dir}/geom_opt_out/ with {count} motif folders")
 
         # --- Clean optimization/refinement directories ---
         # Keep only: combined_results.*, orca_summary.txt, launcher_*.sh
@@ -11575,8 +11575,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             if verbose and removed_count > 0:
                 print(f"  Cleaned {cosmic_dir}/: removed {removed_count} intermediate entries")
 
-        # --- Consolidate COSMIC folders into a single COSMIC/ directory ---
-        # Keep only the last (most refined) COSMIC folder and rename to COSMIC/
+        # --- Consolidate COSMIC folders into a single cosmic/ directory ---
+        # Keep only the last (most refined) COSMIC folder and rename to cosmic/
         if len(cosmic_dirs) > 1:
             last_cosmic_dir = cosmic_dirs[-1][0]
             # Remove all intermediate COSMIC folders (keep only last)
@@ -11586,14 +11586,25 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     if verbose:
                         print(f"  Removed intermediate {cosmic_dir}/")
 
-            # Rename the last COSMIC folder to COSMIC/ (if not already)
-            if last_cosmic_dir != "COSMIC":
-                target = os.path.join(input_root, "COSMIC")
+            # Rename the last COSMIC folder to cosmic/ (lowercase)
+            if last_cosmic_dir != "cosmic":
+                target = os.path.join(input_root, "cosmic")
                 if os.path.exists(target):
                     shutil.rmtree(target)
                 os.rename(os.path.join(input_root, last_cosmic_dir), target)
                 if verbose:
-                    print(f"  Renamed {last_cosmic_dir}/ → COSMIC/")
+                    print(f"  Renamed {last_cosmic_dir}/ → cosmic/")
+
+        elif len(cosmic_dirs) == 1:
+            # Single cosmic dir: rename to lowercase if needed
+            cosmic_dir_name = cosmic_dirs[0][0]
+            if cosmic_dir_name != "cosmic":
+                target = os.path.join(input_root, "cosmic")
+                if os.path.exists(target):
+                    shutil.rmtree(target)
+                os.rename(os.path.join(input_root, cosmic_dir_name), target)
+                if verbose:
+                    print(f"  Renamed {cosmic_dir_name}/ → cosmic/")
 
         # --- Clean root-level protocol cache files ---
         for pkl in glob.glob(os.path.join(input_root, "protocol_*.pkl")):
@@ -12431,8 +12442,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     # Restore cosmic_opt_only flag from cached cosmic result
                     if stage_type == 'cosmic':
                         cached_result = stage_cache.get('result', {})
-                        if isinstance(cached_result, dict) and cached_result.get('opt_only', False):
-                            context.cosmic_opt_only = True
+                        context.cosmic_opt_only = isinstance(cached_result, dict) and cached_result.get('opt_only', False)
 
                     # Validate cached optimization+cosmic if applicable
                     if stage_type == 'optimization':
@@ -12447,8 +12457,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             cosmic_key = f"cosmic_{stage_idx + 1}"
                             cosmic_cached = cache.get('stages', {}).get(cosmic_key, {})
                             cosmic_res = cosmic_cached.get('result', {})
-                            if isinstance(cosmic_res, dict) and cosmic_res.get('opt_only', False):
-                                context.cosmic_opt_only = True
+                            context.cosmic_opt_only = isinstance(cosmic_res, dict) and cosmic_res.get('opt_only', False)
                         stage_idx = new_idx
                     # Validate cached refinement+cosmic if applicable
                     elif stage_type == 'refinement':
@@ -12463,8 +12472,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             cosmic_key = f"cosmic_{stage_idx + 1}"
                             cosmic_cached = cache.get('stages', {}).get(cosmic_key, {})
                             cosmic_res = cosmic_cached.get('result', {})
-                            if isinstance(cosmic_res, dict) and cosmic_res.get('opt_only', False):
-                                context.cosmic_opt_only = True
+                            context.cosmic_opt_only = isinstance(cosmic_res, dict) and cosmic_res.get('opt_only', False)
                         stage_idx = new_idx
                     continue
         
@@ -16305,6 +16313,10 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
             return motif_count, umotif_count
         except Exception:
             return None, None
+
+    # Reset opt-only flag before each live COSMIC run so a previous opt-only stage
+    # does not bleed into a refinement+freq COSMIC stage.
+    context.cosmic_opt_only = False
 
     update_list_file: Optional[str] = None
 
