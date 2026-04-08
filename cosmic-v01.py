@@ -3593,6 +3593,27 @@ ROTATIONAL_CONSTANT_SUBFEATURES = [
     'rotational_constants_C'
 ]
 
+# Default feature weights for clustering.  Values < 1.0 down-weight noisy
+# features that can cause geometrically identical structures to appear
+# distinct in the Z-standardised feature space.  Users can override any
+# weight via --weights.
+DEFAULT_WEIGHTS = {
+    'electronic_energy': 1.0,        # Direct SCF output, most reliable
+    'gibbs_free_energy': 0.9,        # Thermal corrections add noise
+    'homo_energy': 0.85,             # Semi-empirical methods show variance
+    'lumo_energy': 0.7,              # Noisiest orbital energy, method-dependent
+    'homo_lumo_gap': 0.9,            # Correlated with homo/lumo noise
+    'dipole_moment': 0.6,            # Sensitive to atom indexing and coord frame
+    'radius_of_gyration': 1.0,       # Purely geometric, index-independent
+    'first_vib_freq': 0.9,           # Generally stable
+    'last_vib_freq': 0.85,           # High-freq modes vary with method/basis
+    'average_hbond_distance': 0.7,   # Depends on H-bond detection cutoffs
+    'average_hbond_angle': 0.7,      # Sensitive to H-bond detection geometry
+    'rotational_constants_A': 1.0,   # Geometric, index-independent
+    'rotational_constants_B': 1.0,   # Geometric, index-independent
+    'rotational_constants_C': 1.0,   # Geometric, index-independent
+}
+
 
 def is_valid_scalar(value):
     if value is None:
@@ -3687,6 +3708,15 @@ def _zscore_scale(raw_np, feature_names, min_std_threshold, abs_tolerances):
     return scaled
 
 
+def _apply_weights(scaled, feature_names, weights):
+    """Multiply each column of *scaled* by its corresponding weight."""
+    for col_idx, fname in enumerate(feature_names):
+        w = weights.get(fname, 1.0)
+        if w != 1.0:
+            scaled[:, col_idx] *= w
+    return scaled
+
+
 def _match_reduced_to_clusters(
     reduced_mols, fullest_mols, cluster_labels_fullest,
     primary_scalar_features, use_primary_rotconsts,
@@ -3759,6 +3789,7 @@ def _match_reduced_to_clusters(
 
         raw_np = np.array(raw_vecs, dtype=float)
         scaled = _zscore_scale(raw_np, feat_names, min_std_threshold, abs_tolerances)
+        scaled = _apply_weights(scaled, feat_names, weights)
 
         # Match each reduced structure to nearest representative
         for idx, mol in enumerate(tier_mols):
@@ -4000,10 +4031,7 @@ def plot_annotated_dendrogram(linkage_matrix, optimal_k, cut_height,
     ax2.axhline(y=cut_height, color='#e74c3c', linestyle='--', linewidth=2,
                 label=f'Threshold t={cut_height:.2f} (k={n_above_user + 1})')
 
-    # Mojena's threshold line (diagnostic)
-    if mojena_threshold is not None and mojena_k is not None:
-        ax2.axhline(y=mojena_threshold, color='#9b59b6', linestyle=':', linewidth=1.5,
-                    label=f'Mojena t={mojena_threshold:.2f} (k={mojena_k})')
+    # Mojena's threshold is computed for informational purposes but not drawn on the plot
 
     # Shade between-cluster region (above user threshold)
     ax2.fill_between(merge_indices, cut_height, heights,
@@ -4571,12 +4599,11 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
     
     if rmsd_threshold is not None:
         summary_file_content_lines.append(f"RMSD validation threshold: {rmsd_threshold:.3f} Å")
-    
-    # Moved these to comparison_specific_summary_lines for conditional output
-    # if weights:
-    #     summary_file_content_lines.append(f"Applied Feature Weights: {weights}")
-    # if abs_tolerances:
-    #     summary_file_content_lines.append(f"Applied Absolute Tolerances: {abs_tolerances}")
+    # Print non-default weights
+    if weights:
+        non_default = {k: v for k, v in weights.items() if v != 1.0}
+        if non_default:
+            summary_file_content_lines.append(f"Feature weights (non-default): {non_default}")
 
 
     total_files_attempted = len(clean_data_for_clustering) + len(skipped_files)
@@ -4695,6 +4722,7 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
 
             features_for_scaling_raw_np = np.array(features_for_scaling_raw, dtype=float)
             features_scaled = _zscore_scale(features_for_scaling_raw_np, ordered_feature_names_for_scaling, min_std_threshold, abs_tolerances)
+            features_scaled = _apply_weights(features_scaled, ordered_feature_names_for_scaling, weights)
 
             linkage_matrix = linkage(features_scaled, method='average', metric='euclidean')
             initial_cluster_labels = fcluster(linkage_matrix, t=threshold, criterion='distance')
@@ -4891,6 +4919,7 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
             # Z-score scaling
             features_for_scaling_raw_np = np.array(features_for_scaling_raw, dtype=float)
             features_scaled = _zscore_scale(features_for_scaling_raw_np, ordered_feature_names_for_scaling, min_std_threshold, abs_tolerances)
+            features_scaled = _apply_weights(features_scaled, ordered_feature_names_for_scaling, weights)
 
             linkage_matrix = linkage(features_scaled, method='average', metric='euclidean')
 
@@ -5609,7 +5638,10 @@ MORE INFORMATION:
     rmsd_validation_threshold = args.rmsd
     output_directory = args.output_dir
     force_reprocess_cache = args.reprocess_files
-    weights_dict = parse_weights_argument(args.weights)
+    user_weights_dict = parse_weights_argument(args.weights)
+    # Merge user-provided weights on top of defaults (user overrides take precedence)
+    weights_dict = dict(DEFAULT_WEIGHTS)
+    weights_dict.update(user_weights_dict)
     min_std_threshold_val = args.min_std_threshold
     abs_tolerances_dict = parse_abs_tolerance_argument(args.abs_tolerance)
     num_cores = args.cores if args.cores is not None else get_cpu_count_fast()
