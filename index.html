@@ -3497,7 +3497,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             <!-- Block 4: COSMIC Settings -->
             <div class="settings-block">
                 <div class="card">
-                    <h2>🔗 COSMIC Screening</h2>
+                    <h2>COSMIC Screening</h2>
                     <div class="toggle-row">
                         <input type="checkbox" id="adv-sim-same" checked onchange="toggleDifferentSimSettings()">
                         <label for="adv-sim-same">Same settings for Opt & Ref stages</label>
@@ -3521,6 +3521,12 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <label>Extra Flags</label>
                             <input type="text" id="adv-sim1-extra" placeholder="--weights='(electronic_energy=0.1)(...)'" oninput="updateAllPreviews()">
                         </div>
+                    </div>
+                    <div class="toggle-row" style="margin-top: 8px;">
+                        <input type="checkbox" id="adv-cosmic-semiweights" checked onchange="toggleSemiweightsFlag()">
+                        <label for="adv-cosmic-semiweights" title="Inserts --semiweights into the Extra Flags above. Applied only to the post-opt COSMIC stage. Auto-set from optimization theory; override manually if needed.">
+                            Use semiempirical weights (<code>--semiweights</code>)
+                        </label>
                     </div>
 
                     <div id="sim2-settings" style="display: none;">
@@ -8261,6 +8267,37 @@ end
             toggleCustomInput('adv-annealing-basis', 'adv-annealing-basis-custom');
         }
 
+        function applySemiweightsToExtraFlags() {
+            // Write or strip --semiweights inside the COSMIC 1 Extra Flags input,
+            // mirroring the checkbox state so the flag is visible to the user.
+            const cb = document.getElementById('adv-cosmic-semiweights');
+            const extraInput = document.getElementById('adv-sim1-extra');
+            if (!cb || !extraInput) return;
+            let current = (extraInput.value || '').replace(/\s*--semiweights\b/g, '').trim();
+            if (cb.checked) {
+                current = current ? `--semiweights ${current}` : '--semiweights';
+            }
+            extraInput.value = current;
+        }
+
+        function toggleSemiweightsFlag() {
+            applySemiweightsToExtraFlags();
+            updateAllPreviews();
+        }
+
+        // Remembers the last opt theory that drove the auto-sync so repeated
+        // syncs with the same theory do not clobber a manual user toggle.
+        let lastSemiweightsSyncedTheory = null;
+        function syncSemiweightsFromTheory() {
+            const cb = document.getElementById('adv-cosmic-semiweights');
+            if (!cb) return;
+            const theory = document.getElementById('adv-opt-theory')?.value || null;
+            if (theory === lastSemiweightsSyncedTheory) return;
+            lastSemiweightsSyncedTheory = theory;
+            cb.checked = (theory === 'semiempirical' || theory === 'xtb');
+            applySemiweightsToExtraFlags();
+        }
+
         function updateAdvOptMethod() {
             const theory = document.getElementById('adv-opt-theory').value;
             const methodSelect = document.getElementById('adv-opt-method');
@@ -8279,6 +8316,7 @@ end
             toggleCustomMethod('adv-opt');
             toggleCustomInput('adv-opt-basis', 'adv-opt-basis-custom');
             applyAdvancedOptRescueDefaults();
+            syncSemiweightsFromTheory();
         }
 
         function updateAdvRefMethod() {
@@ -8885,16 +8923,21 @@ end
             const recoveryTh = document.getElementById('adv-recovery-th')?.value || '0';
             const recoveryRedo = document.getElementById('adv-recovery-redo')?.value || '3';
 
-            // Build cosmic args
+            // Build cosmic args.  The --semiweights flag lives inside the COSMIC 1
+            // Extra Flags field (toggled by the checkbox) and is therefore only
+            // applied to sim1.  The post-ref and post-eref cosmic stages run on
+            // DFT / higher-level output, so strip --semiweights from sim2Extra in
+            // case "Same settings" is enabled and it inherited sim1's Extra Flags.
             let sim1Args = `--th=${sim1Th} -j${sim1J}`;
             if (sim1Rmsd !== '') sim1Args += ` --rmsd=${sim1Rmsd}`;
             if (advancedCOSMICFlags) sim1Args += ` ${advancedCOSMICFlags}`;
             if (sim1Extra) sim1Args += ' ' + sim1Extra;
 
+            const sim2ExtraClean = (sim2Extra || '').replace(/\s*--semiweights\b/g, '').trim();
             let sim2Args = `--th=${sim2Th} -j${sim2J}`;
             if (sim2Rmsd !== '') sim2Args += ` --rmsd=${sim2Rmsd}`;
             if (advancedCOSMICFlags) sim2Args += ` ${advancedCOSMICFlags}`;
-            if (sim2Extra) sim2Args += ' ' + sim2Extra;
+            if (sim2ExtraClean) sim2Args += ' ' + sim2ExtraClean;
 
             // Opt/ref use the generated ORCA inputs directly.
             const annConcurrentVal = parseInt(document.getElementById('adv-annealing-concurrent')?.value || '1');
