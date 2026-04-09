@@ -16452,14 +16452,66 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
     out_folder_found = len(out_candidates) > 0
     cosmic_input_count = 0
     if out_folder_found:
-        if getattr(context, 'is_workflow', False) and len(out_candidates) > 1:
-            print(
-                f"Error: Multiple output folders found in {cosmic_base}/: {', '.join(out_candidates)}. "
-                "Workflow mode requires a single deterministic folder."
-            )
-            return 1
+        def _extract_out_count(folder_name: str) -> Optional[int]:
+            match = re.search(r'_(\d+)$', folder_name)
+            return int(match.group(1)) if match else None
+
+        def _out_type_rank(folder_name: str) -> int:
+            lower = folder_name.lower()
+            if lower.startswith('calc_out_'):
+                return 0
+            if lower.startswith('orca_out_'):
+                return 1
+            if lower.startswith('gaussian_out_'):
+                return 2
+            if lower.startswith('xtb_out_'):
+                return 3
+            if lower.startswith('opt_out_'):
+                return 4
+            return 9
 
         selected_out = out_candidates[0]
+        if len(out_candidates) > 1:
+            expected_count: Optional[int] = None
+            for attr_name in ('eref_completed', 'refinement_completed', 'optimization_completed'):
+                attr_val = getattr(context, attr_name, None)
+                if isinstance(attr_val, int) and attr_val > 0:
+                    expected_count = attr_val
+                    break
+
+            if expected_count is not None:
+                exact_matches = [
+                    c for c in out_candidates
+                    if _extract_out_count(c) == expected_count
+                ]
+                if exact_matches:
+                    selected_out = sorted(exact_matches, key=lambda c: (_out_type_rank(c), c))[0]
+                else:
+                    selected_out = sorted(
+                        out_candidates,
+                        key=lambda c: (
+                            abs((_extract_out_count(c) or 10**9) - expected_count),
+                            _out_type_rank(c),
+                            -((_extract_out_count(c) or -1)),
+                            c,
+                        ),
+                    )[0]
+            else:
+                selected_out = sorted(
+                    out_candidates,
+                    key=lambda c: (
+                        -((_extract_out_count(c) or -1)),
+                        _out_type_rank(c),
+                        c,
+                    ),
+                )[0]
+
+            if getattr(context, 'workflow_verbose_level', 0) >= 1:
+                print(
+                    f"Warning: Multiple output folders found in {cosmic_base}/: {', '.join(out_candidates)}. "
+                    f"Using '{selected_out}' deterministically."
+                )
+
         out_dir = os.path.join(cosmic_base, selected_out)
         cosmic_input_count = (
             len(glob.glob(os.path.join(out_dir, "*.out")))
@@ -17518,6 +17570,37 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
         # Ensure we don't show more completed than total inputs (can happen if files are removed)
         if total_completed > num_inputs:
             total_completed = num_inputs
+
+        # Fallback pass: detect successfully terminated outputs recursively.
+        # This covers edge cases where folder/file naming differs from expected _opt/_calc patterns.
+        if total_completed == 0 and num_inputs > 0 and os.path.isdir(opt_dir):
+            fallback_completed = set()
+            for root, _, files in os.walk(opt_dir):
+                for filename in files:
+                    if filename.endswith('.backup'):
+                        continue
+                    if not (filename.endswith('.out') or filename.endswith('.log')):
+                        continue
+
+                    out_path = os.path.join(root, filename)
+                    qm_kind = 'gaussian' if filename.endswith('.log') else 'auto'
+                    if not check_qm_output_completed(qm_kind, out_path):
+                        continue
+
+                    base = os.path.splitext(filename)[0]
+                    normalized = base
+                    if normalized not in all_input_basenames:
+                        for candidate in (f"{base}_opt", f"{base}_calc"):
+                            if candidate in all_input_basenames:
+                                normalized = candidate
+                                break
+                    if normalized in all_input_basenames:
+                        fallback_completed.add(normalized)
+
+            if fallback_completed:
+                completed_opts = sorted(fallback_completed, key=natural_sort_key)
+                total_completed = min(len(fallback_completed), num_inputs)
+
         if not workflow_concise:
             print(f"\nStatus: {total_completed}/{num_inputs} optimizations completed")
         
