@@ -18123,7 +18123,17 @@ def show_ascec_status() -> None:
         except Exception:
             return []
 
-    def _display_menu(jobs: list) -> None:
+    def _resolve_run_realpath(job: dict) -> str:
+        """Return best-effort realpath for the run input file."""
+        raw_input = str(job.get('input_file') or '').strip()
+        if not raw_input:
+            return "(unknown)"
+        try:
+            return os.path.realpath(raw_input)
+        except Exception:
+            return os.path.abspath(raw_input)
+
+    def _display_menu(jobs: list, show_paths: bool = False) -> None:
         os.system('clear')
         now_str = time.strftime('%Y-%m-%d %H:%M:%S')
 
@@ -18158,6 +18168,9 @@ def show_ascec_status() -> None:
             for j in running:
                 fname = os.path.basename(j['input_file'])
                 print(f"    {j['id']:>3}  {j['pid']:>7}  {_fit(fname, run_input_w):<{run_input_w}}  {j['started_at']}")
+                if show_paths:
+                    run_realpath = _resolve_run_realpath(j)
+                    print(f"         path: {run_realpath}")
         else:
             print("\n  No running jobs.")
 
@@ -18172,15 +18185,20 @@ def show_ascec_status() -> None:
             for j in done:
                 fname = os.path.basename(j['input_file'])
                 print(f"    {j['id']:>3}  {j['status']:<10}  {_fit(fname, hist_input_w):<{hist_input_w}}  {j['updated_at']}")
+                if show_paths:
+                    run_realpath = _resolve_run_realpath(j)
+                    print(f"         path: {run_realpath}")
 
         print(f"\n{dash_sep}")
         print(f"{'─'*sep_w}")
-        print("  [V <id>] Attach/View   [K <id>] Kill   [R] Refresh   [Q] Quit")
+        info_state = "ON" if show_paths else "OFF"
+        print(f"  [V <id>] Attach/View   [K <id>] Kill   [I] Info Paths ({info_state})   [R] Refresh   [Q] Quit")
         print(f"{'─'*sep_w}")
 
     def _show_progress_screen(job: dict, data: dict) -> None:
         os.system('clear')
         jid = job['id']
+        run_realpath = _resolve_run_realpath(job)
         pct = data.get('pct', 0.0)
         bar = _render_bar(pct, width=30)
         upd = data.get('updated', '')
@@ -18197,7 +18215,7 @@ def show_ascec_status() -> None:
         else:
             print(f"Attached: job {jid} ({os.path.basename(job['input_file'])})")
         print("Ctrl+C or Ctrl+D to detach (job keeps running)")
-        print("")
+        print(f"Input realpath: {run_realpath}")
 
     def _attach_view(job: dict) -> None:
         prog_file = job['progress_file']
@@ -18263,6 +18281,7 @@ def show_ascec_status() -> None:
 
     def _view_completed(job: dict) -> None:
         os.system('clear')
+        run_realpath = _resolve_run_realpath(job)
         print(f"{'─'*62}")
         print(f"  Job {job['id']}  —  {job['status']}  ({os.path.basename(job['input_file'])})")
         print(f"{'─'*62}\n")
@@ -18293,12 +18312,14 @@ def show_ascec_status() -> None:
                     print(f"  {ln}")
         else:
             print("  (no log available)")
+        print(f"  Input realpath: {run_realpath}")
         print(f"\n{'─'*62}")
         input("  Press Enter to return to menu...")
 
+    show_info_paths = False
     while True:
         jobs = _prepare_ui_jobs(_get_recent_jobs())
-        _display_menu(jobs)
+        _display_menu(jobs, show_paths=show_info_paths)
         try:
             raw = input("  Choice: ").strip()
         except (KeyboardInterrupt, EOFError):
@@ -18308,6 +18329,9 @@ def show_ascec_status() -> None:
         if raw.lower() == 'q':
             break
         if raw.lower() == 'r':
+            continue
+        if raw.lower() == 'i':
+            show_info_paths = not show_info_paths
             continue
         m = re.match(r'^\s*([VKvk])\s*(\d+)\s*$', raw)
         if not m:
