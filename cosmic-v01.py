@@ -4067,14 +4067,48 @@ def apply_composite_energies(dataset, prev_out_dir):
     Returns:
         Number of structures that received a composite_gibbs value.
     """
-    # Collect all .out/.log files from prev_out_dir output subfolders
+    def _out_suffix_count(name: str):
+        m = re.search(r'_(\d+)$', name)
+        return int(m.group(1)) if m else 10**9
+
+    def _out_type_rank(name: str):
+        lower = name.lower()
+        if lower.startswith("orca_out_"):
+            return 0
+        if lower.startswith("gaussian_out_"):
+            return 1
+        if lower.startswith("calc_out_"):
+            return 2
+        if lower.startswith("xtb_out_"):
+            return 3
+        if lower.startswith("opt_out_"):
+            return 4
+        return 9
+
+    # Collect all .out/.log files from prev_out_dir output subfolders.
+    # Deterministic ordering is important when multiple out folders exist:
+    # prefer older/lower-count folders because they usually contain the
+    # previous-stage thermal corrections used for composite energies.
     output_subdir_patterns = ["orca_out_*", "opt_out_*", "gaussian_out_*", "calc_out_*", "xtb_out_*"]
-    prev_files = []
+    output_subdirs = []
     for pattern in output_subdir_patterns:
         for subdir in glob.glob(os.path.join(prev_out_dir, pattern)):
             if os.path.isdir(subdir):
-                prev_files.extend(glob.glob(os.path.join(subdir, "*.out")))
-                prev_files.extend(glob.glob(os.path.join(subdir, "*.log")))
+                output_subdirs.append(subdir)
+
+    output_subdirs = sorted(
+        output_subdirs,
+        key=lambda p: (
+            _out_suffix_count(os.path.basename(p)),
+            _out_type_rank(os.path.basename(p)),
+            os.path.basename(p),
+        ),
+    )
+
+    prev_files = []
+    for subdir in output_subdirs:
+        prev_files.extend(sorted(glob.glob(os.path.join(subdir, "*.out"))))
+        prev_files.extend(sorted(glob.glob(os.path.join(subdir, "*.log"))))
 
     if not prev_files:
         print(f"  Warning: No output files found in {prev_out_dir}/ for composite energy calculation")
@@ -4084,6 +4118,9 @@ def apply_composite_energies(dataset, prev_out_dir):
     prev_data = {}
     for fpath in prev_files:
         stem = os.path.splitext(os.path.basename(fpath))[0]
+        # Keep the first valid match only, preserving preference for earlier folders.
+        if stem in prev_data:
+            continue
         props = extract_properties_from_logfile(fpath)
         if props:
             elec = props.get('final_electronic_energy')
