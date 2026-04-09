@@ -16450,6 +16450,7 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
             out_candidates.append(item)
 
     out_folder_found = len(out_candidates) > 0
+    selected_out_name: Optional[str] = None
     cosmic_input_count = 0
     if out_folder_found:
         def _extract_out_count(folder_name: str) -> Optional[int]:
@@ -16513,6 +16514,7 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
                 )
 
         out_dir = os.path.join(cosmic_base, selected_out)
+        selected_out_name = selected_out
         cosmic_input_count = (
             len(glob.glob(os.path.join(out_dir, "*.out")))
             + len(glob.glob(os.path.join(out_dir, "*.log")))
@@ -16552,8 +16554,12 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
         print(f"\nRunning cosmic analysis...")
         print(f"Using cosmic script: {os.path.basename(cosmic_script)}")
     
-    # Build command - pass '1' via stdin to auto-select the first folder
-    cmd = [sys.executable, cosmic_script] + other_args
+    # Build command. When a deterministic output subfolder is known, pass it explicitly
+    # to bypass cosmic-v01 interactive folder selection.
+    if selected_out_name:
+        cmd = [sys.executable, cosmic_script, selected_out_name] + other_args
+    else:
+        cmd = [sys.executable, cosmic_script] + other_args
     
     # Add --cores if not already specified and user explicitly set ascec_parallel_cores in input file
     # (ascec_parallel_cores > 0 means it was explicitly set)
@@ -16594,14 +16600,20 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
         print(f"{' '.join(cmd)}\n")
         print(f"Working directory: {cosmic_base}\n")
     try:
-        # Auto-select folder 1 by providing '1\n' as stdin
-        # Stream output to avoid pipe buffer deadlock on large outputs
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, 
-                               stderr=subprocess.STDOUT, text=True, bufsize=1, 
-                               cwd=cosmic_base, universal_newlines=True)
-        
-        # Send input and close stdin immediately
-        if proc.stdin:
+        # Stream output to avoid pipe buffer deadlock on large outputs.
+        # Keep stdin open only for fallback interactive mode when no explicit folder was passed.
+        use_stdin = selected_out_name is None
+        proc = subprocess.Popen(cmd,
+                               stdin=(subprocess.PIPE if use_stdin else subprocess.DEVNULL),
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT,
+                               text=True,
+                               bufsize=1,
+                               cwd=cosmic_base,
+                               universal_newlines=True)
+
+        # Fallback auto-selection for interactive mode only.
+        if use_stdin and proc.stdin:
             proc.stdin.write('1\n')
             proc.stdin.close()
         
