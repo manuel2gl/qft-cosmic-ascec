@@ -4132,12 +4132,44 @@ def apply_composite_energies(dataset, prev_out_dir):
         print(f"  Warning: Could not extract energies from {prev_out_dir}/ files")
         return 0
 
+    # Build a stem alias map for umotif→motif renaming that happens between
+    # refinement and energy refinement.  The motif/umotif XYZ files written by
+    # cosmic contain the source stem in the comment line (line 2 of each frame),
+    # e.g. "motif_02_opt (G = ...)".  If a direct stem match fails, we consult
+    # this map to resolve the original prev-stage stem.
+    stem_alias: dict = {}  # eref_stem → prev_stem
+    umotif_dirs = sorted(glob.glob(os.path.join(prev_out_dir, "umotifs_*")))
+    motif_dirs = sorted(glob.glob(os.path.join(prev_out_dir, "motifs_*")))
+    source_dirs = umotif_dirs or motif_dirs
+    if source_dirs:
+        latest_dir = source_dirs[-1]
+        for xyz_file in glob.glob(os.path.join(latest_dir, "*.xyz")):
+            xyz_basename = os.path.splitext(os.path.basename(xyz_file))[0]  # e.g. umotif_01
+            try:
+                with open(xyz_file, 'r') as xf:
+                    lines = xf.readlines()
+                    if len(lines) >= 2:
+                        # Comment line format: "motif_02_opt (G = -458.216632 Hartree ...)"
+                        comment = lines[1].strip()
+                        source_stem = comment.split()[0] if comment else ''
+                        if source_stem and source_stem != xyz_basename:
+                            # Map both umotif_01 and umotif_01_opt to source stem
+                            stem_alias[xyz_basename] = source_stem
+                            stem_alias[xyz_basename + '_opt'] = source_stem
+                            stem_alias[xyz_basename + '_calc'] = source_stem
+            except Exception:
+                pass
+
     n_matched = 0
     for mol in dataset:
         stem = os.path.splitext(os.path.basename(mol.get('filename', '')))[0]
-        if stem in prev_data:
-            e_prev = prev_data[stem]['elec']
-            g_prev = prev_data[stem]['gibbs']
+        # Try direct match first, then fall back to alias map
+        lookup_stem = stem
+        if stem not in prev_data and stem in stem_alias:
+            lookup_stem = stem_alias[stem]
+        if lookup_stem in prev_data:
+            e_prev = prev_data[lookup_stem]['elec']
+            g_prev = prev_data[lookup_stem]['gibbs']
             e_eref = mol.get('final_electronic_energy')
             if e_eref is not None:
                 thermal_correction = g_prev - e_prev
@@ -4537,6 +4569,7 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
         if n_matched > 0:
             _DATASET_HAS_COMPOSITE = True
             _DATASET_HAS_FREQ = True  # treat composite as freq mode for sorting/output
+            _dataset_has_freq = True  # update local too (controls Boltzmann & opt-only marker)
             print_step(f"Composite energies applied to {n_matched}/{len(clean_data_for_clustering)} structures (prev: {prev_out_dir})")
         else:
             print(f"  Warning: No composite energies could be matched from {prev_out_dir}")
