@@ -8514,7 +8514,9 @@ end
             const noNative = normalized.replace(/^(Native-)+/, '');
             const isXtbFamily = theory === 'gfn' || theory === 'xtb' || normalized.includes('GFN') || normalized.includes('xTB') || normalized.includes('FF');
             if (isXtbFamily) {
-                return { method: noNative, hess: 'num' };
+                // For standalone xTB, use analytical Freq; for non-standalone xTB (ORCA), use NumFreq
+                const hess = theory === 'xtb' ? 'freq' : 'num';
+                return { method: noNative, hess: hess };
             }
             return { method: 'HF-3c', hess: 'freq' };
         }
@@ -8556,7 +8558,9 @@ end
             const noNative = normalized.replace(/^(Native-)+/, '');
             const isXtbFamily = theory === 'gfn' || theory === 'xtb' || normalized.includes('GFN') || normalized.includes('xTB') || normalized.includes('FF');
             if (isXtbFamily) {
-                return { method: noNative, hess: 'num' };
+                // For standalone xTB, use analytical Freq; for non-standalone xTB (ORCA), use NumFreq
+                const hess = theory === 'xtb' ? 'freq' : 'num';
+                return { method: noNative, hess: hess };
             }
             return { method: 'HF-3c', hess: 'freq' };
         }
