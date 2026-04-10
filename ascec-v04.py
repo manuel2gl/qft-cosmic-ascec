@@ -18984,17 +18984,30 @@ def main_ascec_integrated():
                 except OSError: pass
         os._exit(result)
 
-    # AUTO-DETECT EMBEDDED PROTOCOL (single input-file invocation)
-    # Example: ascec04 glaw.asc
-    if len(sys.argv) == 2 and os.environ.get("ASCEC_DISABLE_EMBEDDED_PROTOCOL") != "1":
+    # AUTO-DETECT EMBEDDED PROTOCOL (input-file invocation with optional global flags)
+    # Examples:
+    #   ascec04 glaw.asc
+    #   ascec04 glaw.asc -v
+    #   ascec04 glaw.asc -v2 --maxprint
+    def _is_auto_protocol_flag(token: str) -> bool:
+        return token in {"-v", "-v2", "-v3", "--maxprint", "--nobox", "--standard"}
+
+    if (
+        len(sys.argv) >= 2
+        and all(_is_auto_protocol_flag(tok) for tok in sys.argv[2:])
+        and os.environ.get("ASCEC_DISABLE_EMBEDDED_PROTOCOL") != "1"
+    ):
         input_file = sys.argv[1]
         if os.path.exists(input_file):
+            if "--maxprint" in sys.argv[2:]:
+                globals()["_ascec_maxprint_requested"] = True
+
             protocol = extract_protocol_from_input(input_file)
             if protocol:
                 protocol_text = protocol
                 protocol, protocol_has_maxprint = consume_protocol_maxprint_flag(protocol)
                 if protocol_has_maxprint:
-                    _ascec_maxprint_requested = True
+                    globals()["_ascec_maxprint_requested"] = True
 
                 # Replace placeholder ".asc," with actual input filename
                 import re
