@@ -2317,7 +2317,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                                             </div>
                                             <span id="smart-packing-top-pct">%</span>
                                         </label>
-                                        <label class="auto-box-compact" title="Automatically compute box from packing" style="margin-top:0;">
+                                        <label class="auto-box-compact" title="Automatically compute box length from packing" style="margin-top:0;">
                                             <input type="checkbox" id="smart-use-packing-top" checked>
                                             auto
                                         </label>
@@ -2571,7 +2571,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                 <div class="card">
                     <div class="card-title-row">
                         <h2>Quenching & Box Settings</h2>
-                        <label class="auto-box-compact" title="Automatically compute box from packing">
+                        <label class="auto-box-compact">
                             <input type="checkbox" id="smart-use-packing" checked onchange="toggleSmartUsePacking()">
                             auto box
                         </label>
@@ -3118,7 +3118,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <div class="form-group" style="flex:1; min-width:110px; margin-bottom:0;">
                             <label style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
                                 <span>Box (Å)</span>
-                                <span class="auto-box-compact" title="Automatically compute box from packing" style="font-size:0.9em;">
+                                <span class="auto-box-compact" style="font-size:0.9em;">
                                     <input type="checkbox" id="adv-use-packing" checked onchange="toggleAdvUsePacking()">
                                     auto box
                                 </span>
@@ -3272,6 +3272,12 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <div class="form-group">
                             <label>Max Iterations</label>
                             <input type="number" id="adv-opt-maxiter" value="200" min="1" oninput="updateAllPreviews()">
+                        </div>
+                        <div class="form-group" style="flex:1.2; min-width:220px; margin-bottom:0;">
+                            <label class="auto-box-compact" title="Auto-enable for preliminar semiempirical/xTB optimization; disable for DFT or post-HF.">
+                                <input type="checkbox" id="adv-cosmic-semiweights" checked onchange="toggleSemiweightsFlag()">
+                                Use semiempirical weights (<code>--semiweights</code>)
+                            </label>
                         </div>
                     </div>
                     <div class="form-row">
@@ -3522,13 +3528,6 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <input type="text" id="adv-sim1-extra" placeholder="--weights='(electronic_energy=0.1)(...)'" oninput="updateAllPreviews()">
                         </div>
                     </div>
-                    <div class="toggle-row" style="margin-top: 8px;">
-                        <input type="checkbox" id="adv-cosmic-semiweights" checked onchange="toggleSemiweightsFlag()">
-                        <label for="adv-cosmic-semiweights" title="Inserts --semiweights into the Extra Flags above. Applied only to the post-opt COSMIC stage. Auto-set from optimization theory; override manually if needed.">
-                            Use semiempirical weights (<code>--semiweights</code>)
-                        </label>
-                    </div>
-
                     <div id="sim2-settings" style="display: none;">
                         <h3>COSMIC 2 (after refinement)</h3>
                         <div class="form-row-4">
@@ -6028,6 +6027,26 @@ H  -0.757000  0.586000  0.000000"></textarea>
             return basis ? `${methodValue} ${basis}` : methodValue;
         }
 
+        function hasExplicitAuxiliaryBasis(methodLine) {
+            const value = String(methodLine || '').toUpperCase();
+            return (
+                value.includes('AUTOAUX') ||
+                value.includes('DEF2/J') ||
+                value.includes('JKFIT') ||
+                value.includes('MP2FIT') ||
+                value.includes('CABS') ||
+                value.includes('AUXBASIS')
+            );
+        }
+
+        function buildSmartEnergyRefMethodLine(method, basis, theory) {
+            const methodLine = buildSmartMethodWithBasis(method, basis, theory);
+            const isDlpnofamily = theory === 'post-hf' && /^DLPNO/i.test(String(method || '').trim());
+            if (!isDlpnofamily) return methodLine;
+            if (hasExplicitAuxiliaryBasis(methodLine)) return methodLine;
+            return `${methodLine} AutoAux`;
+        }
+
         function formatOrcaMethodLine(method) {
             return method || '';
         }
@@ -6821,6 +6840,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 if (erefTheory) { erefTheory.value = 'post-hf'; updateSmartEnergyRefMethod(); }
             }
 
+            syncSemiweightsFromTheory();
+
             updateSamplingPresetUI();
             updateSmartPipeline();
             updateProtocolPreview();
@@ -6843,9 +6864,6 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
         const SMART_MODE_HELP_TEXTS = {
             'smart-box-size-top': 'Box length in angstroms for the simulation box',
-            'smart-packing-top-input': 'Packing %: The percentage of the box occupied by your system. Set a lower value for a sparse box with plenty of empty space, or a higher value to pack molecules tightly',
-            'smart-packing-top-custom': 'Packing %: The percentage of the box occupied by your system. Set a lower value for a sparse box with plenty of empty space, or a higher value to pack molecules tightly',
-            'smart-use-packing-top': 'Automatically compute box length from packing',
             'smart-box-refresh-btn': 'Refresh the 3D simulation box view with current values',
             'smart-box-visual-test-btn': 'Place random test molecules to quickly inspect box occupancy',
             'smart-maxprint': 'Stores all QM outputs; high disk usage',
@@ -7324,7 +7342,7 @@ end
             const charge = document.getElementById('smart-charge')?.value || '0';
             const mult = document.getElementById('smart-multiplicity')?.value || '1';
 
-            const methodLine = buildSmartMethodWithBasis(method, basis, theory);
+            const methodLine = buildSmartEnergyRefMethodLine(method, basis, theory);
             // SP job: no Opt keyword, just the method line. Freq/NumFreq appended if selected.
             const jobLine = jobRaw === 'SP' ? '' : jobRaw.replace('SP ', '');
             const maxcoreLine = maxcore ? `%maxcore ${maxcore}\n` : '';
@@ -8285,16 +8303,18 @@ end
             updateAllPreviews();
         }
 
-        // Remembers the last opt theory that drove the auto-sync so repeated
-        // syncs with the same theory do not clobber a manual user toggle.
-        let lastSemiweightsSyncedTheory = null;
+        // Remembers the last preset+theory combination that drove the auto-sync so
+        // repeated syncs do not clobber a manual user toggle.
+        let lastSemiweightsSyncedKey = null;
         function syncSemiweightsFromTheory() {
             const cb = document.getElementById('adv-cosmic-semiweights');
             if (!cb) return;
             const theory = document.getElementById('adv-opt-theory')?.value || null;
-            if (theory === lastSemiweightsSyncedTheory) return;
-            lastSemiweightsSyncedTheory = theory;
-            cb.checked = (theory === 'semiempirical' || theory === 'xtb');
+            const preset = getSamplingPresetFromState();
+            const syncKey = `${preset}|${theory || ''}`;
+            if (syncKey === lastSemiweightsSyncedKey) return;
+            lastSemiweightsSyncedKey = syncKey;
+            cb.checked = preset === 'preliminar' && (theory === 'semiempirical' || theory === 'xtb');
             applySemiweightsToExtraFlags();
         }
 
@@ -8398,8 +8418,7 @@ end
             const charge = document.getElementById('adv-charge')?.value || '0';
             const mult = document.getElementById('adv-multiplicity')?.value || '1';
 
-            const formattedMethod = formatOrcaMethodLine(method);
-            const methodLine = basis ? `${formattedMethod} ${basis}` : formattedMethod;
+            const methodLine = buildSmartEnergyRefMethodLine(method, basis, theory);
             const jobLine = jobRaw === 'SP' ? '' : jobRaw.replace('SP ', '');
             const maxcoreLine = maxcore ? `%maxcore ${maxcore}\n` : '';
 
@@ -8673,6 +8692,7 @@ end
         // Update all previews and pipeline
         function updateAllPreviews() {
             updateAdvOrcaInput1();
+            syncSemiweightsFromTheory();
             const refEnabled = document.getElementById('adv-ref-enabled')?.checked !== false
                 && document.getElementById('smart-ref-enabled')?.checked !== false;
             if (refEnabled) updateAdvOrcaInput2();
