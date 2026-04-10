@@ -2833,6 +2833,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                                     if threshold_met:
                                         f.write(f"\n    Validation: Step [{step_num-1}] passed ✓\n")
                                         f.write(f"    {threshold_type.capitalize()} ≤ {threshold_value}%\n")
+                                        f.write(f"    Redo: 0 attempts (threshold met on first run)\n")
                                     else:
                                         f.write(f"\n    Validation: Step [{step_num-1}] threshold exceeded!\n")
                                         f.write(f"    Target: {threshold_type} ≤ {threshold_value}% | Actual: {actual}%\n")
@@ -6118,13 +6119,7 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
             seen_basenames.add(basename)
             launcher_input_files.append(basename)
 
-    # Sort input files in natural numeric order where possible
-    def sort_key(f):
-        import re
-        nums = re.findall(r'\d+', f)
-        return [int(n) for n in nums] if nums else [f]
-
-    launcher_input_files.sort(key=sort_key)
+    launcher_input_files.sort(key=natural_sort_key)
 
     # Decide launcher source: user template or auto-generated ORCA environment
     launcher_base_content = None
@@ -10931,7 +10926,7 @@ def validate_cached_optimization_cosmic(cache: dict, stage: Dict[str, Any], stag
     
     # Check if optimization stage has redo parameters
     optimization_args = stage['args']
-    max_critical = None
+    max_critical = 0  # Default: 0% critical structures allowed (retry all)
     max_skipped = None
     
     for arg in optimization_args:
@@ -11025,7 +11020,7 @@ def validate_cached_refinement_cosmic(cache: dict, stage: Dict[str, Any], stage_
     
     # Check if optimization stage has redo parameters
     opt_args = stage['args']
-    max_critical = None
+    max_critical = 0  # Default: 0% critical structures allowed (retry all)
     max_skipped = None
     
     for arg in opt_args:
@@ -11172,6 +11167,16 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             stage_name = stage_display_map.get(stage_type, str(stage_type).capitalize())
             stage_line = f"[{idx}/{total}] {stage_name} ✓"
 
+            # Append redo count to optimization/refinement stage lines when redo occurred
+            if stage_type == 'optimization':
+                _redo_n = getattr(context, 'last_opt_redo_count', 0)
+                if _redo_n and _redo_n > 0:
+                    stage_line = f"[{idx}/{total}] {stage_name} (redo: {_redo_n}) ✓"
+            elif stage_type == 'refinement':
+                _redo_n = getattr(context, 'last_ref_redo_count', 0)
+                if _redo_n and _redo_n > 0:
+                    stage_line = f"[{idx}/{total}] {stage_name} (redo: {_redo_n}) ✓"
+
             if stage_type == 'cosmic':
                 cosmic_counter += 1
                 stage_name = "cosmic" if cosmic_counter == 1 else f"cosmic_{cosmic_counter}"
@@ -11239,8 +11244,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         Reduce disk usage by removing intermediate files, keeping only:
         - annealing/ as-is
         - optimization/refinement dirs: combined_results.*, *_summary.txt
-        - cosmic dirs: dendrogram_images/, clustering_summary.txt, boltzmann_distribution.txt,
-          extracted_clusters/, extracted_data/, final motifs_N/ or umotifs_N/
+        - cosmic dirs: untouched (preserved as-is so the user can re-run cosmic)
         - Root: final_ensemble.* or possible_final_ensemble.*, protocol_summary.txt, .asc file
         - geometry_optimization/geom_opt_out/ only for optimization-only workflows (no refinement)
         """
@@ -11571,81 +11575,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 label = "geometry_refinement" if is_ref else "geometry_optimization"
                 print(f"  Cleaned {calc_dir}/ ({label}): kept {len(kept_root_files)} summary files")
 
-        # --- Clean cosmic directories ---
-        for cosmic_dir, _ in cosmic_dirs:
-            if not os.path.isdir(cosmic_dir):
-                continue
-
-            removed_count = 0
-            # Find the final motifs/umotifs dir (highest numbered)
-            final_motif_dir_name = None
-            for pattern in ["umotifs_*", "motifs_*"]:
-                candidates = sorted(glob.glob(os.path.join(cosmic_dir, pattern)))
-                candidates = [c for c in candidates if os.path.isdir(c)]
-                if candidates:
-                    final_motif_dir_name = os.path.basename(candidates[-1])
-                    break
-
-            keep_entries = {
-                "dendrogram_images", "extracted_clusters", "extracted_data",
-                "clustering_summary.txt", "boltzmann_distribution.txt",
-                "threshold_diagnostic.png"
-            }
-            if final_motif_dir_name:
-                keep_entries.add(final_motif_dir_name)
-
-            for entry in os.listdir(cosmic_dir):
-                entry_path = os.path.join(cosmic_dir, entry)
-                if entry in keep_entries:
-                    continue
-
-                # Remove everything else: orca_out_*, data_cache_*.pkl, non-final motifs_*
-                if os.path.isdir(entry_path):
-                    shutil.rmtree(entry_path)
-                    removed_count += 1
-                elif os.path.isfile(entry_path):
-                    os.remove(entry_path)
-                    removed_count += 1
-
-            if verbose and removed_count > 0:
-                print(f"  Cleaned {cosmic_dir}/: removed {removed_count} intermediate entries")
-
-        # --- Consolidate cosmic folders into a single cosmic/ directory ---
-        # Keep only the last (most refined) cosmic folder and rename to cosmic/
-        if len(cosmic_dirs) > 1:
-            last_cosmic_dir = cosmic_dirs[-1][0]
-            # Remove all intermediate cosmic folders (keep only last)
-            for cosmic_dir, _ in cosmic_dirs[:-1]:
-                if os.path.isdir(cosmic_dir) and cosmic_dir != last_cosmic_dir:
-                    shutil.rmtree(cosmic_dir)
-                    if verbose:
-                        print(f"  Removed intermediate {cosmic_dir}/")
-
-            # Rename the last cosmic folder to cosmic/ (lowercase)
-            if last_cosmic_dir != "cosmic":
-                target = os.path.join(input_root, "cosmic")
-                if os.path.exists(target):
-                    shutil.rmtree(target)
-                os.rename(os.path.join(input_root, last_cosmic_dir), target)
-                if verbose:
-                    print(f"  Renamed {last_cosmic_dir}/ → cosmic/")
-
-        elif len(cosmic_dirs) == 1:
-            # Single cosmic dir: rename to lowercase if needed
-            cosmic_dir_name = cosmic_dirs[0][0]
-            if cosmic_dir_name != "cosmic":
-                target = os.path.join(input_root, "cosmic")
-                if os.path.exists(target):
-                    shutil.rmtree(target)
-                os.rename(os.path.join(input_root, cosmic_dir_name), target)
-                if verbose:
-                    print(f"  Renamed {cosmic_dir_name}/ → cosmic/")
-
-        # --- Clean root-level protocol cache files ---
-        for pkl in glob.glob(os.path.join(input_root, "protocol_*.pkl")):
-            os.remove(pkl)
-            if verbose:
-                print(f"  Removed {os.path.basename(pkl)}")
+        # Cosmic directories are left entirely untouched so the user can re-run
+        # cosmic analysis without redoing QM calculations.
 
         # --- Report final disk usage ---
         try:
@@ -12594,29 +12525,37 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 if next_is_cosmic:
                     # Extract redo parameters from optimization stage
                     optimization_args = stage['args']
-                    max_redos = 3  # Default: 3 redo attempts for critical structures
-                    max_critical = 0  # Default: 0% critical structures allowed (retry all)
-                    max_skipped = None   # Not set by default
-                    concurrent_jobs = 4  # Default: 4 concurrent QM jobs (must match execute_optimization_stage)
+                    max_redos = 3   # Fixed: always 3 redo attempts
+                    max_critical = 0  # Fixed: always 0% critical threshold (retry all)
+                    max_skipped = None
+                    concurrent_jobs = 1
+                    _skipped_set = False
+                    _concurrent_given = False
 
                     for arg in optimization_args:
-                        if arg.startswith('--redo='):
-                            max_redos = int(arg.split('=')[1])
-                        elif arg.startswith('--critical='):
-                            max_critical = float(arg.split('=')[1])
-                        elif arg.startswith('--skipped='):
+                        if arg.startswith('--skipped='):
                             max_skipped = float(arg.split('=')[1])
+                            _skipped_set = True
                         elif arg.startswith('--concurrent='):
                             try:
                                 concurrent_jobs = max(1, int(arg.split('=')[1]))
+                                _concurrent_given = True
                             except ValueError:
                                 pass
-                    
-                    # Determine which threshold is active
-                    if max_critical is not None and max_skipped is not None:
-                        print("✗ Error: Cannot use both --critical and --skipped flags")
-                        return 1
-                    
+
+                    # If --skipped given, use skipped threshold instead of default critical=0
+                    if _skipped_set:
+                        max_critical = None
+
+                    # Prompt for concurrent jobs if not specified
+                    if not _concurrent_given:
+                        try:
+                            _ans = input("  Concurrent QM jobs for optimization [1]: ").strip()
+                            concurrent_jobs = max(1, int(_ans)) if _ans else 1
+                        except (EOFError, ValueError):
+                            concurrent_jobs = 1
+                        context._concurrent_prompted = concurrent_jobs
+
                     # Show redo configuration
                     if max_redos > 1:
                         if context.workflow_verbose_level >= 1:
@@ -12624,7 +12563,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 print(f"  Stage redo enabled: max {max_redos} redo attempts, target critical ≤ {max_critical}%")
                             elif max_skipped is not None:
                                 print(f"  Stage redo enabled: max {max_redos} redo attempts, target skipped ≤ {max_skipped}%")
-                    
+
                     # Redo loop for optimization+cosmic
                     # attempt 0 = initial run, attempts 1..max_redos = redo attempts
                     final_attempt = 0
@@ -12634,10 +12573,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     initial_skipped_count = None
                     for attempt in range(max_redos + 1):
                         final_attempt = attempt
-                        if attempt > 0 and context.workflow_verbose_level >= 1:
-                            print(f"\n{'-' * 60}")
-                            print(f"Redo {attempt}/{max_redos}")
-                        
+                        if attempt > 0:
+                            _upd = getattr(context, 'update_progress', None)
+                            if callable(_upd):
+                                _upd(f"Redo {attempt}/{max_redos}")
+                            if context.workflow_verbose_level >= 1:
+                                print(f"\n{'-' * 60}")
+                                print(f"Redo {attempt}/{max_redos}")
+
                         # Don't delete cosmic folder - we'll update it with corrected calculations
                         
                         # Run calculation (which includes sort step that creates cosmic/)
@@ -12780,18 +12723,21 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 print("⚠ Warning: Could not find clustering_summary.txt")
                             break
                     
+                    # Store redo count for terminal summary
+                    context.last_opt_redo_count = final_attempt
+
                     # Get final cosmic results for cache
                     final_critical = None
                     final_skipped = None
                     summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
                     if os.path.exists(summary_file):
                         final_critical, final_skipped = parse_cosmic_summary(summary_file)
-                    
+
                     # Update cache for both optimization and cosmic stages
                     if use_cache:
                         calc_key = f"optimization_{stage_num}"
                         cosmic_key = f"cosmic_{stage_num + 1}"
-                        
+
                         calc_result: Dict[str, Any] = {
                             'attempts': final_attempt,
                             'max_redos': max_redos,
@@ -12943,9 +12889,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     if prev_stage_type in ['optimization', 'refinement']:
                         # Check if previous stage had redo parameters
                         prev_args = prev_stage['args']
-                        max_critical = None
+                        max_critical = 0  # Default: 0% critical structures allowed (retry all)
                         max_skipped = None
-                        max_redos = 1
+                        max_redos = 3
                         
                         for arg in prev_args:
                             if arg.startswith('--critical='):
@@ -13111,29 +13057,37 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 if next_is_cosmic:
                     # Extract redo parameters from opt stage
                     opt_args = stage['args']
-                    max_redos = 3  # Default: 3 redo attempts for critical structures
-                    max_critical = 0  # Default: 0% critical structures allowed (retry all)
+                    max_redos = 3   # Fixed: always 3 redo attempts
+                    max_critical = 0  # Fixed: always 0% critical threshold (retry all)
                     max_skipped = None
-                    concurrent_jobs = 1  # Default concurrent jobs for refinement
+                    concurrent_jobs = 1
+                    _skipped_set = False
+                    _concurrent_given = False
 
                     for arg in opt_args:
-                        if arg.startswith('--redo='):
-                            max_redos = int(arg.split('=')[1])
-                        elif arg.startswith('--critical='):
-                            max_critical = float(arg.split('=')[1])
-                        elif arg.startswith('--skipped='):
+                        if arg.startswith('--skipped='):
                             max_skipped = float(arg.split('=')[1])
+                            _skipped_set = True
                         elif arg.startswith('--concurrent='):
                             try:
                                 concurrent_jobs = max(1, int(arg.split('=')[1]))
+                                _concurrent_given = True
                             except ValueError:
                                 pass
-                    
-                    # Determine which threshold is active
-                    if max_critical is not None and max_skipped is not None:
-                        print("✗ Error: Cannot use both --critical and --skipped flags")
-                        return 1
-                    
+
+                    # If --skipped given, use skipped threshold instead of default critical=0
+                    if _skipped_set:
+                        max_critical = None
+
+                    # Prompt for concurrent jobs if not specified
+                    if not _concurrent_given:
+                        try:
+                            _ans = input("  Concurrent QM jobs for refinement [1]: ").strip()
+                            concurrent_jobs = max(1, int(_ans)) if _ans else 1
+                        except (EOFError, ValueError):
+                            concurrent_jobs = 1
+                        context._concurrent_prompted = concurrent_jobs
+
                     # Show redo configuration
                     if max_redos > 1:
                         if context.workflow_verbose_level >= 1:
@@ -13141,7 +13095,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 print(f"  Stage redo enabled: max {max_redos} redo attempts, target critical ≤ {max_critical}%")
                             elif max_skipped is not None:
                                 print(f"  Stage redo enabled: max {max_redos} redo attempts, target skipped ≤ {max_skipped}%")
-                    
+
                     # Redo loop for opt+cosmic
                     # attempt 0 = initial run, attempts 1..max_redos = redo attempts
                     final_attempt = 0
@@ -13151,10 +13105,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     initial_skipped_count = None
                     for attempt in range(max_redos + 1):
                         final_attempt = attempt
-                        if attempt > 0 and context.workflow_verbose_level >= 1:
-                            print(f"\n{'-' * 60}")
-                            print(f"Redo {attempt}/{max_redos}")
-                        
+                        if attempt > 0:
+                            _upd = getattr(context, 'update_progress', None)
+                            if callable(_upd):
+                                _upd(f"Redo {attempt}/{max_redos}")
+                            if context.workflow_verbose_level >= 1:
+                                print(f"\n{'-' * 60}")
+                                print(f"Redo {attempt}/{max_redos}")
+
                         # Run refinement (includes organizing/copying files to cosmic)
                         result = execute_refinement_stage(context, stage)
                         if result != 0:
@@ -13309,13 +13267,16 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 print("⚠ Warning: Could not find clustering_summary.txt")
                             break
                     
+                    # Store redo count for terminal summary
+                    context.last_ref_redo_count = final_attempt
+
                     # Get final cosmic results for cache
                     final_critical = None
                     final_skipped = None
                     summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
                     if os.path.exists(summary_file):
                         final_critical, final_skipped = parse_cosmic_summary(summary_file)
-                    
+
                     # Update cache for both refinement and cosmic stages
                     if use_cache:
                         opt_key = f"refinement_{stage_num}"
@@ -13513,27 +13474,36 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 if next_is_cosmic:
                     # Extract redo parameters
                     opt_args = stage['args']
-                    max_redos = 3
-                    max_critical = 0
+                    max_redos = 3   # Fixed: always 3 redo attempts
+                    max_critical = 0  # Fixed: always 0% critical threshold (retry all)
                     max_skipped = None
                     concurrent_jobs = 1
+                    _skipped_set = False
+                    _concurrent_given = False
 
                     for arg in opt_args:
-                        if arg.startswith('--redo='):
-                            max_redos = int(arg.split('=')[1])
-                        elif arg.startswith('--critical='):
-                            max_critical = float(arg.split('=')[1])
-                        elif arg.startswith('--skipped='):
+                        if arg.startswith('--skipped='):
                             max_skipped = float(arg.split('=')[1])
+                            _skipped_set = True
                         elif arg.startswith('--concurrent='):
                             try:
                                 concurrent_jobs = max(1, int(arg.split('=')[1]))
+                                _concurrent_given = True
                             except ValueError:
                                 pass
 
-                    if max_critical is not None and max_skipped is not None:
-                        print("✗ Error: Cannot use both --critical and --skipped flags")
-                        return 1
+                    # If --skipped given, use skipped threshold instead of default critical=0
+                    if _skipped_set:
+                        max_critical = None
+
+                    # Prompt for concurrent jobs if not specified
+                    if not _concurrent_given:
+                        try:
+                            _ans = input("  Concurrent QM jobs for energy refinement [1]: ").strip()
+                            concurrent_jobs = max(1, int(_ans)) if _ans else 1
+                        except (EOFError, ValueError):
+                            concurrent_jobs = 1
+                        context._concurrent_prompted = concurrent_jobs
 
                     if max_redos > 1:
                         if context.workflow_verbose_level >= 1:
@@ -13549,9 +13519,13 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     initial_skipped_count = None
                     for attempt in range(max_redos + 1):
                         final_attempt = attempt
-                        if attempt > 0 and context.workflow_verbose_level >= 1:
-                            print(f"\n{'-' * 60}")
-                            print(f"Redo {attempt}/{max_redos}")
+                        if attempt > 0:
+                            _upd = getattr(context, 'update_progress', None)
+                            if callable(_upd):
+                                _upd(f"Redo {attempt}/{max_redos}")
+                            if context.workflow_verbose_level >= 1:
+                                print(f"\n{'-' * 60}")
+                                print(f"Redo {attempt}/{max_redos}")
 
                         result = execute_energy_refinement_stage(context, stage)
                         if result != 0:
@@ -15623,28 +15597,34 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
     workflow_concise = getattr(context, 'is_workflow', False) and getattr(context, 'workflow_verbose_level', 0) < 1
 
     # Parse flags - defaults for when flags are not explicitly provided
-    max_critical = 0      # default: 0% critical structures allowed (strict)
+    max_critical = 0  # Default: 0% critical structures allowed (retry all)
     max_skipped = None    # Not set by default (only --critical is used unless --skipped specified)
     max_stage_redos = 3   # default: 3 stage redos (--redo: redo entire optimization+cosmic)
-    concurrent_jobs = 4   # default: 4 concurrent QM jobs for optimization
+    concurrent_jobs = 1   # default: 1 concurrent QM job for optimization
+    _critical_set = False
+    _skipped_set = False
+    _concurrent_given = False
     # Note: --retry removed; launch failures auto-retry up to 10 times (hardcoded)
     auto_select = 'combined'  # Workflow mode defaults to combining files (like -c flag)
     template_file = None
     launcher_file = None
     unknown_template_token = None
-    
+
     i = 0
     while i < len(args):
         arg = args[i]
-        
+
         if arg.startswith('--critical='):
             max_critical = float(arg.split('=')[1])
+            _critical_set = True
         elif arg.startswith('--skipped='):
             max_skipped = float(arg.split('=')[1])
+            _skipped_set = True
         elif arg.startswith('--redo='):
             max_stage_redos = int(arg.split('=')[1])
         elif arg.startswith('--concurrent='):
             concurrent_jobs = max(1, int(arg.split('=')[1]))
+            _concurrent_given = True
         elif arg.startswith('--auto-select='):
             auto_select = arg.split('=')[1]
         elif arg == '-a':
@@ -15666,7 +15646,11 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             unknown_template_token = arg
         
         i += 1
-    
+
+    # If --skipped given without explicit --critical, clear the default critical=0
+    if _skipped_set and not _critical_set:
+        max_critical = None
+
     # Allow template labels from embedded blocks (e.g., "opt input1").
     if not template_file and unknown_template_token:
         resolved_template = resolve_template_reference(context, unknown_template_token)
@@ -15682,7 +15666,19 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
         else:
             print("Error: No template file specified for optimization stage (.inp/.com/.gjf/.xtb or embedded label)")
         return 1
-    
+
+    # Prompt for concurrent jobs if not set via --concurrent and not already prompted
+    # (context._concurrent_prompted is set by the workflow redo loop to avoid re-prompting)
+    if not _concurrent_given and not hasattr(context, '_concurrent_prompted'):
+        try:
+            _ans = input("  Concurrent QM jobs for optimization [1]: ").strip()
+            concurrent_jobs = max(1, int(_ans)) if _ans else 1
+        except (EOFError, ValueError):
+            concurrent_jobs = 1
+        context._concurrent_prompted = concurrent_jobs
+    elif not _concurrent_given and hasattr(context, '_concurrent_prompted'):
+        concurrent_jobs = context._concurrent_prompted
+
     context.max_tries = max_stage_redos  # For compatibility with existing code
 
     # Pin optimization output to a deterministic cosmic base folder for this cycle.
@@ -16316,8 +16312,8 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
     def _count_latest_cosmic_representatives(cosmic_dir: str) -> Tuple[Optional[int], Optional[int]]:
         """Return counts for latest motifs_* and umotifs_* representative xyz files."""
         try:
-            motif_dirs = sorted(glob.glob(os.path.join(cosmic_dir, "motifs_*")))
-            umotif_dirs = sorted(glob.glob(os.path.join(cosmic_dir, "umotifs_*")))
+            motif_dirs = sorted(glob.glob(os.path.join(cosmic_dir, "motifs_*")), key=natural_sort_key)
+            umotif_dirs = sorted(glob.glob(os.path.join(cosmic_dir, "umotifs_*")), key=natural_sort_key)
 
             motif_count: Optional[int] = None
             umotif_count: Optional[int] = None
@@ -16860,9 +16856,11 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
     
     # Parse arguments - defaults for when flags are not explicitly provided
     max_stage_redos = 3   # --redo: redo entire opt+cosmic
-    max_critical = 0      # default: 0% critical structures allowed (strict)
+    max_critical = 0  # Default: 0% critical structures allowed (retry all)
     max_skipped = None
     concurrent_jobs = 1   # default: 1 concurrent job for refinement (serial)
+    _critical_set = False
+    _skipped_set = False
     # Note: --retry removed; launch failures auto-retry up to 10 times (hardcoded)
 
     args = stage.get('args', [])
@@ -16875,11 +16873,17 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
             max_stage_redos = int(arg.split('=')[1])
         elif arg.startswith('--critical='):
             max_critical = float(arg.split('=')[1])
+            _critical_set = True
         elif arg.startswith('--skipped='):
             max_skipped = float(arg.split('=')[1])
+            _skipped_set = True
         elif arg.startswith('--concurrent='):
             concurrent_jobs = max(1, int(arg.split('=')[1]))
-    
+
+    # If --skipped given without explicit --critical, clear the default critical=0
+    if _skipped_set and not _critical_set:
+        max_critical = None
+
     # Store threshold mode in context for redo logic
     # --critical: only retry structures with imaginary freqs (need_recalculation)
     # --skipped: retry all skipped structures (need_recalculation + clustered_with_minima)
@@ -16975,8 +16979,8 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
         print("  Skipping optimization stage")
         return 0
 
-    # Use the most recent motifs directory
-    motif_dirs.sort()
+    # Use the most recent motifs directory (natural order: motifs_1 < motifs_2 < ... < motifs_10)
+    motif_dirs.sort(key=natural_sort_key)
     motif_dir = motif_dirs[-1]
 
     # Step 3: Determine where optimization OUTPUTS will go
