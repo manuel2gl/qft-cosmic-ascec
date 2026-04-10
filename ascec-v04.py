@@ -2500,6 +2500,20 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
             concise += os.sep
         return concise
     
+    def _stage_sort_key(stage_key: str) -> int:
+        """Extract trailing stage number from keys like 'cosmic_3' or 'energy_refinement_6'."""
+        match = re.search(r'_(\d+)$', stage_key)
+        return int(match.group(1)) if match else 0
+
+    def _stage_type_name(stage_key: str) -> str:
+        """Extract stage type from keys like 'cosmic_3' or 'energy_refinement_6'.
+
+        Returns a capitalized type string usable in type_map lookups.
+        """
+        # Strip trailing _N
+        base = re.sub(r'_\d+$', '', stage_key)
+        return base.capitalize()  # e.g. 'Energy_refinement', 'Cosmic', 'Refinement'
+
     def _extract_time_from_orca_summary(summary_file: str) -> Optional[float]:
         """Extract total execution time from orca_summary.txt file."""
         try:
@@ -2592,15 +2606,16 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
             # Workflow diagram
             if 'stages' in cache:
                 sorted_stages = sorted(cache['stages'].items(), 
-                                     key=lambda x: int(x[0].split('_')[1]) if '_' in x[0] else 0)
+                                     key=lambda x: _stage_sort_key(x[0]))
                 
                 completed_stages = []
                 for stage_key, stage_info in sorted_stages:
                     if stage_info.get('status') == 'completed':
-                        stage_type = stage_key.split('_')[0].capitalize()
+                        stage_type = _stage_type_name(stage_key)
                         type_map = {'Replication': 'annealing', 'Calculation': 'geometry_optimization',
                                   'cosmic': 'cosmic', 'COSMIC': 'cosmic', 'Optimization': 'geometry_optimization',
-                                  'Refinement': 'geometry_refinement'}
+                                  'Refinement': 'geometry_refinement',
+                                  'Energy_refinement': 'energy_refinement'}
                         stage_name = type_map.get(stage_type, stage_type)
                         completed_stages.append(stage_name)
                 
@@ -2618,18 +2633,18 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                 f.write(f"  {'-' * 15} {'-' * 15} {'-' * 10}\n")
                 
                 sorted_stages = sorted(cache['stages'].items(), 
-                                     key=lambda x: int(x[0].split('_')[1]) if '_' in x[0] else 0)
+                                     key=lambda x: _stage_sort_key(x[0]))
                 
                 total_qm_percentage = 0.0
                 total_tracked_time = 0.0  # Track sum of all stage times
                 for stage_key, stage_info in sorted_stages:
                     if stage_info.get('status') == 'completed':
-                        stage_type = stage_key.split('_')[0].capitalize()
-                        
+                        stage_type = _stage_type_name(stage_key)
+
                         # Skip cosmic stages in timing (no QM time)
-                        if stage_type == 'cosmic' or stage_type == 'COSMIC':
+                        if stage_type.lower() == 'cosmic':
                             continue
-                        
+
                         wall_time = stage_info.get('wall_time')
                         if not wall_time:
                             _result = stage_info.get('result', {})
@@ -2638,13 +2653,14 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                                 _sf = os.path.join(_wdir, 'orca_summary.txt')
                                 if os.path.exists(_sf):
                                     wall_time = _extract_time_from_orca_summary(_sf)
-                        
+
                         if wall_time:
                             total_tracked_time += wall_time
                             percentage = (wall_time / total_wall_time) * 100
                             total_qm_percentage += percentage
                             type_map = {'Replication': 'Annealing', 'Calculation': 'Optimization',
-                                      'Optimization': 'Optimization', 'Refinement': 'Refinement'}
+                                      'Optimization': 'Optimization', 'Refinement': 'Refinement',
+                                      'Energy_refinement': 'Eref'}
                             stage_name = type_map.get(stage_type, stage_type)
                             f.write(f"  {stage_name:<15} {format_wall_time_timing(wall_time):>15} {percentage:>9.1f}%\n")
                 
@@ -2680,7 +2696,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
             
             if 'stages' in cache:
                 sorted_stages = sorted(cache['stages'].items(), 
-                                     key=lambda x: int(x[0].split('_')[1]) if '_' in x[0] else 0)
+                                     key=lambda x: _stage_sort_key(x[0]))
                 
                 step_num = 1
                 total_stages = cache.get('total_stages', len([s for s in sorted_stages if s[1].get('status') == 'completed']))
@@ -2691,10 +2707,11 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                     if status != 'completed':
                         continue
                     
-                    stage_type = stage_key.split('_')[0].capitalize()
+                    stage_type = _stage_type_name(stage_key)
                     type_map = {'Replication': 'Annealing', 'Calculation': 'Optimization',
-                              'cosmic': 'cosmic', 'COSMIC': 'cosmic', 'Optimization': 'Optimization',
-                              'Refinement': 'Refinement'}
+                              'Cosmic': 'cosmic', 'Optimization': 'Optimization',
+                              'Refinement': 'Refinement',
+                              'Energy_refinement': 'Energy Refinement'}
                     stage_name = type_map.get(stage_type, stage_type)
                     
                     result = stage_info.get('result', {})
@@ -2721,7 +2738,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                         if 'total_accepted' in result:
                             f.write(f"    Accepted:         {result['total_accepted']} configurations\n")
                     
-                    elif stage_type == 'cosmic' or stage_type == 'COSMIC':
+                    elif stage_type.lower() == 'cosmic':
                         live_critical_pct = None
                         live_skipped_pct = None
                         live_critical_count = None
@@ -2843,11 +2860,12 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                         if 'cosmic_folder' in result and result['cosmic_folder']:
                             f.write(f"    Outputs to:       {format_concise_path(result['cosmic_folder'])}\n")
 
-                    elif stage_type == 'Refinement':
+                    elif stage_type in ('Refinement', 'Energy_refinement'):
                         if 'motifs_source' in result and result['motifs_source']:
                             f.write(f"    Inputs from:      {format_concise_path(result['motifs_source'])}\n")
                         if 'completed' in result and 'total' in result:
-                            f.write(f"    Completed:        {result['completed']}/{result['total']} refinements\n")
+                            label = "calculations" if stage_type == 'Energy_refinement' else "refinements"
+                            f.write(f"    Completed:        {result['completed']}/{result['total']} {label}\n")
                         if 'concurrent_jobs' in result:
                             f.write(f"    Concurrent:       {result['concurrent_jobs']} jobs\n")
                         # Mean exec time: prefer total_cpu_time/completed (accurate with concurrency).
@@ -2866,7 +2884,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                             f.write(f"    Outputs to:       {format_concise_path(result['cosmic_folder'])}\n")
 
                     # Wall time for non-cosmic stages
-                    if wall_time and stage_type != 'cosmic' and stage_type != 'COSMIC':
+                    if wall_time and stage_type.lower() != 'cosmic':
                         f.write(f"    Wall time:        {format_wall_time_timing(wall_time)}\n")
                     
                     f.write("\n")
@@ -11220,11 +11238,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         """
         Reduce disk usage by removing intermediate files, keeping only:
         - annealing/ as-is
-        - optimization/refinement dirs: combined_results.*, orca_summary.txt, launcher_*.sh
+        - optimization/refinement dirs: combined_results.*, *_summary.txt
         - cosmic dirs: dendrogram_images/, clustering_summary.txt, boltzmann_distribution.txt,
           extracted_clusters/, extracted_data/, final motifs_N/ or umotifs_N/
         - Root: final_ensemble.* or possible_final_ensemble.*, protocol_summary.txt, .asc file
-        - geom_opt_out/ or geom_ref_out/: motif representative calculation folders from last stage
+        - geometry_optimization/geom_opt_out/ only for optimization-only workflows (no refinement)
         """
         import re as _re
 
@@ -11518,7 +11536,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 print(f"  Created {last_opt_dir}/geom_opt_out/ with {count} motif folders")
 
         # --- Clean optimization/refinement directories ---
-        # Keep only: combined_results.*, orca_summary.txt, launcher_*.sh
+        # Keep only: combined_results.*, *_summary.txt and (when applicable) geom_opt_out/
         for i, (calc_dir, _, is_ref) in enumerate(opt_dirs):
             if not os.path.isdir(calc_dir):
                 continue
@@ -11533,15 +11551,19 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 if os.path.isfile(entry_path):
                     keep = (entry.startswith("combined_results") or
                             entry in ("orca_summary.txt", "xtb_summary.txt", "gaussian_summary.txt") or
-                            entry.startswith("launcher_") or
-                            entry.endswith('.sh'))
+                            entry.endswith('_summary.txt'))
                     if keep:
                         kept_root_files.add(entry)
                     else:
                         os.remove(entry_path)
                         removed_count += 1
                 elif os.path.isdir(entry_path):
-                    # Remove all subdirectories (opt_conf_*, motif_* folders)
+                    # Preserve exported motif representative folders for optimization-only runs.
+                    keep_opt_out = (entry == "geom_opt_out" and not is_ref and not ref_stages)
+                    if keep_opt_out:
+                        kept_root_files.add(entry)
+                        continue
+                    # Remove all other subdirectories (opt_conf_*, motif_* folders)
                     shutil.rmtree(entry_path)
                     removed_count += 1
 
@@ -11724,21 +11746,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             if mol_candidates:
                 source_mol = mol_candidates[-1]
 
-        # Choose output naming based on whether the dataset had frequency calculations.
-        # Opt-only → possible_final_ensemble (no true minima can be assured).
-        # Freq mode → final_ensemble (original behaviour).
+        # Choose output naming: possible_final_ensemble when the protocol has
+        # no refinement/eref stage (pure opt+cosmic), final_ensemble otherwise.
         opt_only = getattr(context, 'cosmic_opt_only', False)
-        # Fallback: check clustering_summary.txt for opt-only marker in case the
-        # context flag was not set (e.g. cosmic stage was fully cached).
-        if not opt_only and resolved_cosmic_dir:
-            _cs_path = os.path.join(resolved_cosmic_dir, "clustering_summary.txt")
-            if os.path.exists(_cs_path):
-                try:
-                    with open(_cs_path, 'r') as _csf:
-                        if 'opt-only mode' in _csf.read():
-                            opt_only = True
-                except OSError:
-                    pass
         if opt_only:
             ensemble_name = 'possible_final_ensemble'
         else:
@@ -11777,7 +11787,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     context = WorkflowContext(input_file=input_file)
     context.is_workflow = True  # We're in workflow mode
     context.workflow_verbose_level = parse_verbosity_level(sys.argv)
-    context.cosmic_opt_only = False  # Set to True if cosmic detects opt-only dataset
+    context.cosmic_opt_only = False  # Determined after stages are parsed (opt-only when no ref/eref)
     context.maxprint = globals().get('_ascec_maxprint_requested', False)  # Default: miniprint (clean up at end)
     
     # Read configuration from input file
@@ -11954,7 +11964,12 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 cache['protocol_text'] = protocol_text
             cache['total_stages'] = len(stages)
             save_protocol_cache(cache, cache_file)
-    
+
+    # Determine opt-only once from the protocol: True only when no
+    # refinement or energy_refinement stage exists (pure opt+cosmic workflow).
+    _has_ref_stage = any(s.get('type') in ('refinement', 'energy_refinement') for s in stages)
+    context.cosmic_opt_only = not _has_ref_stage
+
     # ── Terminal independence: SIGHUP immunity + tee log + job registry ───────
     # Only set up background tracking for protocol (cached) runs.
     # Simple commands like 'ascec input.asc r3' run without tracking overhead.
@@ -12452,11 +12467,6 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     context.completed_stage_count = completed_stage_count
                     stage_idx += 1
 
-                    # Restore cosmic_opt_only flag from cached cosmic result
-                    if stage_type == 'cosmic':
-                        cached_result = stage_cache.get('result', {})
-                        context.cosmic_opt_only = isinstance(cached_result, dict) and cached_result.get('opt_only', False)
-
                     # Validate cached optimization+cosmic if applicable
                     if stage_type == 'optimization':
                         should_skip, new_idx = validate_cached_optimization_cosmic(
@@ -12465,12 +12475,6 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         if not should_skip:
                             stage_idx = new_idx
                             continue
-                        # Restore cosmic_opt_only from the skipped cosmic cache
-                        if new_idx > stage_idx:
-                            cosmic_key = f"cosmic_{stage_idx + 1}"
-                            cosmic_cached = cache.get('stages', {}).get(cosmic_key, {})
-                            cosmic_res = cosmic_cached.get('result', {})
-                            context.cosmic_opt_only = isinstance(cosmic_res, dict) and cosmic_res.get('opt_only', False)
                         stage_idx = new_idx
                     # Validate cached refinement+cosmic if applicable
                     elif stage_type == 'refinement':
@@ -12480,12 +12484,6 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         if not should_skip:
                             stage_idx = new_idx
                             continue
-                        # Restore cosmic_opt_only from the skipped cosmic cache
-                        if new_idx > stage_idx:
-                            cosmic_key = f"cosmic_{stage_idx + 1}"
-                            cosmic_cached = cache.get('stages', {}).get(cosmic_key, {})
-                            cosmic_res = cosmic_cached.get('result', {})
-                            context.cosmic_opt_only = isinstance(cosmic_res, dict) and cosmic_res.get('opt_only', False)
                         stage_idx = new_idx
                     continue
         
@@ -12711,6 +12709,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             print('-' * 60)
 
                         cosmic_stage = stages[stage_idx + 1]
+                        if use_cache:
+                            cosmic_key = f"cosmic_{stage_num + 1}"
+                            update_protocol_cache(cosmic_key, 'in_progress', cache_file=cache_file)
                         result = execute_cosmic_stage(context, cosmic_stage)
                         if result != 0:
                             print(f"\nError: cosmic failed with code {result}")
@@ -13241,6 +13242,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             print('-' * 60)
 
                         cosmic_stage = stages[stage_idx + 1]
+                        if use_cache:
+                            cosmic_key = f"cosmic_{stage_num + 1}"
+                            update_protocol_cache(cosmic_key, 'in_progress', cache_file=cache_file)
                         result = execute_cosmic_stage(context, cosmic_stage)
                         if result != 0:
                             print(f"\nError: cosmic failed with code {result}")
@@ -13620,6 +13624,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             print('-' * 60)
 
                         cosmic_stage = stages[stage_idx + 1]
+                        if use_cache:
+                            cosmic_key = f"cosmic_{stage_num + 1}"
+                            update_protocol_cache(cosmic_key, 'in_progress', cache_file=cache_file)
                         result = execute_cosmic_stage(context, cosmic_stage)
                         if result != 0:
                             print(f"\nError: cosmic failed with code {result}")
@@ -16327,10 +16334,6 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
         except Exception:
             return None, None
 
-    # Reset opt-only flag before each live COSMIC run so a previous opt-only stage
-    # does not bleed into a refinement+freq COSMIC stage.
-    context.cosmic_opt_only = False
-
     update_list_file: Optional[str] = None
 
     # Determine which cosmic folder to use dynamically based on the most recent stage
@@ -16663,10 +16666,6 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
                     if match:
                         folder_name = match.group(1)
                         context.cosmic_folder = f"{cosmic_base}/{folder_name}"
-
-                # Detect opt-only mode (no frequency calculations in dataset)
-                if 'COSMIC_OPT_ONLY_MODE' in line:
-                    context.cosmic_opt_only = True
 
                 # Skip printing in non-verbose mode (but still collect lines)
                 if not verbose:
