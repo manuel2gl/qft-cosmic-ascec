@@ -12596,18 +12596,26 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             optimization_dir_path = getattr(context, 'optimization_stage_dir', 'geometry_optimization')
                             # Get cosmic orca output directory
                             cosmic_dir = context.cosmic_dir if hasattr(context, 'cosmic_dir') else "cosmic"
-                            
-                            # Find the orca_out directory in cosmic (deterministic target)
+
+                            # Find the orca_out directory in cosmic (deterministic target).
+                            # Use optimization_completed to select the matching orca_out_N subdir,
+                            # the same way execute_cosmic_stage selects it (avoids copying to the
+                            # wrong folder when multiple orca_out_* dirs exist, e.g. orca_out_11
+                            # vs orca_out_12 where the latter has combined_results.out).
                             cosmic_orca_dir = None
-                            preferred_cosmic_folder = getattr(context, 'optimization_cosmic_folder', None)
-                            if isinstance(preferred_cosmic_folder, str) and preferred_cosmic_folder:
-                                preferred_path = os.path.abspath(preferred_cosmic_folder)
-                                if os.path.isdir(preferred_path) and os.path.basename(preferred_path).startswith('orca_out_'):
-                                    cosmic_orca_dir = preferred_path
-                            if cosmic_orca_dir is None:
-                                orca_dirs = sorted(glob.glob(os.path.join(cosmic_dir, "orca_out*")), key=natural_sort_key)
-                                if orca_dirs:
-                                    cosmic_orca_dir = orca_dirs[-1]
+                            _ocf = getattr(context, 'optimization_cosmic_folder', None)
+                            _redo_cosmic_base = _cosmic_base_name(_ocf) if isinstance(_ocf, str) and _ocf else cosmic_dir
+                            if _redo_cosmic_base and os.path.isdir(_redo_cosmic_base):
+                                _expected = getattr(context, 'optimization_completed', None)
+                                _orca_dirs = sorted(glob.glob(os.path.join(_redo_cosmic_base, "orca_out*")), key=natural_sort_key)
+                                if _orca_dirs:
+                                    if _expected is not None:
+                                        _m_dirs = [d for d in _orca_dirs
+                                                   if re.search(r'_(\d+)$', os.path.basename(d)) and
+                                                   int(re.search(r'_(\d+)$', os.path.basename(d)).group(1)) == _expected]
+                                        cosmic_orca_dir = _m_dirs[0] if _m_dirs else _orca_dirs[-1]
+                                    else:
+                                        cosmic_orca_dir = _orca_dirs[-1]
 
                             if cosmic_orca_dir:
                                 
@@ -12661,10 +12669,6 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             print(f"\nError: cosmic failed with code {result}")
                             return result
 
-                        # In opt-only mode, no true minima / no critical structures → skip redo.
-                        if getattr(context, 'cosmic_opt_only', False):
-                            break
-
                         # Parse cosmic results from clustering_summary.txt
                         summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
                         if os.path.exists(summary_file):
@@ -12679,16 +12683,16 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 init_crit_count, init_skip_count = parse_cosmic_output(cosmic_dir)
                                 initial_critical_count = init_crit_count
                                 initial_skipped_count = init_skip_count
-                            
+
                             if context.workflow_verbose_level >= 1:
                                 print(f"\nResults: {critical_pct:.1f}% critical, {skipped_pct:.1f}% skipped")
-                            
+
                             # Check thresholds based on which was set
                             threshold_met = True
-                            
+
                             if max_critical is not None:
                                 threshold_met = critical_pct <= max_critical
-                                
+
                                 if threshold_met:
                                     if context.workflow_verbose_level >= 1:
                                         print(f"→ Threshold met (critical ≤ {max_critical}%)")
@@ -12696,10 +12700,10 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 else:
                                     if context.workflow_verbose_level >= 1:
                                         print(f"→ Threshold exceeded (critical {critical_pct:.1f}% > {max_critical}%)")
-                                    
+
                             elif max_skipped is not None:
                                 threshold_met = skipped_pct <= max_skipped
-                                
+
                                 if threshold_met:
                                     if context.workflow_verbose_level >= 1:
                                         print(f"→ Threshold met (skipped ≤ {max_skipped}%)")
@@ -12710,7 +12714,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             else:
                                 # No thresholds set - accept results
                                 break
-                            
+
                             # If threshold not met and attempts remain, continue to redo logic below
                             if not threshold_met:
                                 if attempt < max_redos:
@@ -12723,7 +12727,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             if context.workflow_verbose_level >= 1:
                                 print("⚠ Warning: Could not find clustering_summary.txt")
                             break
-                    
+
                     # Store redo count for terminal summary
                     context.last_opt_redo_count = final_attempt
 
@@ -12842,8 +12846,10 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             cosmic_result['threshold_value'] = max_skipped
                             cosmic_result['threshold_met'] = (final_skipped is not None and final_skipped <= max_skipped)
 
-                        # Flag opt-only mode so protocol summary suppresses critical/skipped display
-                        if getattr(context, 'cosmic_opt_only', False):
+                        # Suppress validation display in protocol summary only when the run has
+                        # no refinement stage AND redo was not needed (threshold met first pass).
+                        # If redo activated (non-zero attempts), there were real issues to report.
+                        if getattr(context, 'cosmic_opt_only', False) and final_attempt == 0:
                             cosmic_result['opt_only'] = True
 
                         update_protocol_cache(cosmic_key, 'completed',
@@ -13133,29 +13139,32 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             opt_dir = getattr(context, 'refinement_stage_dir', 'geometry_refinement') or 'geometry_refinement'
                             # Get cosmic orca output directory
                             cosmic_dir = context.refinement_cosmic_folder if hasattr(context, 'refinement_cosmic_folder') else context.cosmic_dir
-                            
-                            # Strip orca_out suffix if present - we want the BASE cosmic directory
-                            base_cosmic_dir = cosmic_dir
-                            if base_cosmic_dir and 'orca_out' in base_cosmic_dir:
-                                base_cosmic_dir = os.path.dirname(base_cosmic_dir)
-                            
-                            # Find the orca_out directory in cosmic (deterministic target)
-                            cosmic_orca_dir = None
-                            preferred_cosmic_folder = getattr(context, 'refinement_cosmic_folder', None)
-                            if isinstance(preferred_cosmic_folder, str) and preferred_cosmic_folder:
-                                preferred_path = os.path.abspath(preferred_cosmic_folder)
-                                if os.path.isdir(preferred_path) and os.path.basename(preferred_path).startswith('orca_out_'):
-                                    cosmic_orca_dir = preferred_path
 
-                            if cosmic_orca_dir is None:
-                                # Check if cosmic_dir already includes an out folder path
-                                if cosmic_dir and ('orca_out' in cosmic_dir or 'gaussian_out' in cosmic_dir):
-                                    cosmic_orca_dir = cosmic_dir
-                                elif cosmic_dir:
-                                    # cosmic_dir is base folder, search for orca_out subdirectory
-                                    orca_dirs = sorted(glob.glob(os.path.join(cosmic_dir, "orca_out*")), key=natural_sort_key)
-                                    if orca_dirs:
-                                        cosmic_orca_dir = orca_dirs[-1]
+                            # Derive the base cosmic directory (strip orca_out_* suffix if present)
+                            _rfc = getattr(context, 'refinement_cosmic_folder', None)
+                            base_cosmic_dir = _cosmic_base_name(_rfc) if isinstance(_rfc, str) and _rfc else (
+                                os.path.dirname(cosmic_dir) if cosmic_dir and 'orca_out' in cosmic_dir else cosmic_dir
+                            )
+
+                            # Find the orca_out directory in cosmic (deterministic target).
+                            # Use refinement_completed to select the matching orca_out_N subdir,
+                            # the same way execute_cosmic_stage selects it (avoids copying to the
+                            # wrong folder when multiple orca_out_* dirs exist, e.g. orca_out_11
+                            # vs orca_out_12 where the latter has combined_results.out).
+                            cosmic_orca_dir = None
+                            if base_cosmic_dir and os.path.isdir(base_cosmic_dir):
+                                _expected = getattr(context, 'refinement_completed', None)
+                                _orca_dirs = sorted(glob.glob(os.path.join(base_cosmic_dir, "orca_out*")), key=natural_sort_key)
+                                if _orca_dirs:
+                                    if _expected is not None:
+                                        _m_dirs = [d for d in _orca_dirs
+                                                   if re.search(r'_(\d+)$', os.path.basename(d)) and
+                                                   int(re.search(r'_(\d+)$', os.path.basename(d)).group(1)) == _expected]
+                                        cosmic_orca_dir = _m_dirs[0] if _m_dirs else _orca_dirs[-1]
+                                    else:
+                                        cosmic_orca_dir = _orca_dirs[-1]
+                            elif cosmic_dir and ('orca_out' in cosmic_dir or 'gaussian_out' in cosmic_dir):
+                                cosmic_orca_dir = cosmic_dir
                             
                             if cosmic_orca_dir:
                                 # Clean cosmic directory BEFORE copying files (keep only orca_out and cache)
@@ -13208,10 +13217,6 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         if result != 0:
                             print(f"\nError: cosmic failed with code {result}")
                             return result
-
-                        # In opt-only mode, no true minima / no critical structures → skip redo.
-                        if getattr(context, 'cosmic_opt_only', False):
-                            break
 
                         # Parse cosmic results from clustering_summary.txt
                         summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
@@ -13390,8 +13395,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             cosmic_result['threshold_value'] = max_skipped
                             cosmic_result['threshold_met'] = (final_skipped is not None and final_skipped <= max_skipped)
 
-                        # Flag opt-only mode so protocol summary suppresses critical/skipped display
-                        if getattr(context, 'cosmic_opt_only', False):
+                        # Suppress validation display only when redo was not needed.
+                        if getattr(context, 'cosmic_opt_only', False) and final_attempt == 0:
                             cosmic_result['opt_only'] = True
 
                         update_protocol_cache(cosmic_key, 'completed', result=cosmic_result, cache_file=cache_file)
@@ -13544,24 +13549,29 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             opt_dir = getattr(context, 'energy_refinement_stage_dir', 'energy_refinement') or 'energy_refinement'
                             cosmic_dir = getattr(context, 'eref_cosmic_folder', None) or context.cosmic_dir
 
-                            base_cosmic_dir = cosmic_dir
-                            if base_cosmic_dir and 'orca_out' in base_cosmic_dir:
-                                base_cosmic_dir = os.path.dirname(base_cosmic_dir)
+                            # Derive the base cosmic directory (strip orca_out_* suffix if present)
+                            _ecf = getattr(context, 'eref_cosmic_folder', None)
+                            base_cosmic_dir = _cosmic_base_name(_ecf) if isinstance(_ecf, str) and _ecf else (
+                                os.path.dirname(cosmic_dir) if cosmic_dir and 'orca_out' in cosmic_dir else cosmic_dir
+                            )
 
+                            # Find the orca_out directory in cosmic (deterministic target).
+                            # Use eref_completed to select the matching orca_out_N subdir,
+                            # the same way execute_cosmic_stage selects it.
                             cosmic_orca_dir = None
-                            preferred_cosmic_folder = getattr(context, 'eref_cosmic_folder', None)
-                            if isinstance(preferred_cosmic_folder, str) and preferred_cosmic_folder:
-                                preferred_path = os.path.abspath(preferred_cosmic_folder)
-                                if os.path.isdir(preferred_path) and os.path.basename(preferred_path).startswith('orca_out_'):
-                                    cosmic_orca_dir = preferred_path
-
-                            if cosmic_orca_dir is None:
-                                if cosmic_dir and ('orca_out' in cosmic_dir or 'gaussian_out' in cosmic_dir):
-                                    cosmic_orca_dir = cosmic_dir
-                                elif cosmic_dir:
-                                    orca_dirs = sorted(glob.glob(os.path.join(cosmic_dir, "orca_out*")), key=natural_sort_key)
-                                    if orca_dirs:
-                                        cosmic_orca_dir = orca_dirs[-1]
+                            if base_cosmic_dir and os.path.isdir(base_cosmic_dir):
+                                _expected = getattr(context, 'eref_completed', None)
+                                _orca_dirs = sorted(glob.glob(os.path.join(base_cosmic_dir, "orca_out*")), key=natural_sort_key)
+                                if _orca_dirs:
+                                    if _expected is not None:
+                                        _m_dirs = [d for d in _orca_dirs
+                                                   if re.search(r'_(\d+)$', os.path.basename(d)) and
+                                                   int(re.search(r'_(\d+)$', os.path.basename(d)).group(1)) == _expected]
+                                        cosmic_orca_dir = _m_dirs[0] if _m_dirs else _orca_dirs[-1]
+                                    else:
+                                        cosmic_orca_dir = _orca_dirs[-1]
+                            elif cosmic_dir and ('orca_out' in cosmic_dir or 'gaussian_out' in cosmic_dir):
+                                cosmic_orca_dir = cosmic_dir
 
                             if cosmic_orca_dir:
                                 if base_cosmic_dir and os.path.exists(base_cosmic_dir):
@@ -13606,9 +13616,6 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         if result != 0:
                             print(f"\nError: cosmic failed with code {result}")
                             return result
-
-                        if getattr(context, 'cosmic_opt_only', False):
-                            break
 
                         summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
                         if os.path.exists(summary_file):
@@ -13760,7 +13767,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             cosmic_result['threshold_value'] = max_skipped
                             cosmic_result['threshold_met'] = (final_skipped is not None and final_skipped <= max_skipped)
 
-                        if getattr(context, 'cosmic_opt_only', False):
+                        # Suppress validation display only when redo was not needed.
+                        if getattr(context, 'cosmic_opt_only', False) and final_attempt == 0:
                             cosmic_result['opt_only'] = True
 
                         update_protocol_cache(cosmic_key, 'completed', result=cosmic_result, cache_file=cache_file)
@@ -14740,11 +14748,11 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                     calc_dir = stage_dir
 
                 if qm_program == 'xtb':
-                    # For standalone xTB: copy hessian file to calc directory
-                    # xTB reads 'hessian' or '<namespace>.hessian' automatically
-                    hess_dest = os.path.join(calc_dir, os.path.basename(hess_file))
-                    same_file = os.path.exists(hess_dest) and os.path.samefile(hess_file, hess_dest)
-                    if not same_file and os.path.exists(hess_file):
+                    # For standalone xTB: copy rescue hessian with the optimization
+                    # namespace name so xTB finds it automatically.
+                    # xTB with --namespace <basename> reads <basename>.hessian.
+                    hess_dest = os.path.join(calc_dir, f"{task_basename}.hessian")
+                    if os.path.exists(hess_file):
                         shutil.copy2(hess_file, hess_dest)
                     _redo_log(f"    {task_basename}: xTB Hessian copied to calc directory ✓")
                 else:
@@ -15268,10 +15276,11 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
                     calc_dir = stage_dir
 
                 if qm_program == 'xtb':
-                    # For standalone xTB: copy hessian file to calc directory
-                    hess_dest = os.path.join(calc_dir, os.path.basename(hess_file))
-                    same_file = os.path.exists(hess_dest) and os.path.samefile(hess_file, hess_dest)
-                    if not same_file and os.path.exists(hess_file):
+                    # For standalone xTB: copy rescue hessian with the optimization
+                    # namespace name so xTB finds it automatically.
+                    # xTB with --namespace <basename> reads <basename>.hessian.
+                    hess_dest = os.path.join(calc_dir, f"{task_basename}.hessian")
+                    if os.path.exists(hess_file):
                         shutil.copy2(hess_file, hess_dest)
                     _redo_log(f"    {task_basename}: xTB Hessian copied to calc directory ✓")
                 else:
@@ -15401,8 +15410,10 @@ def _run_single_qm_job(job_info: Dict[str, Any]) -> Dict[str, Any]:
         launch_attempt += 1
 
         # STEP 1: CLEAN OUTPUT FILES
+        # Preserve .hessian/.hess files — they are rescue Hessians placed by
+        # redo logic for xTB/ORCA to read as initial Hessian guess.
         for item in os.listdir(calc_working_dir):
-            if item.startswith(script_basename) and not item.endswith(('.inp', '.com', '.gjf', '.xyz')):
+            if item.startswith(script_basename) and not item.endswith(('.inp', '.com', '.gjf', '.xyz', '.hessian', '.hess')):
                 item_path = os.path.join(calc_working_dir, item)
                 if os.path.isfile(item_path):
                     try:
