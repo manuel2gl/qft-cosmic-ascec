@@ -494,6 +494,9 @@ class SystemState:
         self.max_rotation_angle_rad: float = 0.0  # Maximum Rotation angle in radians (dphi)
         self.conformational_move_prob: float = 0.0  # Probability of conformational move vs rigid-body move (read from input)
         self.max_dihedral_angle_rad: float = 0.0  # Maximum dihedral rotation angle in radians (read from input)
+        self.rotatable_bonds_by_molecule: List[List[Tuple[int, int, List[int]]]] = []  # Cached rotatable bond definitions per molecule
+        self.molecules_with_rotatable_bonds: List[bool] = []  # Per-molecule availability flag for conformational moves
+        self.total_rotatable_bonds: int = 0  # Total number of cached rotatable bonds in the system
         self.ia: int = 0                          # QM program type (1: Gaussian, 2: ORCA, etc.)
         self.alias: str = ""                      # Program alias/executable name (e.g., "g09")
         self.qm_method: Optional[str] = None      # (e.g., "pm3", "hf") - Renamed from hamiltonian for clarity
@@ -3609,6 +3612,46 @@ def check_intramolecular_overlap(mol_coords: np.ndarray, mol_atomic_numbers: Lis
     
     return False  # No overlap
 
+def initialize_rotatable_bond_cache(state: SystemState) -> None:
+    """
+    Builds a per-molecule cache of rotatable bonds for conformational sampling.
+    If no rotatable bonds are found in the full system, conformational sampling
+    is disabled to avoid wasted proposal attempts.
+    """
+    state.rotatable_bonds_by_molecule = []
+    state.molecules_with_rotatable_bonds = []
+    total_rotatable_bonds = 0
+
+    for molecule_idx in range(state.num_molecules):
+        start_atom_idx = state.imolec[molecule_idx]
+        end_atom_idx = state.imolec[molecule_idx + 1]
+        mol_coords = state.rp[start_atom_idx:end_atom_idx, :]
+        mol_atomic_numbers = [state.iznu[i] for i in range(start_atom_idx, end_atom_idx)]
+
+        rotatable_bonds = find_rotatable_bonds(mol_coords, mol_atomic_numbers, state)
+        state.rotatable_bonds_by_molecule.append(rotatable_bonds)
+        has_rotatable_bond = len(rotatable_bonds) > 0
+        state.molecules_with_rotatable_bonds.append(has_rotatable_bond)
+        total_rotatable_bonds += len(rotatable_bonds)
+
+    state.total_rotatable_bonds = total_rotatable_bonds
+
+    if state.conformational_move_prob > 0.0 and total_rotatable_bonds == 0:
+        state.conformational_move_prob = 0.0
+        _print_verbose(
+            "Conformational sampling auto-disabled: no rotatable bonds found in any molecule.",
+            0,
+            state,
+        )
+
+    if state.conformational_move_prob > 0.0 and state.max_dihedral_angle_rad == 0.0:
+        state.conformational_move_prob = 0.0
+        _print_verbose(
+            "Conformational sampling auto-disabled: maximum dihedral angle is 0 degrees.",
+            0,
+            state,
+        )
+
 def propose_conformational_move(state: SystemState, current_rp: np.ndarray, 
                                current_imolec: List[int]) -> Tuple[np.ndarray, np.ndarray, int, str]:
     """
@@ -3644,9 +3687,15 @@ def propose_unified_move(state: SystemState, current_rp: np.ndarray,
     for molecule_idx in range(state.num_molecules):
         start_atom_idx = current_imolec[molecule_idx] 
         end_atom_idx = current_imolec[molecule_idx + 1]
+        molecule_has_rotatable_bond = (
+            bool(state.molecules_with_rotatable_bonds)
+            and molecule_idx < len(state.molecules_with_rotatable_bonds)
+            and state.molecules_with_rotatable_bonds[molecule_idx]
+        )
         
         # Each molecule independently decides whether to attempt conformational or rigid-body move
         attempt_conformational = (state.conformational_move_prob > 0 and 
+                                 molecule_has_rotatable_bond and
                                  np.random.rand() < state.conformational_move_prob)
         
         conformational_success = False
@@ -3655,15 +3704,23 @@ def propose_unified_move(state: SystemState, current_rp: np.ndarray,
             mol_coords = proposed_rp_full_system[start_atom_idx:end_atom_idx, :]
             mol_atomic_numbers = [state.iznu[i] for i in range(start_atom_idx, end_atom_idx)]
             
-            # Find rotatable bonds in this molecule
-            rotatable_bonds = find_rotatable_bonds(mol_coords, mol_atomic_numbers, state)
+            # Use cached rotatable bonds when available to avoid repeated bond searches.
+            rotatable_bonds = []
+            if state.rotatable_bonds_by_molecule and molecule_idx < len(state.rotatable_bonds_by_molecule):
+                rotatable_bonds = state.rotatable_bonds_by_molecule[molecule_idx]
+            
+            if not rotatable_bonds:
+                rotatable_bonds = find_rotatable_bonds(mol_coords, mol_atomic_numbers, state)
+                if state.rotatable_bonds_by_molecule and molecule_idx < len(state.rotatable_bonds_by_molecule):
+                    state.rotatable_bonds_by_molecule[molecule_idx] = rotatable_bonds
+                    state.molecules_with_rotatable_bonds[molecule_idx] = bool(rotatable_bonds)
             
             if rotatable_bonds:
                 # Randomly select a rotatable bond
                 bond_atom1, bond_atom2, moving_atoms = rotatable_bonds[np.random.randint(len(rotatable_bonds))]
                 
                 # Generate random rotation angle (can be up to max_dihedral_angle_rad)
-                max_rotation = state.max_dihedral_angle_rad if state.max_dihedral_angle_rad > 0 else np.pi / 3
+                max_rotation = state.max_dihedral_angle_rad
                 rotation_angle = (np.random.rand() - 0.5) * 2.0 * max_rotation
                 
                 # Apply rotation to molecule coordinates
@@ -19721,6 +19778,10 @@ MORE INFORMATION:
                     
                     # Preserve QM files from the initial accepted configuration for debugging
                     preserve_last_qm_files(state, run_dir)
+
+                    # Cache rotatable-bond availability once and disable conformational sampling
+                    # if the system has no valid dihedral rotations.
+                    initialize_rotatable_bond_cache(state)
                     
                     _print_verbose(f"  Calculation successful. Energy: {state.current_energy:.8f} a.u.\n", 0, state) # Modified print
                     
