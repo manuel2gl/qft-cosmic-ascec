@@ -9727,6 +9727,7 @@ class WorkflowContext:
     completed_stage_count: int = 0  # Number of finished workflow stages for progress rendering
     generated_template_files: List[str] = dataclasses.field(default_factory=list)  # Temp files extracted from embedded template labels
     maxprint: bool = False  # If True, keep all intermediate files (legacy behavior). Default: miniprint (clean up at end)
+    _concurrent_prompted: Optional[int] = None  # Cached optimization concurrency selected interactively
     
     def get_previous_stage_output_dir(self, stage_type: str) -> Optional[str]:
         """
@@ -15667,17 +15668,21 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             print("Error: No template file specified for optimization stage (.inp/.com/.gjf/.xtb or embedded label)")
         return 1
 
-    # Prompt for concurrent jobs if not set via --concurrent and not already prompted
-    # (context._concurrent_prompted is set by the workflow redo loop to avoid re-prompting)
-    if not _concurrent_given and not hasattr(context, '_concurrent_prompted'):
+    # Prompt for concurrent jobs if not set via --concurrent and not already prompted.
+    # The value is cached by the workflow redo loop to avoid re-prompting.
+    prompted_concurrent = getattr(context, '_concurrent_prompted', None)
+    if not _concurrent_given and prompted_concurrent is None:
         try:
             _ans = input("  Concurrent QM jobs for optimization [1]: ").strip()
             concurrent_jobs = max(1, int(_ans)) if _ans else 1
         except (EOFError, ValueError):
             concurrent_jobs = 1
-        context._concurrent_prompted = concurrent_jobs
-    elif not _concurrent_given and hasattr(context, '_concurrent_prompted'):
-        concurrent_jobs = context._concurrent_prompted
+        setattr(context, '_concurrent_prompted', concurrent_jobs)
+    elif not _concurrent_given and prompted_concurrent is not None:
+        try:
+            concurrent_jobs = max(1, int(prompted_concurrent))
+        except (TypeError, ValueError):
+            concurrent_jobs = 1
 
     context.max_tries = max_stage_redos  # For compatibility with existing code
 
@@ -16124,7 +16129,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                             parse_xtb_options_from_launcher(launcher_content),
                             getattr(context, 'qm_nproc', None),
                             getattr(context, 'xtb_cycles', None),
-                        ),
+                        ) if qm_program == 'xtb' else None,
                     })
 
                 # Run calculations with concurrency
@@ -17559,6 +17564,11 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
                 'max_launch_retries': max_launch_retries,
                 'launch_failure_threshold': launch_failure_threshold,
                 'orca_exe': orca_exe,
+                'xtb_options': build_xtb_runtime_options(
+                    parse_xtb_options_from_launcher(launcher_content),
+                    getattr(context, 'qm_nproc', None),
+                    getattr(context, 'xtb_cycles', None),
+                ) if qm_program == 'xtb' else None,
             })
 
         # Run calculations with concurrency
