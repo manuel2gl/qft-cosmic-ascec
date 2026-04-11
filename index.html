@@ -6805,6 +6805,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
             // --- Replicas & Packing ---
             const replicas = document.getElementById('smart-replicas');
             if (replicas) replicas.value = (selectedMode === 'preliminar') ? '1' : '3';
+            syncAnnealingConcurrentWithReplicas('smart-replicas', 'smart-annealing-concurrent', true);
+            syncAnnealingConcurrentWithReplicas('adv-replicas', 'adv-annealing-concurrent', true);
             const packing = document.getElementById('smart-packing');
             if (packing) {
                 packing.value = (selectedMode === 'preliminar') ? '30' : '20';
@@ -8228,6 +8230,8 @@ end
         function initSmartMode() {
             // Set default values
             toggleSmartPackingCustom();
+            syncAnnealingConcurrentWithReplicas('smart-replicas', 'smart-annealing-concurrent', true);
+            syncAnnealingConcurrentWithReplicas('adv-replicas', 'adv-annealing-concurrent', true);
             updateSmartAnnealingMethod();
             updateSmartOptMethod();
             updateSmartRefMethod();
