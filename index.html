@@ -2555,7 +2555,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group" style="flex:0 0 95px; margin-bottom:0;">
                             <label>Concurrent</label>
-                            <input type="number" id="smart-annealing-concurrent" value="1" min="1">
+                            <input type="number" id="smart-annealing-concurrent" value="1" min="1" oninput="syncSmartToAdvanced(); updateAllPreviews();">
                         </div>
                         <div class="form-group" style="flex:0 0 90px; margin-bottom:0;">
                             <label>Charge</label>
@@ -2600,7 +2600,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-top:10px;">
                         <div class="form-group" style="flex:1; min-width:70px; margin-bottom:0;">
                             <label>Replicas</label>
-                            <input type="number" id="smart-replicas" value="1" min="1" max="10" oninput="syncSmartBoxControlsToTop()">
+                            <input type="number" id="smart-replicas" value="1" min="1" max="10" oninput="syncAnnealingConcurrentWithReplicas('smart-replicas', 'smart-annealing-concurrent', true); syncSmartBoxControlsToTop(); updateAllPreviews();">
                         </div>
                         <div class="form-group" style="flex:1.2; min-width:100px; margin-bottom:0;">
                             <label>Packing (%)</label>
@@ -3172,7 +3172,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-top:10px;">
                         <div class="form-group" style="flex:1; min-width:100px; margin-bottom:0;">
                             <label>Replicas</label>
-                            <input type="number" id="adv-replicas" value="3" min="1" max="99" oninput="updateAllPreviews()">
+                            <input type="number" id="adv-replicas" value="3" min="1" max="99" oninput="syncAnnealingConcurrentWithReplicas('adv-replicas', 'adv-annealing-concurrent', true); updateAllPreviews()">
                         </div>
                         <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;" id="adv-nmo-wrap">
                             <label style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
@@ -6550,6 +6550,29 @@ H  -0.757000  0.586000  0.000000"></textarea>
             } finally {
                 isSyncingSmartBoxMirror = false;
             }
+        }
+
+        function syncAnnealingConcurrentWithReplicas(replicasId, concurrentId, mirror = false) {
+            const replicasInput = document.getElementById(replicasId);
+            const concurrentInput = document.getElementById(concurrentId);
+            if (!replicasInput || !concurrentInput) return;
+
+            const replicas = Math.max(1, parseInt(replicasInput.value || '1', 10) || 1);
+            concurrentInput.max = String(replicas);
+
+            if (mirror || replicas === 1) {
+                concurrentInput.value = String(replicas);
+            } else {
+                const concurrent = Math.max(1, parseInt(concurrentInput.value || '1', 10) || 1);
+                concurrentInput.value = String(Math.min(concurrent, replicas));
+            }
+
+            if (replicas === 1) {
+                concurrentInput.disabled = true;
+                return;
+            }
+
+            concurrentInput.disabled = false;
         }
 
         function applyTopSmartBoxControls(source) {
