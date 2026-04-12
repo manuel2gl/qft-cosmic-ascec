@@ -2354,7 +2354,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             <!-- Center Row: Box 7 (Molecule→XYZ) + Box 8 (Molecule Preview) -->
             <div class="smart-center-row">
                 <!-- Box 7: Molecule → XYZ -->
-                <div class="card">
+                <div class="card" style="position: relative;">
                     <h2>Molecule → XYZ Converter</h2>
 
                     <div class="alert alert-info">
@@ -2397,12 +2397,27 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <button class="quick-mol-btn" onclick="basicLoadSmiles('CCCCCC', 'hexane')">Hexane</button>
                     </div>
                     <div style="margin-top: 12px; background: #f8f9fa; border-radius: 6px; padding: 10px; font-size: 0.85em;">
-                        <div style="display: flex; gap: 15px; margin-bottom: 6px;">
+                        <div style="display: flex; gap: 15px; margin-bottom: 6px; align-items: center;">
                             <a href="https://pubchem.ncbi.nlm.nih.gov/" target="_blank" style="color: #3498db; text-decoration: none; font-weight: 500;">🔍 PubChem</a>
                             <a href="https://www.novoprolabs.com/tools/smiles2pdb" target="_blank" style="color: #27ae60; text-decoration: none; font-weight: 500;">🧬 Novoprolabs 3D</a>
+                            <button id="pt-toggle-btn" onclick="togglePeriodicTable()" title="Element fragments"
+                                style="margin-left: auto; background: #5a7fcb; color: white; border: none; border-radius: 5px; width: 28px; height: 28px; padding: 0; font-size: 1.05em; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.15); font-family: 'Segoe UI Symbol', 'Apple Color Emoji', sans-serif;"><span style="display:block;transform:translateY(-1px);">⚛</span></button>
                         </div>
                         <div style="color: #666; font-size: 0.9em;">For complex molecules, download .mol from Novoprolabs and drop it on the preview.</div>
                     </div>
+
+                    <!-- Periodic Table Panel (fixed overlay) -->
+                    <div id="periodic-table-panel" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border: 1px solid #ccc; border-radius: 10px; box-shadow: 0 8px 32px rgba(0,0,0,0.25); padding: 34px 18px 18px; z-index: 9999;">
+                        <button onclick="togglePeriodicTable()" title="Close" style="position: absolute; top: 10px; right: 12px; background: none; border: none; cursor: pointer; font-size: 1.4em; line-height: 1; color: #666; padding: 2px 6px; border-radius: 4px;">&times;</button>
+                        <!-- Main grid -->
+                        <div id="pt-main-grid" style="display: grid; grid-template-columns: repeat(18, 28px); grid-template-rows: repeat(7, 26px); gap: 2px;"></div>
+                        <!-- F-block separator -->
+                        <div style="border-top: 1px dashed #ccc; margin: 6px 0 4px;"></div>
+                        <!-- F-block grid (same 18-col width as main) -->
+                        <div id="pt-fblock-grid" style="display: grid; grid-template-columns: repeat(18, 28px); grid-template-rows: repeat(2, 26px); gap: 2px;"></div>
+                    </div>
+                    <!-- PT backdrop -->
+                    <div id="pt-backdrop" onclick="togglePeriodicTable()" style="display: none; position: fixed; inset: 0; z-index: 9998; background: rgba(0,0,0,0.15);"></div>
                 </div>
 
                 <!-- Box 8: Molecule Preview & Add -->
@@ -2559,7 +2574,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group" style="flex:0 0 90px; margin-bottom:0;">
                             <label>Charge</label>
-                            <input type="number" id="smart-charge" value="0">
+                            <input type="number" id="smart-charge" value="0" oninput="autofillGroundStateMultiplicity(); syncSmartToAdvanced(); updateAllPreviews();">
                         </div>
                         <div class="form-group" style="flex:0 0 90px; margin-bottom:0;">
                             <label>Mult.</label>
@@ -3034,7 +3049,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group">
                             <label>Charge</label>
-                            <input type="number" id="adv-charge" value="0" oninput="updateAllPreviews()">
+                            <input type="number" id="adv-charge" value="0" oninput="autofillGroundStateMultiplicity(); updateAllPreviews()">
                         </div>
                         <div class="form-group">
                             <label>Multiplicity</label>
@@ -6072,6 +6087,50 @@ H  -0.757000  0.586000  0.000000"></textarea>
         }
 
         let isSyncingSmartBoxMirror = false;
+
+        // Atomic numbers (Z) for electron counting to guess ground-state multiplicity.
+        const ATOMIC_NUMBERS = {
+            H: 1, He: 2, Li: 3, Be: 4, B: 5, C: 6, N: 7, O: 8, F: 9, Ne: 10,
+            Na: 11, Mg: 12, Al: 13, Si: 14, P: 15, S: 16, Cl: 17, Ar: 18,
+            K: 19, Ca: 20, Sc: 21, Ti: 22, V: 23, Cr: 24, Mn: 25, Fe: 26, Co: 27, Ni: 28, Cu: 29, Zn: 30,
+            Ga: 31, Ge: 32, As: 33, Se: 34, Br: 35, Kr: 36,
+            Rb: 37, Sr: 38, Y: 39, Zr: 40, Nb: 41, Mo: 42, Tc: 43, Ru: 44, Rh: 45, Pd: 46, Ag: 47, Cd: 48,
+            In: 49, Sn: 50, Sb: 51, Te: 52, I: 53, Xe: 54,
+            Cs: 55, Ba: 56, La: 57, Ce: 58, Pr: 59, Nd: 60, Pm: 61, Sm: 62, Eu: 63, Gd: 64, Tb: 65, Dy: 66,
+            Ho: 67, Er: 68, Tm: 69, Yb: 70, Lu: 71,
+            Hf: 72, Ta: 73, W: 74, Re: 75, Os: 76, Ir: 77, Pt: 78, Au: 79, Hg: 80,
+            Tl: 81, Pb: 82, Bi: 83, Po: 84, At: 85, Rn: 86
+        };
+
+        function computeTotalElectrons() {
+            let total = 0;
+            for (const mol of molecules) {
+                for (const atom of mol.atoms) {
+                    total += ATOMIC_NUMBERS[atom] || 0;
+                }
+            }
+            return total;
+        }
+
+        // Parity of total electrons (after charge) gives the ground-state multiplicity
+        // for most closed/open-shell species: even → singlet (1), odd → doublet (2).
+        // O2-like triplets remain user-overridable after autofill.
+        function autofillGroundStateMultiplicity() {
+            if (molecules.length === 0) return;
+            const chargeRaw = document.getElementById('adv-charge')?.value
+                ?? document.getElementById('smart-charge')?.value
+                ?? '0';
+            const charge = parseInt(chargeRaw, 10);
+            if (Number.isNaN(charge)) return;
+            const electrons = computeTotalElectrons() - charge;
+            if (electrons < 0) return;
+            const mult = (electrons % 2 === 0) ? 1 : 2;
+            const multStr = String(mult);
+            const smartMult = document.getElementById('smart-multiplicity');
+            const advMult = document.getElementById('adv-multiplicity');
+            if (smartMult && smartMult.value !== multStr) smartMult.value = multStr;
+            if (advMult && advMult.value !== multStr) advMult.value = multStr;
+        }
 
         const ASCEC_COVALENT_RADII = {
             H: 0.31, He: 0.28, Li: 1.28, Be: 0.96, B: 0.84, C: 0.73, N: 0.71, O: 0.66, F: 0.57, Ne: 0.58,
@@ -9406,6 +9465,7 @@ end
         // Molecule list management
         function updateMoleculeList() {
             calculateBoxLengthForPacking();
+            autofillGroundStateMultiplicity();
             // Update molecule counters used in smart and advanced menus
 
             const countDisplay1 = document.getElementById('basic-mol-count-display');
@@ -10333,6 +10393,145 @@ H   1.981282  0.134064  0.000000`;
         function updateOrcaInput1() {
             updateAdvOrcaInput1();
         }
+        function updateOrcaInput2() {
+            updateAdvOrcaInput2();
+        }
+
+        // ── Periodic Table ──────────────────────────────────────────────
+        (function buildPeriodicTable() {
+            const COLORS = {
+                'nonmetal':       '#a8d5a2',
+                'noble-gas':      '#c4b0f5',
+                'alkali':         '#f5a0a0',
+                'alkaline':       '#f5c880',
+                'transition':     '#8ec4e8',
+                'post-trans':     '#80b8f0',
+                'metalloid':      '#d4e880',
+                'halogen':        '#7dd9b0',
+                'lanthanide':     '#f5b8d0',
+                'actinide':       '#f5cca0',
+            };
+            // [symbol, atomicNum, period(1-7), group(1-18), category]
+            const ELEMENTS = [
+                ['H',1,1,1,'nonmetal'],['He',2,1,18,'noble-gas'],
+                ['Li',3,2,1,'alkali'],['Be',4,2,2,'alkaline'],['B',5,2,13,'metalloid'],['C',6,2,14,'nonmetal'],['N',7,2,15,'nonmetal'],['O',8,2,16,'nonmetal'],['F',9,2,17,'halogen'],['Ne',10,2,18,'noble-gas'],
+                ['Na',11,3,1,'alkali'],['Mg',12,3,2,'alkaline'],['Al',13,3,13,'post-trans'],['Si',14,3,14,'metalloid'],['P',15,3,15,'nonmetal'],['S',16,3,16,'nonmetal'],['Cl',17,3,17,'halogen'],['Ar',18,3,18,'noble-gas'],
+                ['K',19,4,1,'alkali'],['Ca',20,4,2,'alkaline'],['Sc',21,4,3,'transition'],['Ti',22,4,4,'transition'],['V',23,4,5,'transition'],['Cr',24,4,6,'transition'],['Mn',25,4,7,'transition'],['Fe',26,4,8,'transition'],['Co',27,4,9,'transition'],['Ni',28,4,10,'transition'],['Cu',29,4,11,'transition'],['Zn',30,4,12,'transition'],['Ga',31,4,13,'post-trans'],['Ge',32,4,14,'metalloid'],['As',33,4,15,'metalloid'],['Se',34,4,16,'nonmetal'],['Br',35,4,17,'halogen'],['Kr',36,4,18,'noble-gas'],
+                ['Rb',37,5,1,'alkali'],['Sr',38,5,2,'alkaline'],['Y',39,5,3,'transition'],['Zr',40,5,4,'transition'],['Nb',41,5,5,'transition'],['Mo',42,5,6,'transition'],['Tc',43,5,7,'transition'],['Ru',44,5,8,'transition'],['Rh',45,5,9,'transition'],['Pd',46,5,10,'transition'],['Ag',47,5,11,'transition'],['Cd',48,5,12,'transition'],['In',49,5,13,'post-trans'],['Sn',50,5,14,'post-trans'],['Sb',51,5,15,'metalloid'],['Te',52,5,16,'metalloid'],['I',53,5,17,'halogen'],['Xe',54,5,18,'noble-gas'],
+                ['Cs',55,6,1,'alkali'],['Ba',56,6,2,'alkaline'],['Hf',72,6,4,'transition'],['Ta',73,6,5,'transition'],['W',74,6,6,'transition'],['Re',75,6,7,'transition'],['Os',76,6,8,'transition'],['Ir',77,6,9,'transition'],['Pt',78,6,10,'transition'],['Au',79,6,11,'transition'],['Hg',80,6,12,'transition'],['Tl',81,6,13,'post-trans'],['Pb',82,6,14,'post-trans'],['Bi',83,6,15,'post-trans'],['Po',84,6,16,'metalloid'],['At',85,6,17,'halogen'],['Rn',86,6,18,'noble-gas'],
+                ['Fr',87,7,1,'alkali'],['Ra',88,7,2,'alkaline'],['Rf',104,7,4,'transition'],['Db',105,7,5,'transition'],['Sg',106,7,6,'transition'],['Bh',107,7,7,'transition'],['Hs',108,7,8,'transition'],['Mt',109,7,9,'transition'],['Ds',110,7,10,'transition'],['Rg',111,7,11,'transition'],['Cn',112,7,12,'transition'],['Nh',113,7,13,'post-trans'],['Fl',114,7,14,'post-trans'],['Mc',115,7,15,'post-trans'],['Lv',116,7,16,'post-trans'],['Ts',117,7,17,'halogen'],['Og',118,7,18,'noble-gas'],
+            ];
+            // f-block: [symbol, atomicNum, fRow(1=La,2=Ac), col(1-15)]
+            const FBLOCK = [
+                ['La',57,1,1,'lanthanide'],['Ce',58,1,2,'lanthanide'],['Pr',59,1,3,'lanthanide'],['Nd',60,1,4,'lanthanide'],['Pm',61,1,5,'lanthanide'],['Sm',62,1,6,'lanthanide'],['Eu',63,1,7,'lanthanide'],['Gd',64,1,8,'lanthanide'],['Tb',65,1,9,'lanthanide'],['Dy',66,1,10,'lanthanide'],['Ho',67,1,11,'lanthanide'],['Er',68,1,12,'lanthanide'],['Tm',69,1,13,'lanthanide'],['Yb',70,1,14,'lanthanide'],['Lu',71,1,15,'lanthanide'],
+                ['Ac',89,2,1,'actinide'],['Th',90,2,2,'actinide'],['Pa',91,2,3,'actinide'],['U',92,2,4,'actinide'],['Np',93,2,5,'actinide'],['Pu',94,2,6,'actinide'],['Am',95,2,7,'actinide'],['Cm',96,2,8,'actinide'],['Bk',97,2,9,'actinide'],['Cf',98,2,10,'actinide'],['Es',99,2,11,'actinide'],['Fm',100,2,12,'actinide'],['Md',101,2,13,'actinide'],['No',102,2,14,'actinide'],['Lr',103,2,15,'actinide'],
+            ];
+
+            function makeBtn(symbol, atomicNum, col, row, cat) {
+                const btn = document.createElement('button');
+                btn.title = symbol + ' (' + atomicNum + ') — click to preview';
+                btn.textContent = symbol;
+                const color = COLORS[cat] || '#e0e0e0';
+                btn.style.cssText = [
+                    'grid-column:' + col + ';grid-row:' + row + ';',
+                    'background:' + color + ';',
+                    'border:1px solid rgba(0,0,0,0.12);border-radius:3px;',
+                    'font-size:0.62em;font-weight:600;cursor:pointer;padding:0;',
+                    'display:flex;align-items:center;justify-content:center;',
+                    'transition:transform 0.08s,box-shadow 0.08s;',
+                ].join('');
+                btn.addEventListener('mouseover', () => { btn.style.transform = 'scale(1.25)'; btn.style.zIndex = '10'; btn.style.boxShadow = '0 2px 8px rgba(0,0,0,0.35)'; btn.style.position = 'relative'; });
+                btn.addEventListener('mouseout', () => { btn.style.transform = ''; btn.style.zIndex = ''; btn.style.boxShadow = ''; btn.style.position = ''; });
+                btn.addEventListener('click', () => addAtomToPreview(symbol));
+                return btn;
+            }
+
+            function makePlaceholder(col, row, label, cat) {
+                const el = document.createElement('div');
+                el.style.cssText = 'grid-column:' + col + ';grid-row:' + row + ';background:' + (COLORS[cat]||'#eee') + ';border:1px dashed rgba(0,0,0,0.2);border-radius:3px;font-size:0.55em;color:#666;display:flex;align-items:center;justify-content:center;';
+                el.textContent = label;
+                return el;
+            }
+
+            window._buildPTOnce = function() {
+                const mainGrid = document.getElementById('pt-main-grid');
+                const fbGrid   = document.getElementById('pt-fblock-grid');
+                if (mainGrid.childElementCount > 0) return; // already built
+
+                // Placeholders for La/Ac series in main table
+                mainGrid.appendChild(makePlaceholder(3, 6, '*', 'lanthanide'));
+                mainGrid.appendChild(makePlaceholder(3, 7, '**', 'actinide'));
+
+                for (const [sym, num, per, grp, cat] of ELEMENTS)
+                    mainGrid.appendChild(makeBtn(sym, num, grp, per, cat));
+
+                // F-block label cells in col 2
+                const laLbl = document.createElement('div');
+                laLbl.style.cssText = 'grid-column:2;grid-row:1;font-size:0.7em;color:#888;display:flex;align-items:center;justify-content:flex-end;padding-right:4px;';
+                laLbl.textContent = '*';
+                fbGrid.appendChild(laLbl);
+                const acLbl = document.createElement('div');
+                acLbl.style.cssText = 'grid-column:2;grid-row:2;font-size:0.7em;color:#888;display:flex;align-items:center;justify-content:flex-end;padding-right:4px;';
+                acLbl.textContent = '**';
+                fbGrid.appendChild(acLbl);
+
+                // F-block elements go in cols 3..17 (matching main table group 3 offset)
+                for (const [sym, num, frow, col, cat] of FBLOCK)
+                    fbGrid.appendChild(makeBtn(sym, num, col + 2, frow, cat));
+            };
+        })();
+
+        function togglePeriodicTable() {
+            const panel = document.getElementById('periodic-table-panel');
+            const bd    = document.getElementById('pt-backdrop');
+            const open  = panel.style.display === 'none';
+            panel.style.display = open ? 'block' : 'none';
+            bd.style.display    = open ? 'block' : 'none';
+            if (open) window._buildPTOnce();
+        }
+
+        function addAtomToPreview(symbol) {
+            // Build a single-atom molData and render it in the basic viewer.
+            // No PubChem round-trip — this lets the user add a bare atom
+            // (e.g. a metal center) without the search returning a molecule.
+            currentMolData = {
+                atoms: [symbol],
+                coords: [[0, 0, 0]],
+                bonds: [],
+                isFlat: false,
+                is3D: true,
+                rawSdf: singleAtomSdf(symbol)
+            };
+
+            const nameEl = document.getElementById('basic-mol-name');
+            if (nameEl) nameEl.value = symbol;
+            const smilesEl = document.getElementById('basic-mol-smiles');
+            if (smilesEl) smilesEl.value = /^[BCNOPSFI]$/.test(symbol) ? symbol : '[' + symbol + ']';
+
+            const inputEl = document.getElementById('basic-smiles-input');
+            if (inputEl) inputEl.value = symbol;
+
+            if (typeof hideNovoprolabsLink === 'function') hideNovoprolabsLink();
+            showBasicMolViewer(currentMolData);
+            if (typeof toast === 'function') toast(symbol + ' atom ready — click Add to place in box', 'success', 2000);
+        }
+
+        function singleAtomSdf(symbol) {
+            // Minimal V2000 SDF with one atom at origin, padded to fixed widths.
+            const pad = (s, w) => String(s).padStart(w, ' ');
+            const sym = (symbol + '   ').substring(0, 3);
+            return [
+                '',
+                '  ASCEC-PT',
+                '',
+                pad(1, 3) + pad(0, 3) + '  0  0  0  0  0  0  0  0999 V2000',
+                '    0.0000    0.0000    0.0000 ' + sym + ' 0  0  0  0  0  0  0  0  0  0  0  0',
+                'M  END',
+                ''
+            ].join('\n');
+        }
+        // ────────────────────────────────────────────────────────────────
+
         function updateOrcaInput2() {
             updateAdvOrcaInput2();
         }
