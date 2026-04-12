@@ -7367,6 +7367,18 @@ end
             const charge = document.getElementById('smart-charge')?.value || '0';
             const mult = document.getElementById('smart-multiplicity')?.value || '1';
 
+            if (isStandaloneXtbTheory(theory)) {
+                const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
+                const xtbJob = /(FREQ|HESS)/i.test(jobRaw) ? 'SP Freq' : 'SP';
+                const xtbUhf = parseInt(mult) - 1;
+                const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
+                const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
+                const input = `#name\n# ${xtbMethod} ${xtbJob}\n# nprocs ${nprocs}${chargeLine}${uhfLine}`;
+                const textarea = document.getElementById('orca-input3');
+                if (textarea) textarea.value = input;
+                return;
+            }
+
             const methodLine = buildSmartEnergyRefMethodLine(method, basis, theory);
             // SP job: no Opt keyword, just the method line. Freq/NumFreq appended if selected.
             const jobLine = jobRaw === 'SP' ? '' : jobRaw.replace('SP ', '');
@@ -8445,6 +8457,18 @@ end
             const charge = document.getElementById('adv-charge')?.value || '0';
             const mult = document.getElementById('adv-multiplicity')?.value || '1';
 
+            if (isStandaloneXtbTheory(theory)) {
+                const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
+                const xtbJob = /(FREQ|HESS)/i.test(jobRaw) ? 'SP Freq' : 'SP';
+                const xtbUhf = parseInt(mult) - 1;
+                const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
+                const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
+                const input = `#name\n# ${xtbMethod} ${xtbJob}\n# nprocs ${nprocs}${chargeLine}${uhfLine}`;
+                const textarea = document.getElementById('orca-input3');
+                if (textarea) textarea.value = input;
+                return;
+            }
+
             const methodLine = buildSmartEnergyRefMethodLine(method, basis, theory);
             const jobLine = jobRaw === 'SP' ? '' : jobRaw.replace('SP ', '');
             const maxcoreLine = maxcore ? `%maxcore ${maxcore}\n` : '';
@@ -8764,11 +8788,14 @@ end
                 const xtbRescue = String(rescueMethod || xtbMethod).replace(/^(Native-)+/, '');
                 const xtbRescueHess = rescueHess;
                 const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? 'Opt Freq' : 'Opt';
+                const xtbUhf = parseInt(mult) - 1;
+                const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
+                const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
                 const input = `#name
 #rescue(${xtbRescue}/${xtbRescueHess})
 # ${xtbMethod} ${xtbJob}
 # nprocs ${nprocs}
-# maxiter ${maxiter}`;
+# maxiter ${maxiter}${chargeLine}${uhfLine}`;
                 const textarea = document.getElementById('orca-input1');
                 if (textarea) textarea.value = input;
                 return;
@@ -8830,11 +8857,14 @@ end
                             const xtbRescue = String(rescueMethod || xtbMethod).replace(/^(Native-)+/, '');
                             const xtbRescueHess = rescueHess;
                             const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? 'Opt Freq' : 'Opt';
+                            const xtbUhf = parseInt(mult) - 1;
+                            const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
+                            const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
                             const input = `#name
 #rescue(${xtbRescue}/${xtbRescueHess})
 # ${xtbMethod} ${xtbJob}
 # nprocs ${nprocs}
-# maxiter ${maxiter}`;
+# maxiter ${maxiter}${chargeLine}${uhfLine}`;
                             const textarea = document.getElementById('orca-input2');
                             if (textarea) textarea.value = input;
                             return;
@@ -9088,8 +9118,11 @@ end
             if (isStandaloneXtbTheory(theory)) {
                 const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
                 const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? 'Opt Freq' : 'Opt';
+                const xtbUhf = parseInt(mult) - 1;
+                const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
+                const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
                 const input = `#name
-# ${xtbMethod} ${xtbJob}`;
+# ${xtbMethod} ${xtbJob}${chargeLine}${uhfLine}`;
                 document.getElementById('orca-input1').value = input;
                 return;
             }
@@ -9125,8 +9158,11 @@ end
             if (isStandaloneXtbTheory(theory)) {
                 const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
                 const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? 'Opt Freq' : 'Opt';
+                const xtbUhf = parseInt(mult) - 1;
+                const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
+                const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
                 const input = `#name
-# ${xtbMethod} ${xtbJob}`;
+# ${xtbMethod} ${xtbJob}${chargeLine}${uhfLine}`;
                 document.getElementById('orca-input2').value = input;
                 return;
             }
