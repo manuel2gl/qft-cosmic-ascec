@@ -5890,6 +5890,21 @@ def parse_xtb_options_from_template(template_content: str) -> str:
     if maxiter_match:
         flags.extend(['--cycles', maxiter_match.group(1)])
 
+    # Parse charge from template metadata (e.g. "# charge -1")
+    # These are the total system values from the annealing parameters, embedded at input generation time.
+    charge_match = re.search(r'#\s*charge\s+(-?\d+)', template_content or '', re.IGNORECASE)
+    if charge_match:
+        charge_val = int(charge_match.group(1))
+        if charge_val != 0:
+            flags.extend(['--chrg', str(charge_val)])
+
+    # Parse unpaired electrons from template metadata (e.g. "# uhf 2" for triplet, mult=3)
+    uhf_match = re.search(r'#\s*uhf\s+(\d+)', template_content or '', re.IGNORECASE)
+    if uhf_match:
+        uhf_val = int(uhf_match.group(1))
+        if uhf_val > 0:
+            flags.extend(['--uhf', str(uhf_val)])
+
     return ' '.join(flags).strip()
 
 
@@ -5919,8 +5934,15 @@ def _xtb_thread_env_prefix() -> str:
 
 
 def build_xtb_runtime_options(xtb_options: str, qm_nproc: Optional[int] = None,
-                              xtb_cycles: Optional[int] = None) -> str:
-    """Ensure xTB options use workflow/index parallel and cycle settings when provided."""
+                              xtb_cycles: Optional[int] = None,
+                              charge: Optional[int] = None,
+                              multiplicity: Optional[int] = None) -> str:
+    """Ensure xTB options use workflow/index parallel and cycle settings when provided.
+
+    charge and multiplicity are the total system values from the annealing parameters
+    (SystemState.charge / SystemState.multiplicity).  When provided they override any
+    existing --chrg / --uhf flags so the single source-of-truth is always respected.
+    """
     opts = ' '.join((xtb_options or '').split()).strip()
 
     # Remove pre-existing runtime controls so index/workflow settings can take precedence.
@@ -5934,14 +5956,28 @@ def build_xtb_runtime_options(xtb_options: str, qm_nproc: Optional[int] = None,
     if xtb_cycles and xtb_cycles > 0:
         opts = f"{opts} --cycles {xtb_cycles}".strip()
 
+    # Inject charge and multiplicity from annealing parameters (total system values).
+    if charge is not None:
+        opts = re.sub(r'\s--chrg(?:\s+\S+|=\S+)?', '', f' {opts}').strip()
+        if charge != 0:
+            opts = f"{opts} --chrg {charge}".strip()
+
+    if multiplicity is not None:
+        uhf = multiplicity - 1
+        opts = re.sub(r'\s--uhf(?:\s+\S+|=\S+)?', '', f' {opts}').strip()
+        if uhf > 0:
+            opts = f"{opts} --uhf {uhf}".strip()
+
     return opts
 
 
-def calculate_input_files(template_file: str, launcher_template: Optional[str] = None, 
-                          auto_select: str = 'interactive', stage_type: str = "optimization", 
+def calculate_input_files(template_file: str, launcher_template: Optional[str] = None,
+                          auto_select: str = 'interactive', stage_type: str = "optimization",
                           workflow_mode: bool = False, qm_alias: str = "orca",
                           qm_nproc: Optional[int] = None,
-                          xtb_cycles: Optional[int] = None) -> str:
+                          xtb_cycles: Optional[int] = None,
+                          charge: Optional[int] = None,
+                          multiplicity: Optional[int] = None) -> str:
     """
     Unified function to create QM input files and launcher scripts for both
     optimization and refinement stages.
@@ -6192,7 +6228,14 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
         wf_ctx = getattr(sys, '_current_workflow_context', None)
         effective_qm_nproc = qm_nproc if qm_nproc is not None else getattr(wf_ctx, 'qm_nproc', None)
         effective_xtb_cycles = xtb_cycles if xtb_cycles is not None else getattr(wf_ctx, 'xtb_cycles', None)
-        xtb_options = build_xtb_runtime_options(xtb_options, effective_qm_nproc, effective_xtb_cycles)
+        # Charge and multiplicity are total system properties from the annealing parameters.
+        # Explicit args take priority; fall back to workflow context (SystemState).
+        effective_charge = charge if charge is not None else getattr(wf_ctx, 'charge', None)
+        effective_multiplicity = multiplicity if multiplicity is not None else getattr(wf_ctx, 'multiplicity', None)
+        xtb_options = build_xtb_runtime_options(
+            xtb_options, effective_qm_nproc, effective_xtb_cycles,
+            charge=effective_charge, multiplicity=effective_multiplicity
+        )
 
     if launcher_template and launcher_content:
         launcher_base_content = launcher_content
@@ -15972,6 +16015,8 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             qm_alias=qm_alias,
             qm_nproc=getattr(context, 'qm_nproc', None),
             xtb_cycles=getattr(context, 'xtb_cycles', None),
+            charge=getattr(context, 'charge', None),
+            multiplicity=getattr(context, 'multiplicity', None),
         )
         # Check if calculate_input_files succeeded (returns string message)
         # Successfully created files contain "Created" in the message
