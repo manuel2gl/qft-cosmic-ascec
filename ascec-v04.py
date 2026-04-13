@@ -9229,12 +9229,15 @@ def collect_out_files_with_tracking(reuse_existing=False, target_cosmic_folder=N
         
         # Filter out backup files, ORCA intermediate files, and non-calculation output files
         all_out_files = [f for f in all_out_files if not (
-            '.backup' in f or 
+            '.backup' in f or
             f.endswith('.out.backup') or
             f.endswith('.log.backup') or
             'orca_summary' in os.path.basename(f).lower() or
             'xtb_summary' in os.path.basename(f).lower() or
             'gaussian_summary' in os.path.basename(f).lower() or
+            'combined_results' in os.path.basename(f).lower() or
+            '_rescue.' in os.path.basename(f) or
+            os.path.splitext(os.path.basename(f))[0].endswith('_rescue') or
             '.scfhess.' in os.path.basename(f) or
             '.scfgrad.' in os.path.basename(f) or
             '.scfp.' in os.path.basename(f) or
@@ -9358,6 +9361,17 @@ def collect_out_files_with_tracking(reuse_existing=False, target_cosmic_folder=N
             # Also remove motifs folders
             for item in os.listdir(cosmic_dir):
                 if item.startswith('motifs_') or item.startswith('umotifs_'):
+                    items_to_remove.append(item)
+
+            # Remove stale sibling output folders (e.g., orca_out_18 left over
+            # when num_files inflated previously). Keep only the canonical
+            # destination we are about to fill so cosmic sees a single source.
+            canonical_dest_name = os.path.basename(destination_path)
+            out_prefixes = ('orca_out_', 'gaussian_out_', 'calc_out_', 'xtb_out_', 'opt_out_')
+            for item in os.listdir(cosmic_dir):
+                if item == canonical_dest_name:
+                    continue
+                if any(item.startswith(p) for p in out_prefixes):
                     items_to_remove.append(item)
 
             for item in items_to_remove:
@@ -12690,70 +12704,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             print(f"\nError: Optimization failed with code {result}")
                             return result
                         
-                        # If this is a redo attempt and we have recalculated files, copy them to cosmic folder
-                        if attempt > 0 and hasattr(context, 'recalculated_files') and context.recalculated_files:
-                            # Get calculation and cosmic directories
-                            optimization_dir_path = getattr(context, 'optimization_stage_dir', 'geometry_optimization')
-                            # Get cosmic orca output directory
-                            cosmic_dir = context.cosmic_dir if hasattr(context, 'cosmic_dir') else "cosmic"
+                        # Note: on redo (attempt > 0), execute_optimization_stage's internal
+                        # sort step already re-runs collect_out_files_with_tracking, which (a)
+                        # places the freshly recalculated .out files into the canonical orca_out
+                        # folder and (b) wipes stale sibling out folders + previous cosmic
+                        # artifacts (motifs_*, clustering_summary, skipped_structures, ...).
+                        # No outer hand-copy or cleanup needed here.
 
-                            # Find the orca_out directory in cosmic (deterministic target).
-                            # Use optimization_completed to select the matching orca_out_N subdir,
-                            # the same way execute_cosmic_stage selects it (avoids copying to the
-                            # wrong folder when multiple orca_out_* dirs exist, e.g. orca_out_11
-                            # vs orca_out_12 where the latter has combined_results.out).
-                            cosmic_orca_dir = None
-                            _ocf = getattr(context, 'optimization_cosmic_folder', None)
-                            _redo_cosmic_base = _cosmic_base_name(_ocf) if isinstance(_ocf, str) and _ocf else cosmic_dir
-                            if _redo_cosmic_base and os.path.isdir(_redo_cosmic_base):
-                                _expected = getattr(context, 'optimization_completed', None)
-                                _orca_dirs = sorted(glob.glob(os.path.join(_redo_cosmic_base, "orca_out*")), key=natural_sort_key)
-                                if _orca_dirs:
-                                    if _expected is not None:
-                                        _m_dirs = [d for d in _orca_dirs
-                                                   if re.search(r'_(\d+)$', os.path.basename(d)) and
-                                                   int(re.search(r'_(\d+)$', os.path.basename(d)).group(1)) == _expected]
-                                        cosmic_orca_dir = _m_dirs[0] if _m_dirs else _orca_dirs[-1]
-                                    else:
-                                        cosmic_orca_dir = _orca_dirs[-1]
 
-                            if cosmic_orca_dir:
-                                
-                                # Clean cosmic directory BEFORE copying files (keep only orca_out and cache)
-                                if cosmic_dir and os.path.exists(cosmic_dir):
-                                    items_to_remove = [
-                                        'dendrogram_images', 'extracted_clusters', 'extracted_data',
-                                        'skipped_structures', 'clustering_summary.txt', 'boltzmann_distribution.txt'
-                                    ]
-                                    # Also remove motifs and umotifs folders
-                                    for item in os.listdir(cosmic_dir):
-                                        if item.startswith('motifs_') or item.startswith('umotifs_'):
-                                            items_to_remove.append(item)
-                                    
-                                    for item in items_to_remove:
-                                        item_path = os.path.join(cosmic_dir, item)
-                                        if os.path.exists(item_path):
-                                            try:
-                                                if os.path.isdir(item_path):
-                                                    shutil.rmtree(item_path)
-                                                else:
-                                                    os.remove(item_path)
-                                            except Exception as e:
-                                                print(f"    Error removing {item}: {e}")
-                                
-                                # Copy updated .out files from calculation subdirectories to cosmic
-                                for basename in context.recalculated_files:
-                                    # Find the .out file in calculation subdirectories
-                                    calc_subdir = os.path.join(optimization_dir_path, basename)
-                                    calc_out_file = os.path.join(calc_subdir, f"{basename}.out")
-                                    
-                                    if os.path.exists(calc_out_file):
-                                        # Copy to cosmic orca directory
-                                        cosmic_out_file = os.path.join(cosmic_orca_dir, f"{basename}.out")
-                                        shutil.copy2(calc_out_file, cosmic_out_file)
-                            else:
-                                print(f"\n  Warning: No orca_out directory found in {cosmic_dir}/")
-                        
                         # Run cosmic; stage header is only shown in verbose mode.
                         if attempt == 0 and context.workflow_verbose_level >= 1:
                             print(f"\n{'-' * 60}")
@@ -12946,11 +12904,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             cosmic_result['threshold_value'] = max_skipped
                             cosmic_result['threshold_met'] = (final_skipped is not None and final_skipped <= max_skipped)
 
-                        # Suppress validation display in protocol summary only when the run has
-                        # no refinement stage AND redo was not needed (threshold met first pass).
-                        # If redo activated (non-zero attempts), there were real issues to report.
-                        if getattr(context, 'cosmic_opt_only', False) and final_attempt == 0:
-                            cosmic_result['opt_only'] = True
+                        # Note: redo is wired up here (max_redos > 0), so threshold validation
+                        # is meaningful and should be shown even in cosmic_opt_only mode. The
+                        # opt_only suppression flag is intentionally NOT set in this branch.
 
                         update_protocol_cache(cosmic_key, 'completed',
                                             result=cosmic_result, cache_file=cache_file)
@@ -13233,76 +13189,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 print(f"  Cache invalidated for stage {stage_num}")
                             return result
                         
-                        # If this is a redo attempt and we have recalculated files, copy them to cosmic folder
-                        if attempt > 0 and hasattr(context, 'recalculated_files') and context.recalculated_files:
-                            # Get optimization and cosmic directories
-                            opt_dir = getattr(context, 'refinement_stage_dir', 'geometry_refinement') or 'geometry_refinement'
-                            # Get cosmic orca output directory
-                            cosmic_dir = context.refinement_cosmic_folder if hasattr(context, 'refinement_cosmic_folder') else context.cosmic_dir
+                        # Note: on redo (attempt > 0), execute_refinement_stage's internal
+                        # sort step already re-runs collect_out_files_with_tracking, which (a)
+                        # places the freshly recalculated .out files into the canonical orca_out
+                        # folder and (b) wipes stale sibling out folders + previous cosmic
+                        # artifacts (motifs_*, clustering_summary, skipped_structures, ...).
+                        # No outer hand-copy or cleanup needed here.
 
-                            # Derive the base cosmic directory (strip orca_out_* suffix if present)
-                            _rfc = getattr(context, 'refinement_cosmic_folder', None)
-                            base_cosmic_dir = _cosmic_base_name(_rfc) if isinstance(_rfc, str) and _rfc else (
-                                os.path.dirname(cosmic_dir) if cosmic_dir and 'orca_out' in cosmic_dir else cosmic_dir
-                            )
 
-                            # Find the orca_out directory in cosmic (deterministic target).
-                            # Use refinement_completed to select the matching orca_out_N subdir,
-                            # the same way execute_cosmic_stage selects it (avoids copying to the
-                            # wrong folder when multiple orca_out_* dirs exist, e.g. orca_out_11
-                            # vs orca_out_12 where the latter has combined_results.out).
-                            cosmic_orca_dir = None
-                            if base_cosmic_dir and os.path.isdir(base_cosmic_dir):
-                                _expected = getattr(context, 'refinement_completed', None)
-                                _orca_dirs = sorted(glob.glob(os.path.join(base_cosmic_dir, "orca_out*")), key=natural_sort_key)
-                                if _orca_dirs:
-                                    if _expected is not None:
-                                        _m_dirs = [d for d in _orca_dirs
-                                                   if re.search(r'_(\d+)$', os.path.basename(d)) and
-                                                   int(re.search(r'_(\d+)$', os.path.basename(d)).group(1)) == _expected]
-                                        cosmic_orca_dir = _m_dirs[0] if _m_dirs else _orca_dirs[-1]
-                                    else:
-                                        cosmic_orca_dir = _orca_dirs[-1]
-                            elif cosmic_dir and ('orca_out' in cosmic_dir or 'gaussian_out' in cosmic_dir):
-                                cosmic_orca_dir = cosmic_dir
-                            
-                            if cosmic_orca_dir:
-                                # Clean cosmic directory BEFORE copying files (keep only orca_out and cache)
-                                if base_cosmic_dir and os.path.exists(base_cosmic_dir):
-                                    items_to_remove = [
-                                        'dendrogram_images', 'extracted_clusters', 'extracted_data',
-                                        'skipped_structures', 'clustering_summary.txt', 'boltzmann_distribution.txt'
-                                    ]
-                                    # Also remove motifs and umotifs folders
-                                    for item in os.listdir(base_cosmic_dir):
-                                        if item.startswith('motifs_') or item.startswith('umotifs_'):
-                                            items_to_remove.append(item)
-                                    
-                                    for item in items_to_remove:
-                                        item_path = os.path.join(base_cosmic_dir, item)
-                                        if os.path.exists(item_path):
-                                            try:
-                                                if os.path.isdir(item_path):
-                                                    shutil.rmtree(item_path)
-                                                else:
-                                                    os.remove(item_path)
-                                            except Exception:
-                                                pass
-                                
-                                # Copy updated .out files from optimization subdirectories to cosmic
-                                for basename in context.recalculated_files:
-                                    # For optimization, files are grouped by shortened base name (motif_01_opt -> motif_01/)
-                                    short_name = basename.replace('_opt', '').replace('_calc', '')
-                                    opt_subdir = os.path.join(opt_dir, short_name)
-                                    opt_out_file = os.path.join(opt_subdir, f"{basename}.out")
-                                    
-                                    if os.path.exists(opt_out_file):
-                                        # Copy to cosmic orca directory
-                                        cosmic_out_file = os.path.join(cosmic_orca_dir, f"{basename}.out")
-                                        shutil.copy2(opt_out_file, cosmic_out_file)
-                            else:
-                                print(f"\n  Warning: No orca_out directory found (cosmic_dir={cosmic_dir})")
-                        
                         # Run cosmic; stage header is only shown in verbose mode.
                         if attempt == 0 and context.workflow_verbose_level >= 1:
                             print(f"\n{'-' * 60}")
@@ -13495,9 +13389,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             cosmic_result['threshold_value'] = max_skipped
                             cosmic_result['threshold_met'] = (final_skipped is not None and final_skipped <= max_skipped)
 
-                        # Suppress validation display only when redo was not needed.
-                        if getattr(context, 'cosmic_opt_only', False) and final_attempt == 0:
-                            cosmic_result['opt_only'] = True
+                        # Note: redo is wired up here (max_redos > 0), so threshold validation
+                        # is meaningful and should be shown even in cosmic_opt_only mode. The
+                        # opt_only suppression flag is intentionally NOT set in this branch.
 
                         update_protocol_cache(cosmic_key, 'completed', result=cosmic_result, cache_file=cache_file)
                         if use_cache and cache_file:
@@ -13867,9 +13761,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             cosmic_result['threshold_value'] = max_skipped
                             cosmic_result['threshold_met'] = (final_skipped is not None and final_skipped <= max_skipped)
 
-                        # Suppress validation display only when redo was not needed.
-                        if getattr(context, 'cosmic_opt_only', False) and final_attempt == 0:
-                            cosmic_result['opt_only'] = True
+                        # Note: redo is wired up here (max_redos > 0), so threshold validation
+                        # is meaningful and should be shown even in cosmic_opt_only mode. The
+                        # opt_only suppression flag is intentionally NOT set in this branch.
 
                         update_protocol_cache(cosmic_key, 'completed', result=cosmic_result, cache_file=cache_file)
                         if use_cache and cache_file:
@@ -16588,8 +16482,22 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
                 return 4
             return 9
 
+        # Prefer the explicit canonical leaf folder set by the most recent
+        # optimization/refinement/eref sort step. This avoids count-matching
+        # ambiguity when stale sibling folders exist.
+        explicit_leaf: Optional[str] = None
+        for attr_name in ('eref_cosmic_folder', 'refinement_cosmic_folder', 'optimization_cosmic_folder'):
+            attr_val = getattr(context, attr_name, None)
+            if isinstance(attr_val, str) and attr_val:
+                leaf = os.path.basename(attr_val.rstrip('/'))
+                if leaf in out_candidates:
+                    explicit_leaf = leaf
+                    break
+
         selected_out = out_candidates[0]
-        if len(out_candidates) > 1:
+        if explicit_leaf is not None:
+            selected_out = explicit_leaf
+        elif len(out_candidates) > 1:
             expected_count: Optional[int] = None
             for attr_name in ('eref_completed', 'refinement_completed', 'optimization_completed'):
                 attr_val = getattr(context, attr_name, None)
