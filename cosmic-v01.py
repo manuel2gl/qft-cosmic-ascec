@@ -3966,6 +3966,87 @@ def compute_mojena_threshold(linkage_matrix, verbose=False):
     return mojena_t, mojena_k
 
 
+def compute_knee_threshold(linkage_matrix, verbose=False):
+    """
+    Auto-detect the dendrogram cut height by finding the elbow of the
+    sorted merge-height curve: the point of maximum perpendicular distance
+    to the secant line between the first and last merges, in unit-normalized
+    coordinates (so the x and y axes have comparable scales).
+
+    The cut is placed midway between the elbow merge and the next one, so
+    the elbow merge itself belongs to the within-cluster (flat) regime.
+
+    Returns
+    -------
+    (t_cut, k_resulting, ok, reason, knee_index, h_knee)
+        t_cut, k_resulting : the suggested cut height and resulting k, or None
+        ok : True if all sanity gates passed; callers should use the fallback
+             chain otherwise
+        reason : short human-readable status string
+        knee_index, h_knee : index and height of the elbow merge (for plotting)
+    """
+    from scipy.cluster.hierarchy import fcluster
+    h = np.sort(linkage_matrix[:, 2])
+    n = len(h)
+    if n < 8:
+        return None, None, False, f"too few merges ({n} < 8)", None, None
+    if h[-1] <= 0 or h[-1] / max(h[0], 1e-9) < 5.0:
+        return None, None, False, "no dynamic range in merge heights", None, None
+
+    x_norm = np.arange(n, dtype=float) / (n - 1)
+    y_norm = (h - h.min()) / (h.max() - h.min() + 1e-12)
+    d = np.abs(x_norm - y_norm) / np.sqrt(2.0)
+    k_star = int(np.argmax(d))
+    h_knee = float(h[k_star])
+
+    if k_star >= n - 1:
+        t_cut = 0.5 * (h[-2] + h[-1])
+    else:
+        t_cut = 0.5 * (h[k_star] + h[k_star + 1])
+    t_cut = float(t_cut)
+
+    labels = fcluster(linkage_matrix, t=t_cut, criterion='distance')
+    k_res = len(set(labels))
+    n_samples = n + 1
+    k_cap = max(2, n_samples // 2)
+    if k_res < 2 or k_res > k_cap:
+        return t_cut, k_res, False, f"knee gives unreasonable k={k_res}", k_star, h_knee
+
+    if verbose:
+        print(f"  Knee diagnostic: knee_index={k_star}/{n-1}, "
+              f"h_knee={h_knee:.4f}, t_cut={t_cut:.4f}, k={k_res}")
+    return t_cut, int(k_res), True, "ok", k_star, h_knee
+
+
+def resolve_clustering_threshold(linkage_matrix, user_threshold, verbose=False):
+    """
+    Decide the actual cut height for fcluster().
+
+    user_threshold is the string "auto" (default) or a float. Resolution
+    order: explicit user value -> auto-knee -> Mojena -> legacy t=2.0.
+    Returns (t_cut, k_resulting, source) where source is one of
+    "user", "knee", "mojena", "legacy".
+    """
+    from scipy.cluster.hierarchy import fcluster
+    if user_threshold != "auto":
+        t = float(user_threshold)
+        k = len(set(fcluster(linkage_matrix, t=t, criterion='distance')))
+        return t, k, "user"
+
+    t, k, ok, reason, _, _ = compute_knee_threshold(linkage_matrix, verbose=verbose)
+    if ok:
+        return t, k, "knee"
+    if verbose:
+        print(f"  Knee detection skipped ({reason}); falling back to Mojena.")
+    t_m, k_m = compute_mojena_threshold(linkage_matrix, verbose=verbose)
+    if k_m >= 2:
+        return float(t_m), int(k_m), "mojena"
+    if verbose:
+        print(f"  Mojena unsuitable (k={k_m}); falling back to legacy t=2.0.")
+    k_l = len(set(fcluster(linkage_matrix, t=2.0, criterion='distance')))
+    return 2.0, k_l, "legacy"
+
+
 def plot_annotated_dendrogram(linkage_matrix, optimal_k, cut_height,
                                filename, title_suffix="", conf_labels=None,
                                mojena_threshold=None, mojena_k=None):
@@ -4014,9 +4095,9 @@ def plot_annotated_dendrogram(linkage_matrix, optimal_k, cut_height,
     fig1.savefig(filename, dpi=150)
     plt.close(fig1)
 
-    # --- File 2: Mojena diagnostic plot ---
-    heights = linkage_matrix[:, 2]
-    n_merges = len(heights)
+    # --- File 2: Diagnostic plot (sorted merge heights + knee, applied cut, Mojena) ---
+    heights_sorted = np.sort(linkage_matrix[:, 2])
+    n_merges = len(heights_sorted)
     if n_merges < 3:
         return
 
@@ -4024,22 +4105,26 @@ def plot_annotated_dendrogram(linkage_matrix, optimal_k, cut_height,
 
     fig2, ax2 = plt.subplots(1, 1, figsize=(10, 6))
 
-    # Plot merge heights as a step function (sorted, indexed by merge step)
     merge_indices = np.arange(1, n_merges + 1)
-    ax2.fill_between(merge_indices, 0, heights, alpha=0.15, color='#3498db')
-    ax2.plot(merge_indices, heights, '-', color='#3498db', linewidth=1.2,
+    ax2.fill_between(merge_indices, 0, heights_sorted, alpha=0.15, color='#3498db')
+    ax2.plot(merge_indices, heights_sorted, '-', color='#3498db', linewidth=1.2,
              label='Merge heights')
 
-    # User's threshold line
-    n_above_user = int(np.sum(heights > cut_height))
+    # Applied cut (red dashed) — this is the threshold the run actually used.
+    n_above_cut = int(np.sum(heights_sorted > cut_height))
     ax2.axhline(y=cut_height, color='#e74c3c', linestyle='--', linewidth=2,
-                label=f'Threshold t={cut_height:.2f} (k={n_above_user + 1})')
+                label=f'Applied cut t={cut_height:.2f} (k={n_above_cut + 1})')
 
-    # Mojena's threshold is computed for informational purposes but not drawn on the plot
+    # Mojena reference — listed in the legend for comparison, not drawn on the axes.
+    if mojena_threshold is not None:
+        mojena_label = f'Mojena t={mojena_threshold:.2f}'
+        if mojena_k is not None:
+            mojena_label += f' (k={mojena_k})'
+        ax2.plot([], [], ' ', label=mojena_label)
 
-    # Shade between-cluster region (above user threshold)
-    ax2.fill_between(merge_indices, cut_height, heights,
-                     where=(heights > cut_height),
+    # Shade between-cluster region (above applied cut)
+    ax2.fill_between(merge_indices, cut_height, heights_sorted,
+                     where=(heights_sorted > cut_height),
                      alpha=0.2, color='#e74c3c', label='Between-cluster merges')
 
     ax2.set_xlabel("Merge Step (sorted)")
@@ -4180,7 +4265,7 @@ def apply_composite_energies(dataset, prev_out_dir):
 
 
 # Modified to accept rmsd_threshold and output_base_dir
-def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None, semiweights=False):
+def perform_clustering_and_analysis(input_source, threshold="auto", file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None, semiweights=False):
     """
     Performs hierarchical clustering and comprehensive analysis on molecular structures.
     This is the main analysis function that orchestrates the entire clustering workflow.
@@ -4668,6 +4753,8 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
     # Conditional cosmic threshold display
     if is_compare_mode:
         summary_file_content_lines.append(f"COSMIC threshold (distance): N/A")
+    elif threshold == "auto":
+        summary_file_content_lines.append(f"COSMIC threshold (distance): auto (per-case knee detection)")
     else:
         summary_file_content_lines.append(f"COSMIC threshold (distance): {threshold}")
     
@@ -4803,7 +4890,11 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
             features_scaled = _apply_weights(features_scaled, ordered_feature_names_for_scaling, weights)
 
             linkage_matrix = linkage(features_scaled, method='average', metric='euclidean')
-            initial_cluster_labels = fcluster(linkage_matrix, t=threshold, criterion='distance')
+            effective_t, _k_eff, t_source = resolve_clustering_threshold(
+                linkage_matrix, threshold, verbose=VERBOSE)
+            initial_cluster_labels = fcluster(linkage_matrix, t=effective_t, criterion='distance')
+            vprint(f"Clustering threshold: t={effective_t:.4f} ({t_source}), "
+                   f"k={len(set(initial_cluster_labels))}")
 
             # Build cluster data from fullest tier
             initial_clusters_data = {}
@@ -4816,7 +4907,7 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
                 matched, unmatched = _match_reduced_to_clusters(
                     reduced_tier, fullest_tier, initial_cluster_labels,
                     active_numerical_features_for_group, use_rotational_constants,
-                    weights, threshold, min_std_threshold, abs_tolerances
+                    weights, effective_t, min_std_threshold, abs_tolerances
                 )
                 for label, mols in matched.items():
                     for mol in mols:
@@ -5001,10 +5092,13 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
 
             linkage_matrix = linkage(features_scaled, method='average', metric='euclidean')
 
-            # --- Apply threshold clustering ---
-            initial_cluster_labels = fcluster(linkage_matrix, t=threshold, criterion='distance')
+            # --- Resolve threshold (auto-knee / Mojena / legacy / user) and cluster ---
+            effective_t, _k_eff, t_source = resolve_clustering_threshold(
+                linkage_matrix, threshold, verbose=VERBOSE)
+            initial_cluster_labels = fcluster(linkage_matrix, t=effective_t, criterion='distance')
             _main_optimal_k = len(set(initial_cluster_labels))
-            _main_cut_height = threshold
+            _main_cut_height = effective_t
+            vprint(f"Clustering threshold: t={effective_t:.4f} ({t_source}), k={_main_optimal_k}")
 
             _mojena_t, _mojena_k = compute_mojena_threshold(linkage_matrix, verbose=VERBOSE)
 
@@ -5044,7 +5138,7 @@ def perform_clustering_and_analysis(input_source, threshold=2.0, file_extension_
                 _matched_reduced, _unmatched_reduced = _match_reduced_to_clusters(
                     _reduced_pool, _clustering_pool, initial_cluster_labels,
                     active_numerical_features_for_group, use_rotational_constants,
-                    weights, threshold, min_std_threshold, abs_tolerances
+                    weights, effective_t, min_std_threshold, abs_tolerances
                 )
                 if _matched_reduced:
                     _total_matched = sum(len(v) for v in _matched_reduced.values())
@@ -5657,9 +5751,14 @@ MORE INFORMATION:
   Documentation:  See user manual for theoretical background
   Support:        Química Física Teórica - Universidad de Antioquia
 """)
-    # Clustering threshold (default: 2.0 = 2-sigma rule on Z-standardized UPGMA distances)
-    parser.add_argument("--threshold", "--th", type=float, default=2.0, metavar="FLOAT",
-                        help="UPGMA distance threshold for dendrogram cut (default: 2.0, the 2-sigma rule on Z-standardized features). Use 0.5 for tight, 2.0 for moderate, 3.0-4.0 for loose clustering.")
+    # Clustering threshold: default 'auto' detects the elbow of the merge-height
+    # curve per case; pass a float to override (e.g. 2.0 for legacy 2-sigma rule).
+    parser.add_argument("--threshold", "--th", type=str, default="auto", metavar="FLOAT|auto",
+                        help="UPGMA distance threshold for dendrogram cut. Default 'auto' "
+                             "detects the elbow of the merge-height curve per case "
+                             "(recommended for atomic clusters and van der Waals systems). "
+                             "Pass a float to override: 2.0 for the legacy 2-sigma rule, "
+                             "0.5 for tight, 3.0-4.0 for loose clustering.")
 
     # Geometric validation
     parser.add_argument("--rmsd", type=float, nargs='?', const=1.0, default=None, metavar="FLOAT",
@@ -5716,7 +5815,16 @@ MORE INFORMATION:
     if args.version:
         print_version_banner()
         sys.exit(0)
-    
+
+    # Validate --threshold: accept the sentinel "auto" or a float string.
+    if isinstance(args.threshold, str) and args.threshold.lower() == "auto":
+        args.threshold = "auto"
+    else:
+        try:
+            args.threshold = float(args.threshold)
+        except (TypeError, ValueError):
+            parser.error("--threshold must be 'auto' or a number")
+
     clustering_threshold = args.threshold
     rmsd_validation_threshold = args.rmsd
     output_directory = args.output_dir
