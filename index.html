@@ -1679,6 +1679,13 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
         #advanced-tab .form-row-4,
         #advanced-tab .form-row-5 {
             gap: 12px;
+            align-items: end;
+        }
+
+        @media (max-width: 1250px) {
+            #advanced-tab .form-row-5 {
+                grid-template-columns: repeat(3, 1fr);
+            }
         }
 
         .adv-name-actions {
@@ -2400,8 +2407,11 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <div style="display: flex; gap: 15px; margin-bottom: 6px; align-items: center;">
                             <a href="https://pubchem.ncbi.nlm.nih.gov/" target="_blank" style="color: #3498db; text-decoration: none; font-weight: 500;">🔍 PubChem</a>
                             <a href="https://www.novoprolabs.com/tools/smiles2pdb" target="_blank" style="color: #27ae60; text-decoration: none; font-weight: 500;">🧬 Novoprolabs 3D</a>
-                            <button id="pt-toggle-btn" onclick="togglePeriodicTable()" title="Element fragments"
-                                style="margin-left: auto; background: #5a7fcb; color: white; border: none; border-radius: 5px; width: 28px; height: 28px; padding: 0; font-size: 1.05em; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.15); font-family: 'Segoe UI Symbol', 'Apple Color Emoji', sans-serif;"><span style="display:block;transform:translateY(-1px);">⚛</span></button>
+                            <div style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: #3f5b77; font-weight: 600;">
+                                <span>Periodic Table</span>
+                                <button id="pt-toggle-btn" onclick="togglePeriodicTable()" title="Element fragments"
+                                    style="background: #5a7fcb; color: white; border: none; border-radius: 5px; width: 28px; height: 28px; padding: 0; font-size: 1.05em; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.15); font-family: 'Segoe UI Symbol', 'Apple Color Emoji', sans-serif;"><span style="display:block;transform:translateY(-1px);">⚛</span></button>
+                            </div>
                         </div>
                         <div style="color: #666; font-size: 0.9em;">For complex molecules, download .mol from Novoprolabs and drop it on the preview.</div>
                     </div>
@@ -2528,7 +2538,13 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
 
             <div class="smart-compact-grid">
                 <div class="card">
-                    <h2>Annealing Theory Level</h2>
+                    <div class="card-title-row">
+                        <h2>Annealing Theory Level</h2>
+                        <label class="auto-box-compact">
+                            <input type="checkbox" id="smart-enable-conf-search" onchange="toggleSmartConformationalSearch()">
+                            conformational
+                        </label>
+                    </div>
                     <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
                         <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                             <label>Theory</label>
@@ -2971,7 +2987,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             </div>
 
             <!-- Block 1: Annealing Theory Level -->
-            <div class="settings-block" id="adv-opt-settings-block">
+            <div class="settings-block" id="adv-annealing-settings-block">
                 <div class="card">
                     <h2>Annealing Theory Level</h2>
                     <div class="form-row-3">
@@ -3060,13 +3076,13 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <div class="form-group">
                             <label>Conformational Search</label>
                             <label class="auto-box-compact" style="font-size:0.95em; margin-top:6px;">
-                                <input type="checkbox" id="adv-enable-conf-search" checked onchange="toggleAdvancedConformationalSearch()">
+                                <input type="checkbox" id="adv-enable-conf-search" onchange="toggleAdvancedConformationalSearch()">
                                 enable
                             </label>
                         </div>
                         <div class="form-group">
                             <label>Conformational Sampling (%)</label>
-                            <input type="number" id="conf-sampling" value="30" min="0" max="100" oninput="updatePreview()">
+                            <input type="number" id="conf-sampling" value="0" min="0" max="100" oninput="updatePreview()">
                         </div>
                         <div class="form-group">
                             <label>Maximum Dihedral (deg)</label>
@@ -7568,6 +7584,8 @@ end
             const quenchRoute = document.getElementById('smart-quench-route')?.value;
             const replicas = document.getElementById('smart-replicas')?.value;
             const smartPacking = getSmartPackingValue().toString();
+            const smartConfEnabled = document.getElementById('smart-enable-conf-search')?.checked === true;
+            const smartConfSampling = smartConfEnabled ? '30' : '0';
 
             if (annealingTheory) {
                 const advTheory = document.getElementById('adv-annealing-theory');
@@ -7651,6 +7669,15 @@ end
                 const advReplicas = document.getElementById('adv-replicas');
                 if (advReplicas) advReplicas.value = replicas;
             }
+            const advConfToggle = document.getElementById('adv-enable-conf-search');
+            if (advConfToggle) {
+                advConfToggle.checked = smartConfEnabled;
+            }
+            const advConfSampling = document.getElementById('conf-sampling');
+            if (advConfSampling) {
+                advConfSampling.value = smartConfSampling;
+            }
+            toggleAdvancedConformationalSearch();
             if (smartPacking) {
                 const advPacking = document.getElementById('adv-packing');
                 const advPackingCustom = document.getElementById('adv-packing-custom');
@@ -7957,6 +7984,8 @@ end
             const quenchRoute = document.getElementById('quench-route')?.value;
             const replicas = document.getElementById('adv-replicas')?.value;
             const advPacking = getAdvancedPackingValue().toString();
+            const advConfEnabled = document.getElementById('adv-enable-conf-search')?.checked === true;
+            const advConfSampling = document.getElementById('conf-sampling')?.value || (advConfEnabled ? '30' : '0');
 
             if (annealingTheory) {
                 const smartAnnealingTheory = document.getElementById('smart-annealing-theory');
@@ -8037,6 +8066,10 @@ end
             if (replicas) {
                 const smartReplicas = document.getElementById('smart-replicas');
                 if (smartReplicas) smartReplicas.value = replicas;
+            }
+            const smartConfToggle = document.getElementById('smart-enable-conf-search');
+            if (smartConfToggle) {
+                smartConfToggle.checked = advConfEnabled;
             }
             if (advPacking) {
                 const smartPacking = document.getElementById('smart-packing');
@@ -8303,6 +8336,7 @@ end
             toggleSmartPackingCustom();
             syncAnnealingConcurrentWithReplicas('smart-replicas', 'smart-annealing-concurrent', true);
             syncAnnealingConcurrentWithReplicas('adv-replicas', 'adv-annealing-concurrent', true);
+            toggleSmartConformationalSearch();
             updateSmartAnnealingMethod();
             updateSmartOptMethod();
             updateSmartRefMethod();
@@ -8748,7 +8782,7 @@ end
             if (sampling) {
                 if (!enabled) {
                     sampling.value = '0';
-                } else if (!sampling.value) {
+                } else {
                     sampling.value = '30';
                 }
                 sampling.disabled = !enabled;
@@ -8757,6 +8791,11 @@ end
                 dihedral.disabled = !enabled;
             }
             updatePreview();
+        }
+
+        function toggleSmartConformationalSearch() {
+            syncSmartToAdvanced();
+            updateAllPreviews();
         }
 
         function toggleAdvUsePacking() {
@@ -9043,6 +9082,7 @@ end
             const packing = getAdvancedPackingValue().toString();
             const simMode = document.getElementById('sim-mode')?.value || '1';
             const boxSize = document.getElementById('box-size')?.value || '7.0';
+            const autoBoxEnabled = document.getElementById('adv-use-packing')?.checked !== false;
             const quenchRoute = document.getElementById('quench-route')?.value || '2';
             const qmProgram = document.getElementById('qm-program')?.value || '2';
             const nmo = document.getElementById('adv-nmo')?.value || '0';
@@ -9089,11 +9129,12 @@ end
 
             // Update protocol stages with complete annealing parameters
             const refEnabled = document.getElementById('smart-ref-enabled')?.checked !== false;
+            const rNArgs = [autoBoxEnabled ? `--box${packing}` : '', annConcurrentFlag.trim()].filter(Boolean).join(' ');
             protocolStages = [
                 {
                     type: 'rN',
                     n: parseInt(replicas),
-                    args: `--box${packing}${annConcurrentFlag}`,
+                    args: rNArgs,
                     // Row 1: Simulation Mode & Number of Config
                     simMode: parseInt(simMode),
                     // Row 2: Simulation Cube Length
@@ -10104,7 +10145,7 @@ H   1.981282  0.134064  0.000000`;
             const mcFloor = document.getElementById('mc-floor')?.value || '50';
             const maxDisp = document.getElementById('max-disp')?.value || '1.0';
             const maxRot = document.getElementById('max-rot')?.value || '1.0';
-            const confSampling = document.getElementById('conf-sampling')?.value || '30';
+            const confSampling = document.getElementById('conf-sampling')?.value || '0';
             const maxDihedral = document.getElementById('max-dihedral')?.value || '60';
 
             // Map QM Program value to alias and format
