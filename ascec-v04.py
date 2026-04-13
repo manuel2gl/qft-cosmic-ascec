@@ -3243,11 +3243,15 @@ def calculate_energy(coords: np.ndarray, atomic_numbers: List[int], state: Syste
         # For ORCA, discover and add all auxiliary files to cleanup list AFTER calculation completes
         if state.qm_program == "orca":
             input_basename = f"qm_input_{call_id}"
-            orca_pattern = os.path.join(run_dir, f"{input_basename}*")
-            for orca_file in glob.glob(orca_pattern):
-                # Skip the main input and output files (already in temp_files_to_clean)
-                if orca_file not in temp_files_to_clean and os.path.isfile(orca_file):
-                    temp_files_to_clean.append(orca_file)
+            orca_patterns = [
+                os.path.join(run_dir, f"{input_basename}*"),
+                os.path.join(run_dir, f".{input_basename}*"),
+            ]
+            for orca_pattern in orca_patterns:
+                for orca_file in glob.glob(orca_pattern):
+                    # Skip the main input and output files (already in temp_files_to_clean)
+                    if orca_file not in temp_files_to_clean and os.path.isfile(orca_file):
+                        temp_files_to_clean.append(orca_file)
         
         # Clean up numbered QM files but keep the "anneal.*" versions for debugging
         for fpath in temp_files_to_clean:
