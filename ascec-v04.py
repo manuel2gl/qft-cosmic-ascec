@@ -15994,7 +15994,30 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                 if os.path.exists(launcher_script):
                     with open(launcher_script, 'r') as lf:
                         existing_launcher = lf.read()
-                    launcher_env_setup = existing_launcher.split('###')[0].rstrip() if '###' in existing_launcher else existing_launcher.rstrip()
+                    if '###' in existing_launcher:
+                        launcher_env_setup = existing_launcher.split('###')[0].rstrip()
+                    else:
+                        # No ### separator - extract only the header/env lines (shebang, set, export),
+                        # NOT the actual QM calculation commands.  If we took the whole file the
+                        # batch commands (+ set -e) would be prepended to every individual job
+                        # temp-script, causing all jobs to abort when the first one fails.
+                        _env_lines = []
+                        for _ln in existing_launcher.splitlines():
+                            _s = _ln.strip()
+                            if _s and (
+                                _s.startswith('xtb ') or
+                                _s.startswith('orca ') or
+                                _s.startswith('g16 ') or
+                                _s.startswith('$GAUSS') or
+                                _s.startswith('ASCEC_XTB_RUNTIME') or
+                                ' xtb ' in _s or
+                                ' orca ' in _s
+                            ):
+                                break
+                            _env_lines.append(_ln)
+                        while _env_lines and not _env_lines[-1].strip():
+                            _env_lines.pop()
+                        launcher_env_setup = '\n'.join(_env_lines)
 
                 launcher_inputs: List[str] = []
                 seen_basenames = set()
