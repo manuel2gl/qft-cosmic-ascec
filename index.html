@@ -54,13 +54,12 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             padding: 20px;
         }
 
-        /* Header */
         header {
             background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
             color: white;
             padding: 25px;
-            text-align: center;
             border-radius: var(--border-radius);
+            text-align: center;
             margin-bottom: 20px;
         }
 
@@ -69,7 +68,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             margin-bottom: 8px;
         }
 
-        header p {
+        .subtitle {
             opacity: 0.9;
             font-size: 1em;
         }
@@ -80,8 +79,8 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             gap: 5px;
             margin-bottom: 20px;
             background: var(--card-bg);
-            padding: 8px;
             border-radius: var(--border-radius);
+            padding: 5px;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
         }
 
@@ -90,10 +89,10 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             padding: 15px 25px;
             border: none;
             background: transparent;
-            font-size: 1.1em;
-            font-weight: 600;
             cursor: pointer;
-            border-radius: var(--border-radius);
+            font-size: 1.1em;
+            font-weight: 500;
+            border-radius: 6px;
             transition: all 0.3s;
             color: var(--text-color);
         }
@@ -119,9 +118,9 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
         .card {
             background: var(--card-bg);
             border-radius: var(--border-radius);
-            padding: 20px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
+            padding: 16px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+            margin-bottom: 10px;
         }
 
         .card h2 {
@@ -225,6 +224,94 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             border-radius: 4px;
             font-size: 14px;
             transition: border-color 0.3s;
+        }
+
+        .threshold-stepper {
+            display: grid;
+            grid-template-columns: 1fr 22px;
+            align-items: stretch;
+            width: 100%;
+        }
+
+        .threshold-stepper input {
+            border-top-right-radius: 0;
+            border-bottom-right-radius: 0;
+            border-right: none;
+        }
+
+        .threshold-stepper-arrows {
+            display: grid;
+            grid-template-rows: 1fr 1fr;
+            border: 1px solid #d8dde3;
+            border-left: none;
+            border-top-right-radius: 4px;
+            border-bottom-right-radius: 4px;
+            overflow: hidden;
+            background: #f3f5f7;
+        }
+
+        .threshold-stepper-btn {
+            position: relative;
+            border: none;
+            background: transparent;
+            font-size: 0;
+            line-height: 1;
+            cursor: pointer;
+            color: transparent;
+            padding: 0;
+        }
+
+        .threshold-stepper-btn + .threshold-stepper-btn {
+            border-top: 1px solid #d8dde3;
+        }
+
+        .threshold-stepper-btn::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 0;
+            height: 0;
+            border-left: 3px solid transparent;
+            border-right: 3px solid transparent;
+        }
+
+        .threshold-stepper-btn:first-child::before {
+            border-bottom: 5px solid #8a929c;
+        }
+
+        .threshold-stepper-btn:last-child::before {
+            border-top: 5px solid #8a929c;
+        }
+
+        .threshold-stepper-btn:hover {
+            background: #eaedf1;
+        }
+
+        .threshold-stepper-btn:active {
+            background: #dfe5eb;
+        }
+
+        .threshold-stepper-btn:hover:first-child::before {
+            border-bottom-color: #6f7a86;
+        }
+
+        .threshold-stepper-btn:hover:last-child::before {
+            border-top-color: #6f7a86;
+        }
+
+        .threshold-stepper-btn:disabled {
+            cursor: not-allowed;
+            background: #f3f4f6;
+        }
+
+        .threshold-stepper-btn:disabled:first-child::before {
+            border-bottom-color: #c6ccd3;
+        }
+
+        .threshold-stepper-btn:disabled:last-child::before {
+            border-top-color: #c6ccd3;
         }
 
         input:focus,
@@ -1421,6 +1508,11 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
 
         .mol-preview-card {
             position: relative;
+            padding-bottom: 10px;
+        }
+
+        .smart-center-row > .card {
+            padding-bottom: 10px;
         }
 
         .mol-preview-header {
@@ -1516,14 +1608,14 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
         .smart-center-row {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 20px;
+            gap: 12px;
         }
 
         .smart-compact-grid {
             display: grid;
             grid-template-columns: repeat(3, minmax(260px, 1fr));
-            gap: 16px;
-            margin-bottom: 18px;
+            gap: 12px;
+            margin-bottom: 14px;
             align-items: stretch;
         }
 
@@ -2403,28 +2495,37 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <button class="quick-mol-btn" onclick="basicLoadSmiles('C1CCOC1', 'thf')">THF</button>
                         <button class="quick-mol-btn" onclick="basicLoadSmiles('CCCCCC', 'hexane')">Hexane</button>
                     </div>
-                    <div style="margin-top: 12px; background: #f8f9fa; border-radius: 6px; padding: 10px; font-size: 0.85em;">
-                        <div style="display: flex; gap: 15px; margin-bottom: 6px; align-items: center;">
-                            <a href="https://pubchem.ncbi.nlm.nih.gov/" target="_blank" style="color: #3498db; text-decoration: none; font-weight: 500;">🔍 PubChem</a>
-                            <a href="https://www.novoprolabs.com/tools/smiles2pdb" target="_blank" style="color: #27ae60; text-decoration: none; font-weight: 500;">🧬 Novoprolabs 3D</a>
-                            <div style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: #3f5b77; font-weight: 600;">
+                    <div style="margin-top: 12px; background: #f8f9fa; border-radius: 6px; padding: 12px 14px; font-size: 0.85em;">
+                        <div style="display: flex; gap: 0; align-items: flex-start;">
+                            <!-- Left section -->
+                            <div style="flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                                <div style="display: flex; gap: 15px; align-items: center;">
+                                    <a href="https://pubchem.ncbi.nlm.nih.gov/" target="_blank" style="color: #3498db; text-decoration: none; font-weight: 500;">🔍 PubChem</a>
+                                    <a href="https://www.novoprolabs.com/tools/smiles2pdb" target="_blank" style="color: #27ae60; text-decoration: none; font-weight: 500;">🧬 Novoprolabs 3D</a>
+                                </div>
+                                <div style="color: #666; font-size: 0.9em;">Download .mol from Novoprolabs and drop it on the preview.</div>
+                            </div>
+                            <!-- Vertical separator -->
+                            <div style="flex: 0 0 auto; width: 2px; height: 65px; background: #d0d5dd; margin: 0 20px;"></div>
+                            <!-- Right section: Periodic Table -->
+                            <div style="flex: 0 0 auto; display: flex; align-items: center; gap: 12px; color: #3f5b77; font-weight: 600; white-space: nowrap;">
                                 <span>Periodic Table</span>
                                 <button id="pt-toggle-btn" onclick="togglePeriodicTable()" title="Element fragments"
-                                    style="background: #5a7fcb; color: white; border: none; border-radius: 5px; width: 28px; height: 28px; padding: 0; font-size: 1.05em; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.15); font-family: 'Segoe UI Symbol', 'Apple Color Emoji', sans-serif;"><span style="display:block;transform:translateY(-1px);">⚛</span></button>
+                                    style="background: #5a7fcb; color: white; border: none; border-radius: 5px; width: 42px; height: 42px; padding: 0; font-size: 1.5em; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-weight: 600; box-shadow: 0 2px 6px rgba(0,0,0,0.2); font-family: 'Segoe UI Symbol', 'Apple Color Emoji', sans-serif;"><span style="display:block;transform:translateY(-1px);">⚛</span></button>
                             </div>
                         </div>
-                        <div style="color: #666; font-size: 0.9em;">For complex molecules, download .mol from Novoprolabs and drop it on the preview.</div>
                     </div>
 
                     <!-- Periodic Table Panel (fixed overlay) -->
-                    <div id="periodic-table-panel" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border: 1px solid #ccc; border-radius: 10px; box-shadow: 0 8px 32px rgba(0,0,0,0.25); padding: 34px 18px 18px; z-index: 9999;">
-                        <button onclick="togglePeriodicTable()" title="Close" style="position: absolute; top: 10px; right: 12px; background: none; border: none; cursor: pointer; font-size: 1.4em; line-height: 1; color: #666; padding: 2px 6px; border-radius: 4px;">&times;</button>
+                    <div id="periodic-table-panel" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border: 1px solid #ccc; border-radius: 10px; box-shadow: 0 12px 48px rgba(0,0,0,0.35); padding: 50px 28px 28px; z-index: 9999;">
+                        <h3 style="position: absolute; top: 14px; left: 28px; margin: 0; font-size: 1em; color: #2c3e50; font-weight: 600;">Element Fragments</h3>
+                        <button onclick="togglePeriodicTable()" title="Close" style="position: absolute; top: 12px; right: 14px; background: none; border: none; cursor: pointer; font-size: 1.6em; line-height: 1; color: #999; padding: 2px 6px; border-radius: 4px; transition: color 0.2s;" onmouseover="this.style.color='#333'" onmouseout="this.style.color='#999'">&times;</button>
                         <!-- Main grid -->
-                        <div id="pt-main-grid" style="display: grid; grid-template-columns: repeat(18, 28px); grid-template-rows: repeat(7, 26px); gap: 2px;"></div>
+                        <div id="pt-main-grid" style="display: grid; grid-template-columns: repeat(18, 34px); grid-template-rows: repeat(7, 32px); gap: 3px;"></div>
                         <!-- F-block separator -->
-                        <div style="border-top: 1px dashed #ccc; margin: 6px 0 4px;"></div>
+                        <div style="border-top: 1px dashed #ddd; margin: 8px 0 6px;"></div>
                         <!-- F-block grid (same 18-col width as main) -->
-                        <div id="pt-fblock-grid" style="display: grid; grid-template-columns: repeat(18, 28px); grid-template-rows: repeat(2, 26px); gap: 2px;"></div>
+                        <div id="pt-fblock-grid" style="display: grid; grid-template-columns: repeat(18, 34px); grid-template-rows: repeat(2, 32px); gap: 3px;"></div>
                     </div>
                     <!-- PT backdrop -->
                     <div id="pt-backdrop" onclick="togglePeriodicTable()" style="display: none; position: fixed; inset: 0; z-index: 9998; background: rgba(0,0,0,0.15);"></div>
@@ -2458,7 +2559,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <input type="hidden" id="basic-mol-smiles" value="">
 
                         <!-- Compact Controls Row -->
-                        <div class="inline-group" style="margin-top: 15px; align-items: flex-end; gap: 8px;">
+                        <div class="inline-group" style="margin-top: 18px; align-items: flex-end; gap: 8px;">
                             <input type="number" id="basic-mol-count" value="1" min="1" max="20"
                                 style="height: 38px; width: 56px; text-align: center; flex-shrink: 0;" title="Count">
                             <button id="basic-add-molecule-btn" class="btn btn-success" style="flex: 1.15; min-width: 90px; height: 38px; padding: 0 10px;"
@@ -2838,14 +2939,25 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             same for opt/ref
                         </label>
                     </div>
+                    <datalist id="cosmic-th-options">
+                        <option value="automatic"></option>
+                        <option value="0.5"></option>
+                        <option value="1"></option>
+                        <option value="1.5"></option>
+                        <option value="2"></option>
+                        <option value="2.5"></option>
+                        <option value="3"></option>
+                        <option value="4"></option>
+                        <option value="5"></option>
+                    </datalist>
                     <div class="smart-sim-grid">
                         <div class="form-group" style="margin-bottom:0;">
                             <label id="smart-sim1-th-label">Threshold</label>
-                            <input type="number" id="smart-sim-th" value="2" step="0.5" min="0">
+                            <input type="number" id="smart-sim-th" value="" step="0.5" min="0" placeholder="automatic" onchange="notifyCOSMICThresholdChange('smart-sim-th')" oninput="notifyCOSMICThresholdChange('smart-sim-th')">
                         </div>
                         <div class="form-group" style="margin-bottom:0;">
                             <label id="smart-sim1-rmsd-label">RMSD</label>
-                            <input type="number" id="smart-sim-rmsd-th" value="" step="0.1" min="0" placeholder="off">
+                            <input type="number" id="smart-sim-rmsd-th" value="" step="0.5" min="0" placeholder="off" onchange="notifyCOSMICRMSDChange('smart-sim-rmsd-th')" oninput="notifyCOSMICRMSDChange('smart-sim-rmsd-th')">
                         </div>
                         <div class="form-group" style="margin-bottom:0;">
                             <label id="smart-sim1-j-label">Parallel (-j)</label>
@@ -2855,11 +2967,11 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     <div class="smart-sim-grid">
                         <div class="form-group" style="margin-bottom:0; opacity:0.55;" id="smart-sim2-th-wrap">
                             <label id="smart-sim2-th-label">Threshold</label>
-                            <input type="number" id="smart-sim2-th" value="2" step="0.5" min="0">
+                            <input type="number" id="smart-sim2-th" value="" step="0.5" min="0" placeholder="automatic" onchange="notifyCOSMICThresholdChange('smart-sim2-th')" oninput="notifyCOSMICThresholdChange('smart-sim2-th')">
                         </div>
                         <div class="form-group" style="margin-bottom:0; opacity:0.55;" id="smart-sim2-rmsd-wrap">
                             <label id="smart-sim2-rmsd-label">RMSD</label>
-                            <input type="number" id="smart-sim2-rmsd-th" value="" step="0.1" min="0" placeholder="off">
+                            <input type="number" id="smart-sim2-rmsd-th" value="" step="0.5" min="0" placeholder="off" onchange="notifyCOSMICRMSDChange('smart-sim2-rmsd-th')" oninput="notifyCOSMICRMSDChange('smart-sim2-rmsd-th')">
                         </div>
                         <div class="form-group" style="margin-bottom:0; opacity:0.55;" id="smart-sim2-j-wrap">
                             <label id="smart-sim2-j-label">Parallel (-j)</label>
@@ -2885,7 +2997,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     <span class="pipeline-arrow-small">→</span>
                     <div class="pipeline-step-compact">
                         <span class="pipeline-step-label cosmic">COSMIC 1</span>
-                        <span class="pipeline-step-theory" id="smart-pipe-sim1">th=2</span>
+                        <span class="pipeline-step-theory" id="smart-pipe-sim1">th=auto</span>
                     </div>
                     <span class="pipeline-arrow-small" id="smart-pipe-ref-arrow">→</span>
                     <div class="pipeline-step-compact" id="smart-pipe-ref-step">
@@ -2895,7 +3007,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     <span class="pipeline-arrow-small" id="smart-pipe-sim2-arrow">→</span>
                     <div class="pipeline-step-compact" id="smart-pipe-sim2-step">
                         <span class="pipeline-step-label cosmic">COSMIC 2</span>
-                        <span class="pipeline-step-theory" id="smart-pipe-sim2">th=2</span>
+                        <span class="pipeline-step-theory" id="smart-pipe-sim2">th=auto</span>
                     </div>
                     <span class="pipeline-arrow-small" id="smart-pipe-eref-arrow" style="display:none;">→</span>
                     <div class="pipeline-step-compact" id="smart-pipe-eref-step" style="display:none;">
@@ -2943,7 +3055,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     <span class="pipeline-arrow-small">→</span>
                     <div class="pipeline-step-compact">
                         <span class="pipeline-step-label cosmic">COSMIC 1</span>
-                        <span class="pipeline-step-theory" id="pipe-sim1-theory">th=2</span>
+                        <span class="pipeline-step-theory" id="pipe-sim1-theory">th=auto</span>
                     </div>
                     <span class="pipeline-arrow-small" id="adv-pipe-ref-arrow">→</span>
                     <div class="pipeline-step-compact" id="adv-pipe-ref-step">
@@ -2953,7 +3065,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     <span class="pipeline-arrow-small" id="adv-pipe-sim2-arrow">→</span>
                     <div class="pipeline-step-compact" id="adv-pipe-sim2-step">
                         <span class="pipeline-step-label cosmic">COSMIC 2</span>
-                        <span class="pipeline-step-theory" id="pipe-sim2-theory">th=2</span>
+                        <span class="pipeline-step-theory" id="pipe-sim2-theory">th=auto</span>
                     </div>
                     <span class="pipeline-arrow-small" id="adv-pipe-eref-arrow" style="display:none;">→</span>
                     <div class="pipeline-step-compact" id="adv-pipe-eref-step" style="display:none;">
@@ -3544,7 +3656,13 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     <div class="form-row-4">
                         <div class="form-group">
                             <label>Threshold</label>
-                            <input type="number" id="adv-sim1-th" value="2" min="0" step="0.1" oninput="updateAllPreviews()">
+                            <div class="threshold-stepper">
+                                <input type="text" id="adv-sim1-th" value="automatic" list="cosmic-th-options" placeholder="automatic" onchange="notifyCOSMICThresholdChange('adv-sim1-th')" oninput="updateAllPreviews()">
+                                <div class="threshold-stepper-arrows">
+                                    <button type="button" class="threshold-stepper-btn" onclick="stepCOSMICThreshold('adv-sim1-th', 1)" aria-label="Increase threshold">▲</button>
+                                    <button type="button" class="threshold-stepper-btn" onclick="stepCOSMICThreshold('adv-sim1-th', -1)" aria-label="Decrease threshold">▼</button>
+                                </div>
+                            </div>
                         </div>
                         <div class="form-group">
                             <label>Procs (-j)</label>
@@ -3564,7 +3682,13 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <div class="form-row-4">
                             <div class="form-group">
                                 <label>Threshold</label>
-                                <input type="number" id="adv-sim2-th" value="2" min="0" step="0.1" oninput="updateAllPreviews()">
+                                <div class="threshold-stepper">
+                                    <input type="text" id="adv-sim2-th" value="automatic" list="cosmic-th-options" placeholder="automatic" onchange="notifyCOSMICThresholdChange('adv-sim2-th')" oninput="updateAllPreviews()">
+                                    <div class="threshold-stepper-arrows">
+                                        <button type="button" class="threshold-stepper-btn" onclick="stepCOSMICThreshold('adv-sim2-th', 1)" aria-label="Increase threshold">▲</button>
+                                        <button type="button" class="threshold-stepper-btn" onclick="stepCOSMICThreshold('adv-sim2-th', -1)" aria-label="Decrease threshold">▼</button>
+                                    </div>
+                                </div>
                             </div>
                             <div class="form-group">
                                 <label>Procs (-j)</label>
@@ -4142,6 +4266,12 @@ H  -0.757000  0.586000  0.000000"></textarea>
             initSmartMode();
             updateAllPreviews();
             toggleDifferentSimSettings();
+            notifyCOSMICThresholdChange('smart-sim-th');
+            notifyCOSMICThresholdChange('smart-sim2-th');
+            notifyCOSMICRMSDChange('smart-sim-rmsd-th');
+            notifyCOSMICRMSDChange('smart-sim2-rmsd-th');
+            notifyCOSMICRMSDChange('adv-sim1-rmsd');
+            notifyCOSMICRMSDChange('adv-sim2-rmsd');
             toggleAdvUsePacking();
             toggleAdvAutoNmo();
             updateSimModeUI();
@@ -6794,7 +6924,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             };
 
             if (same) {
-                sim2Th.value = sim1Th?.value || '2';
+                sim2Th.value = sim1Th?.value || '';
                 sim2Rmsd.value = sim1Rmsd?.value || '';
                 sim2J.value = sim1J?.value || '4';
             }
@@ -6802,6 +6932,9 @@ H  -0.757000  0.586000  0.000000"></textarea>
             sim2Th.disabled = same;
             sim2Rmsd.disabled = same;
             sim2J.disabled = same;
+            sim2Th.closest('.threshold-stepper')
+                ?.querySelectorAll('.threshold-stepper-btn')
+                .forEach(btn => { btn.disabled = same; });
 
             wrappers.forEach(id => {
                 const el = document.getElementById(id);
@@ -7475,7 +7608,7 @@ end
             const optMethod = document.getElementById('smart-opt-method')?.value || 'GFN2-xTB';
             const refMethod = document.getElementById('smart-ref-method')?.value || 'B97-3c';
             const sameCOSMIC = document.getElementById('smart-sim-same')?.checked !== false;
-            const simThreshold = document.getElementById('smart-sim-th')?.value || '2';
+            const simThreshold = document.getElementById('smart-sim-th')?.value || 'automatic';
             const sim2Threshold = sameCOSMIC ? simThreshold : (document.getElementById('smart-sim2-th')?.value || simThreshold);
             const displayAnnealing = formatAnnealingDisplayMethod(annealingMethod);
 
@@ -7485,12 +7618,14 @@ end
             const pipeRef = document.getElementById('smart-pipe-ref');
             const pipeSim1 = document.getElementById('smart-pipe-sim1');
             const pipeSim2 = document.getElementById('smart-pipe-sim2');
+            const simThresholdDisplay = formatCOSMICThresholdDisplay(simThreshold);
+            const sim2ThresholdDisplay = formatCOSMICThresholdDisplay(sim2Threshold);
 
             if (pipeAnnealing) pipeAnnealing.textContent = displayAnnealing;
             if (pipeOpt) pipeOpt.textContent = optMethod;
             if (pipeRef) pipeRef.textContent = refMethod;
-            if (pipeSim1) pipeSim1.textContent = `th=${simThreshold}`;
-            if (pipeSim2) pipeSim2.textContent = `th=${sim2Threshold}`;
+            if (pipeSim1) pipeSim1.textContent = `th=${simThresholdDisplay}`;
+            if (pipeSim2) pipeSim2.textContent = `th=${sim2ThresholdDisplay}`;
 
             // Refinement pipeline steps (optional, on by default)
             const refEnabled = document.getElementById('smart-ref-enabled')?.checked !== false;
@@ -7849,11 +7984,11 @@ end
             applyAdvancedRefRescueDefaults();
 
             // COSMIC settings
-            const simThreshold = document.getElementById('smart-sim-th')?.value;
+            const simThreshold = document.getElementById('smart-sim-th')?.value ?? '';
             const simJobs = document.getElementById('smart-sim-j')?.value;
             const simRmsd = document.getElementById('smart-sim-rmsd-th')?.value;
             const sameCOSMIC = document.getElementById('smart-sim-same')?.checked !== false;
-            const sim2Threshold = sameCOSMIC ? simThreshold : (document.getElementById('smart-sim2-th')?.value || simThreshold);
+            const sim2Threshold = sameCOSMIC ? simThreshold : (document.getElementById('smart-sim2-th')?.value ?? simThreshold);
             const sim2Jobs = sameCOSMIC ? simJobs : (document.getElementById('smart-sim2-j')?.value || simJobs);
             const sim2Rmsd = sameCOSMIC ? simRmsd : (document.getElementById('smart-sim2-rmsd-th')?.value || '');
             // Recovery mode is advanced-only; read defaults from advanced controls
@@ -7867,13 +8002,11 @@ end
                 toggleDifferentSimSettings();
             }
 
-            if (simThreshold) {
-                // Sync to both cosmic stages in advanced mode
-                const advSim1Th = document.getElementById('adv-sim1-th');
-                const advSim2Th = document.getElementById('adv-sim2-th');
-                if (advSim1Th) advSim1Th.value = simThreshold;
-                if (advSim2Th) advSim2Th.value = sim2Threshold;
-            }
+            // Sync to both cosmic stages in advanced mode
+            const advSim1Th = document.getElementById('adv-sim1-th');
+            const advSim2Th = document.getElementById('adv-sim2-th');
+            if (advSim1Th) advSim1Th.value = simThreshold;
+            if (advSim2Th) advSim2Th.value = sim2Threshold;
             if (simJobs) {
                 const advSim1J = document.getElementById('adv-sim1-j');
                 const advSim2J = document.getElementById('adv-sim2-j');
@@ -8994,7 +9127,7 @@ end
             const annealingMethod = getMethodValue('adv-annealing');
             const optMethod = getMethodValue('adv-opt');
             const refMethod = getMethodValue('adv-ref');
-            const sim1Th = document.getElementById('adv-sim1-th')?.value || '2';
+            const sim1Th = document.getElementById('adv-sim1-th')?.value || 'automatic';
             const sim2Th = document.getElementById('adv-sim2-th')?.value || sim1Th;
 
             const pipeAnnealing = document.getElementById('pipe-annealing-theory');
@@ -9002,12 +9135,14 @@ end
             const pipeSim1 = document.getElementById('pipe-sim1-theory');
             const pipeRef = document.getElementById('pipe-ref-theory');
             const pipeSim2 = document.getElementById('pipe-sim2-theory');
+            const sim1Display = formatCOSMICThresholdDisplay(sim1Th);
+            const sim2Display = formatCOSMICThresholdDisplay(sim2Th);
 
             if (pipeAnnealing) pipeAnnealing.textContent = formatAnnealingDisplayMethod(annealingMethod);
             if (pipeOpt) pipeOpt.textContent = optMethod.replace('-xTB', '').replace('Native-', '');
-            if (pipeSim1) pipeSim1.textContent = `th=${sim1Th}`;
+            if (pipeSim1) pipeSim1.textContent = `th=${sim1Display}`;
             if (pipeRef) pipeRef.textContent = refMethod;
-            if (pipeSim2) pipeSim2.textContent = `th=${sim2Th}`;
+            if (pipeSim2) pipeSim2.textContent = `th=${sim2Display}`;
 
             // Refinement steps (optional, on by default)
             const refEnabled = document.getElementById('smart-ref-enabled')?.checked !== false;
@@ -9034,7 +9169,7 @@ end
             if (apm) apm.textContent = erefMethod;
             if (as3a) as3a.style.display = erefEnabled ? '' : 'none';
             if (as3s) as3s.style.display = erefEnabled ? '' : 'none';
-            if (as3m) as3m.textContent = `th=${sim2Th}`;
+            if (as3m) as3m.textContent = `th=${sim2Display}`;
 
             updateSamplingPresetUI();
         }
@@ -9087,14 +9222,16 @@ end
             const qmProgram = document.getElementById('qm-program')?.value || '2';
             const nmo = document.getElementById('adv-nmo')?.value || '0';
             
-            const sim1Th = document.getElementById('adv-sim1-th')?.value || '2';
+            const sim1Th = normalizeCOSMICThresholdValue(document.getElementById('adv-sim1-th')?.value);
             const sim1J = document.getElementById('adv-sim1-j')?.value || '4';
             const sim1Rmsd = document.getElementById('adv-sim1-rmsd')?.value || '';
             const sim1Extra = document.getElementById('adv-sim1-extra')?.value || '';
             const advancedCOSMICFlags = buildAdvancedCOSMICFlags();
             
             const sameSettings = document.getElementById('adv-sim-same')?.checked !== false;
-            const sim2Th = !sameSettings ? (document.getElementById('adv-sim2-th')?.value || '2') : sim1Th;
+            const sim2Th = !sameSettings
+                ? normalizeCOSMICThresholdValue(document.getElementById('adv-sim2-th')?.value)
+                : sim1Th;
             const sim2J = !sameSettings ? (document.getElementById('adv-sim2-j')?.value || '4') : sim1J;
             const sim2Rmsd = !sameSettings ? (document.getElementById('adv-sim2-rmsd')?.value || '') : sim1Rmsd;
             const sim2Extra = !sameSettings ? (document.getElementById('adv-sim2-extra')?.value || '') : sim1Extra;
@@ -9108,13 +9245,15 @@ end
             // applied to sim1.  The post-ref and post-eref cosmic stages run on
             // DFT / higher-level output, so strip --semiweights from sim2Extra in
             // case "Same settings" is enabled and it inherited sim1's Extra Flags.
-            let sim1Args = `--th=${sim1Th} -j${sim1J}`;
+            let sim1Args = `-j${sim1J}`;
+            if (sim1Th !== '') sim1Args = `--th=${sim1Th} ${sim1Args}`;
             if (sim1Rmsd !== '') sim1Args += ` --rmsd=${sim1Rmsd}`;
             if (advancedCOSMICFlags) sim1Args += ` ${advancedCOSMICFlags}`;
             if (sim1Extra) sim1Args += ' ' + sim1Extra;
 
             const sim2ExtraClean = (sim2Extra || '').replace(/\s*--semiweights\b/g, '').trim();
-            let sim2Args = `--th=${sim2Th} -j${sim2J}`;
+            let sim2Args = `-j${sim2J}`;
+            if (sim2Th !== '') sim2Args = `--th=${sim2Th} ${sim2Args}`;
             if (sim2Rmsd !== '') sim2Args += ` --rmsd=${sim2Rmsd}`;
             if (advancedCOSMICFlags) sim2Args += ` ${advancedCOSMICFlags}`;
             if (sim2ExtraClean) sim2Args += ' ' + sim2ExtraClean;
@@ -9302,9 +9441,9 @@ end
             protocolStages = [
                 { type: 'rN', n: 3, args: '--box10' },
                 { type: 'opt', args: '--concurrent=4 input1' },
-                { type: 'cosmic', args: '--th=2' },
+                { type: 'cosmic', args: '' },
                 { type: 'ref', args: 'input2' },
-                { type: 'cosmic', args: '--th=2' }
+                { type: 'cosmic', args: '' }
             ];
             rebuildProtocolStages();
             updateProtocolPreview();
@@ -9318,7 +9457,7 @@ end
         function getDefaultArgsForNewStage(type) {
             if (type === 'rN') return '--box10';
             if (type === 'opt') return 'input1';
-            if (type === 'cosmic') return '--th=2';
+            if (type === 'cosmic') return '';
             if (type === 'ref') {
                 const refCount = countStageType('ref');
                 return `input${refCount + 2}`;  // 1st ref → input2, 2nd → input3, ...
@@ -9330,7 +9469,7 @@ end
             // After the default 5 stages, add a ref + cosmic pair
             const refArgs = getDefaultArgsForNewStage('ref');
             protocolStages.push({ type: 'ref', args: refArgs });
-            protocolStages.push({ type: 'cosmic', args: '--th=2' });
+            protocolStages.push({ type: 'cosmic', args: '' });
             rebuildProtocolStages();
             updateProtocolPreview();
         }
@@ -9338,9 +9477,111 @@ end
         function getDefaultArgs(type) {
             if (type === 'rN') return '--box10';
             if (type === 'opt') return 'input1';
-            if (type === 'cosmic') return '--th=2';
+            if (type === 'cosmic') return '';
             if (type === 'ref') return 'input2';
             return '';
+        }
+
+        function normalizeCOSMICThresholdValue(raw) {
+            const value = (raw || '').trim();
+            if (value === '' || /^auto(matic)?$/i.test(value)) return '';
+            const parsed = Number(value);
+            if (!Number.isFinite(parsed) || parsed <= 0) return '';
+            return String(parsed);
+        }
+
+        function normalizeCOSMICThresholdInput(raw) {
+            const value = (raw || '').trim();
+            if (value === '' || /^auto(matic)?$/i.test(value)) return 'automatic';
+            const parsed = Number(value);
+            if (!Number.isFinite(parsed) || parsed <= 0) return 'automatic';
+            return String(parsed);
+        }
+
+        function stepCOSMICThreshold(fieldId, direction) {
+            const input = document.getElementById(fieldId);
+            if (!input || input.disabled) return;
+            const sequence = ['automatic', '0.5', '1', '1.5', '2', '2.5', '3', '4', '5'];
+            const current = normalizeCOSMICThresholdInput(input.value);
+            const index = Math.max(0, sequence.indexOf(current));
+            const len = sequence.length;
+            const nextIndex = (index + (direction > 0 ? 1 : -1) + len) % len;
+            input.value = sequence[nextIndex];
+            notifyCOSMICThresholdChange(fieldId);
+        }
+
+        function notifyCOSMICThresholdChange(fieldId) {
+            const input = document.getElementById(fieldId);
+            if (!input) return;
+            const normalized = normalizeCOSMICThresholdInput(input.value);
+            input.value = input.type === 'number' && normalized === 'automatic'
+                ? ''
+                : normalized;
+
+            if (fieldId.startsWith('smart-')) {
+                const same = document.getElementById('smart-sim-same')?.checked !== false;
+                if (fieldId === 'smart-sim-th' && same) {
+                    const sim2 = document.getElementById('smart-sim2-th');
+                    if (sim2) sim2.value = input.value;
+                    toggleSmartCOSMICMode();
+                    return;
+                }
+                updateSmartPipeline();
+                buildProtocolFromSettings();
+                syncSmartToAdvanced();
+                return;
+            }
+
+            if (fieldId.startsWith('adv-')) {
+                const same = document.getElementById('adv-sim-same')?.checked !== false;
+                if (fieldId === 'adv-sim1-th' && same) {
+                    const sim2 = document.getElementById('adv-sim2-th');
+                    if (sim2) sim2.value = input.value;
+                }
+                updateAllPreviews();
+            }
+        }
+
+        function normalizeCOSMICRMSDInput(raw) {
+            const value = (raw || '').trim();
+            if (value === '' || /^off$/i.test(value)) return '';
+            const parsed = Number(value);
+            if (!Number.isFinite(parsed) || parsed <= 0) return '';
+            return String(parsed);
+        }
+
+        function notifyCOSMICRMSDChange(fieldId) {
+            const input = document.getElementById(fieldId);
+            if (!input) return;
+            input.value = normalizeCOSMICRMSDInput(input.value);
+
+            if (fieldId.startsWith('smart-')) {
+                const same = document.getElementById('smart-sim-same')?.checked !== false;
+                if (fieldId === 'smart-sim-rmsd-th' && same) {
+                    const sim2 = document.getElementById('smart-sim2-rmsd-th');
+                    if (sim2) sim2.value = input.value;
+                    toggleSmartCOSMICMode();
+                    return;
+                }
+                updateSmartPipeline();
+                buildProtocolFromSettings();
+                syncSmartToAdvanced();
+                return;
+            }
+
+            if (fieldId.startsWith('adv-')) {
+                const same = document.getElementById('adv-sim-same')?.checked !== false;
+                if (fieldId === 'adv-sim1-rmsd' && same) {
+                    const sim2 = document.getElementById('adv-sim2-rmsd');
+                    if (sim2) sim2.value = input.value;
+                }
+                updateAllPreviews();
+            }
+        }
+
+        function formatCOSMICThresholdDisplay(raw) {
+            const normalized = normalizeCOSMICThresholdValue(raw);
+            return normalized === '' ? 'auto' : normalized;
         }
 
         function updateStageType(idx, value) {
