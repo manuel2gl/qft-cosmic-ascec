@@ -2622,10 +2622,13 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
             f.write("└" + "─" * 73 + "┘\n\n")
             
             # Timing info
+            all_stages = cache.get('stages', {})
+            _any_in_progress = any(v.get('status') == 'in_progress' for v in all_stages.values())
             if 'start_time_str' in cache:
                 f.write(f"  Started:    {cache['start_time_str']}\n")
             if 'last_update' in cache:
-                f.write(f"  Completed:  {cache['last_update']}\n")
+                _upd_label = "Updated:   " if _any_in_progress else "Completed: "
+                f.write(f"  {_upd_label} {cache['last_update']}\n")
             
             total_wall_time = 0
             if 'start_time' in cache:
@@ -2634,23 +2637,26 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
             
             f.write("\n")
             
-            # Workflow diagram
+            # Workflow diagram (completed + current in-progress stage)
             if 'stages' in cache:
-                sorted_stages = sorted(cache['stages'].items(), 
+                sorted_stages = sorted(cache['stages'].items(),
                                      key=lambda x: _stage_sort_key(x[0]))
-                
-                completed_stages = []
+
+                _wf_type_map = {'Replication': 'annealing', 'Calculation': 'geometry_optimization',
+                                'Cosmic': 'cosmic', 'COSMIC': 'cosmic', 'Optimization': 'geometry_optimization',
+                                'Refinement': 'geometry_refinement',
+                                'Energy_refinement': 'energy_refinement'}
+                workflow_parts = []
                 for stage_key, stage_info in sorted_stages:
-                    if stage_info.get('status') == 'completed':
-                        stage_type = _stage_type_name(stage_key)
-                        type_map = {'Replication': 'annealing', 'Calculation': 'geometry_optimization',
-                                  'cosmic': 'cosmic', 'COSMIC': 'cosmic', 'Optimization': 'geometry_optimization',
-                                  'Refinement': 'geometry_refinement',
-                                  'Energy_refinement': 'energy_refinement'}
-                        stage_name = type_map.get(stage_type, stage_type)
-                        completed_stages.append(stage_name)
-                
-                f.write(f"  Workflow:   {' → '.join(completed_stages)}\n\n")
+                    stage_type = _stage_type_name(stage_key)
+                    stage_name = _wf_type_map.get(stage_type, stage_type.lower())
+                    _st = stage_info.get('status')
+                    if _st == 'completed':
+                        workflow_parts.append(stage_name)
+                    elif _st == 'in_progress':
+                        workflow_parts.append(f"{stage_name} (running...)")
+
+                f.write(f"  Workflow:   {' → '.join(workflow_parts)}\n\n")
             
             # ══════════════════════════════════════════════════════════════════════
             # TIMING BREAKDOWN
@@ -2730,24 +2736,34 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                                      key=lambda x: _stage_sort_key(x[0]))
                 
                 step_num = 1
-                total_stages = cache.get('total_stages', len([s for s in sorted_stages if s[1].get('status') == 'completed']))
-                
+                total_stages = cache.get('total_stages', len([s for s in sorted_stages if s[1].get('status') in ('completed', 'in_progress')]))
+
                 for stage_key, stage_info in sorted_stages:
                     status = stage_info.get('status', 'unknown')
-                    
-                    if status != 'completed':
+
+                    if status not in ('completed', 'in_progress'):
                         continue
-                    
+
                     stage_type = _stage_type_name(stage_key)
                     type_map = {'Replication': 'Annealing', 'Calculation': 'Optimization',
                               'Cosmic': 'cosmic', 'Optimization': 'Optimization',
                               'Refinement': 'Refinement',
                               'Energy_refinement': 'Energy Refinement'}
                     stage_name = type_map.get(stage_type, stage_type)
-                    
+
                     result = stage_info.get('result', {})
                     wall_time = stage_info.get('wall_time')
-                    
+
+                    # For in-progress stages: show elapsed time and skip detailed result block
+                    if status == 'in_progress':
+                        elapsed = time.time() - stage_info.get('start_time', time.time())
+                        f.write(f"  [{step_num}/{total_stages}] {stage_name} ⟳ (running)\n")
+                        f.write(f"  {'─' * 40}\n")
+                        f.write(f"    Elapsed:          {format_duration(elapsed)}\n")
+                        f.write("\n")
+                        step_num += 1
+                        continue
+
                     # Stage header with status indicator
                     status_icon = "✓"
                     f.write(f"  [{step_num}/{total_stages}] {stage_name} {status_icon}\n")
@@ -2926,10 +2942,13 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
             # FOOTER
             # ══════════════════════════════════════════════════════════════════════
             f.write("=" * 75 + "\n")
-            f.write(center_text("Workflow completed successfully") + "\n")
+            _footer_msg = "Workflow in progress..." if _any_in_progress else "Workflow completed successfully"
+            f.write(center_text(_footer_msg) + "\n")
             f.write("=" * 75 + "\n")
-        
-        print(f"✓ Protocol summary saved to {output_file}")
+
+        # Only print confirmation message when the workflow is fully done (avoid noise during run)
+        if not _any_in_progress:
+            print(f"✓ Protocol summary saved to {output_file}")
         
     except Exception as e:
         print(f"Warning: Failed to generate protocol summary: {e}")
@@ -12577,11 +12596,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         else:
             context.update_progress("")
         
-        # Update cache - mark stage as in progress
+        # Update cache - mark stage as in progress and snapshot summary so the
+        # protocol_summary.txt reflects the new stage immediately.
         if use_cache:
             stage_key = f"{stage_type}_{stage_num}"
             context.current_stage_key = stage_key  # Store for use in stage execution
             update_protocol_cache(stage_key, 'in_progress', cache_file=cache_file)
+            if cache_file:
+                generate_protocol_summary(cache_file=cache_file)
         
         try:
             if stage_type == 'replication':
@@ -12982,12 +13004,25 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 else:
                     # Standalone optimization without cosmic
                     result = execute_optimization_stage(context, stage)
-                    
+
+                    if result == 0 and use_cache:
+                        opt_result: Dict[str, Any] = {}
+                        if hasattr(context, 'optimization_completed'):
+                            opt_result['completed'] = context.optimization_completed
+                        if hasattr(context, 'optimization_total'):
+                            opt_result['total'] = context.optimization_total
+                        if hasattr(context, 'optimization_total_cpu_time'):
+                            opt_result['total_cpu_time'] = context.optimization_total_cpu_time
+                        update_protocol_cache(stage_key, 'completed',
+                                              result=opt_result, cache_file=cache_file)
+                        if cache_file:
+                            generate_protocol_summary(cache_file=cache_file)
+
                     # Check if workflow should pause after this stage
                     if result == 0:
                         if not check_workflow_pause(stage, stage_num, len(stages), cache_file, use_cache):
                             return 0  # Paused successfully
-                    
+
                     stage_idx += 1
                     completed_stage_count = stage_num
                     context.completed_stage_count = completed_stage_count
@@ -18351,8 +18386,8 @@ def show_ascec_status() -> None:
 
     def _attach_view(job: dict) -> None:
         prog_file = job['progress_file']
-        last_mtime = 0.0
         last_data: Dict[str, Any] = {}
+        last_render_key: Optional[tuple] = None  # (pct, stage_lines_tuple, updated)
 
         # Try to set up raw terminal input so single-keypress 'D' works
         _old_settings = None
@@ -18368,6 +18403,19 @@ def show_ascec_status() -> None:
         except (ImportError, OSError):
             _has_raw = False
 
+        def _show_connecting() -> None:
+            os.system('clear')
+            print("")
+            print("=== COSMIC ASCEC ===")
+            print("-" * 60)
+            print(f"Connecting to job {job['id']} ({os.path.basename(job['input_file'])})...")
+            print("-" * 60)
+            print("  Waiting for progress data — job may still be initializing.")
+            print("")
+            print("D or Ctrl+C to detach (job keeps running)")
+
+        _connecting_shown = False
+
         try:
             while True:
                 if not _is_pid_alive(job['pid']):
@@ -18375,27 +18423,40 @@ def show_ascec_status() -> None:
                     print(f"\n  Job {job['id']} has finished.")
                     input("  Press Enter to return to menu...")
                     return
+
+                # Always attempt to read the file; compare content to avoid redundant redraws.
+                # This avoids the mtime-stuck bug where last_mtime is set before a successful
+                # json.load, causing the viewer to miss updates when the file is briefly empty
+                # during truncate+write (especially on filesystems with coarse mtime resolution).
                 try:
-                    mtime = os.stat(prog_file).st_mtime
-                    if mtime != last_mtime:
-                        last_mtime = mtime
-                        with open(prog_file) as f:
-                            last_data = json.load(f)
+                    with open(prog_file) as _pf:
+                        new_data = json.load(_pf)
+                    render_key = (
+                        new_data.get('pct'),
+                        tuple(new_data.get('stage_lines', [])),
+                        new_data.get('updated'),
+                    )
+                    if render_key != last_render_key:
+                        last_data = new_data
+                        last_render_key = render_key
+                        _connecting_shown = False
                         _show_progress_screen(job, last_data)
                 except (FileNotFoundError, json.JSONDecodeError, OSError):
-                    pass
+                    if not _connecting_shown:
+                        _show_connecting()
+                        _connecting_shown = True
 
                 # Non-blocking check for 'D' keypress
                 if _has_raw and _select is not None:
                     try:
-                        if _select.select([sys.stdin], [], [], 0.15)[0]:
+                        if _select.select([sys.stdin], [], [], 0.5)[0]:
                             ch = sys.stdin.read(1)
                             if ch in ('', '\x04') or ch.lower() == 'd':
                                 raise KeyboardInterrupt
                     except (IOError, OSError):
-                        time.sleep(0.15)
+                        time.sleep(0.5)
                 else:
-                    time.sleep(0.15)
+                    time.sleep(0.5)
         except KeyboardInterrupt:
             pass
         finally:
@@ -19192,8 +19253,17 @@ def main_ascec_integrated():
             print("   or: ascec04 input.asc then r3 then opt template.inp launcher.sh then cosmic --th=2")
             sys.exit(1)
         
-        # Execute workflow
-        result = execute_workflow_stages(input_file, stages)
+        # Execute workflow with caching/registration enabled so 'ascec status' can track it
+        result = 1
+        try:
+            result = execute_workflow_stages(input_file, stages, use_cache=True)
+        except KeyboardInterrupt:
+            result = 130
+        finally:
+            _pf = os.path.join(os.getcwd(), ".ascec_progress.json")
+            for _p in (_pf, _pf + ".tmp"):
+                try: os.remove(_p)
+                except OSError: pass
         os._exit(result)
     
     # STANDARD SINGLE-COMMAND MODE (backward compatibility)
