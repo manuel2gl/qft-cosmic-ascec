@@ -11365,7 +11365,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
                 if motifs_created is not None:
                     if inputs_count is not None and inputs_count > 0:
-                        stage_line = f"[{idx}/{total}] {stage_name} ({inputs_count}/{motifs_created}) ✓"
+                        stage_line = f"[{idx}/{total}] {stage_name} ({inputs_count}→{motifs_created}) ✓"
                     else:
                         stage_line = f"[{idx}/{total}] {stage_name} ({motifs_created}) ✓"
                 else:
@@ -12420,7 +12420,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             stage_total = m_val + u_val
                     if stage_total is not None and stage_total > 0:
                         if stage_inputs is not None and stage_inputs > 0:
-                            line += f" ({stage_inputs}/{stage_total})"
+                            line += f" ({stage_inputs}→{stage_total})"
                         else:
                             line += f" ({stage_total})"
                 stage_lines.append(line)
@@ -18363,10 +18363,86 @@ def show_ascec_status() -> None:
         print(f"{'─'*sep_w}")
 
     def _show_progress_screen(job: dict, data: dict) -> None:
+        def _hydrate_live_stage_lines(_job: dict, _data: dict) -> Tuple[List[str], Optional[float]]:
+            """Hydrate active stage n/N from protocol cache when available."""
+            lines_in = list(_data.get('stage_lines', []))
+            try:
+                cache_file = str(_job.get('cache_file') or '').strip()
+                if not cache_file or not os.path.exists(cache_file):
+                    return lines_in, None
+
+                cache = load_protocol_cache(cache_file)
+                if not isinstance(cache, dict):
+                    return lines_in, None
+
+                stages_data = cache.get('stages', {})
+                if not isinstance(stages_data, dict):
+                    return lines_in, None
+
+                stage_num = int(_data.get('current_stage_num', 0) or 0)
+                stages_total = int(_data.get('stages_total', 0) or 0)
+                completed_stages = int(_data.get('stages_completed', 0) or 0)
+                if stage_num <= 0 or stages_total <= 0:
+                    return lines_in, None
+
+                stage_key = None
+                stage_info = None
+                for k, v in stages_data.items():
+                    if isinstance(k, str) and k.endswith(f"_{stage_num}"):
+                        stage_key = k
+                        stage_info = v if isinstance(v, dict) else None
+                        break
+                if not stage_key or not isinstance(stage_info, dict):
+                    return lines_in, None
+                if stage_info.get('status') != 'in_progress':
+                    return lines_in, None
+
+                result = stage_info.get('result', {})
+                if not isinstance(result, dict):
+                    return lines_in, None
+
+                done = result.get('num_completed', result.get('completed'))
+                total = result.get('total_files', result.get('total'))
+                if done is None or total is None:
+                    return lines_in, None
+
+                done_i = int(done)
+                total_i = int(total)
+                if total_i <= 0:
+                    return lines_in, None
+
+                stage_type = re.sub(r'_\d+$', '', stage_key)
+                stage_name_map = {
+                    'replication': 'annealing',
+                    'optimization': 'geometry_optimization',
+                    'cosmic': 'cosmic',
+                    'refinement': 'geometry_refinement',
+                    'energy_refinement': 'energy_refinement',
+                }
+                stage_name = stage_name_map.get(stage_type, stage_type)
+                replacement = f"[{stage_num}/{stages_total}] {stage_name} {done_i}/{total_i} ..."
+
+                prefix = f"[{stage_num}/{stages_total}] "
+                replaced = False
+                for idx, line in enumerate(lines_in):
+                    if line.startswith(prefix):
+                        lines_in[idx] = replacement
+                        replaced = True
+                        break
+                if not replaced:
+                    lines_in.append(replacement)
+
+                ratio = min(max(done_i / total_i, 0.0), 1.0)
+                pct = ((completed_stages + ratio) / stages_total) * 100.0
+                return lines_in, pct
+            except Exception:
+                return lines_in, None
+
         os.system('clear')
         jid = job['id']
         run_realpath = _resolve_run_realpath(job)
-        pct = data.get('pct', 0.0)
+        hydrated_lines, hydrated_pct = _hydrate_live_stage_lines(job, data)
+        pct = hydrated_pct if hydrated_pct is not None else data.get('pct', 0.0)
         bar = _render_bar(pct, width=30)
         upd = data.get('updated', '')
         print("")
@@ -18374,7 +18450,7 @@ def show_ascec_status() -> None:
         print("-" * 60)
         print(f"Progress [{bar}] {pct:.1f}%")
         print("-" * 60)
-        for line in data.get('stage_lines', []):
+        for line in hydrated_lines:
             print(line)
         print("")
         if upd:
