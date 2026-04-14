@@ -5916,6 +5916,10 @@ def parse_xtb_options_from_template(template_content: str) -> str:
 
     flags: List[str] = []
 
+    def _normalize_xtb_opt_level(raw_level: str) -> str:
+        level = re.sub(r'\s+', '', raw_level.strip().lower())
+        return 'vtight' if level in ('vtight', 'verytight') else level
+
     if 'GFN-FF' in content_upper or 'GFNFF' in content_upper:
         flags.append('--gfnff')
     elif 'GFN0-XTB' in content_upper or 'GFN0' in content_upper:
@@ -5925,8 +5929,13 @@ def parse_xtb_options_from_template(template_content: str) -> str:
     else:
         flags.extend(['--gfn', '2'])
 
-    if 'OPT' in content_upper:
-        flags.append('--opt')
+    opt_level_match = re.search(r'\bOPT\b(?:\s+(NORMAL|TIGHT|VTIGHT|VERY\s+TIGHT))?', template_content or '', re.IGNORECASE)
+    if opt_level_match:
+        opt_level = opt_level_match.group(1)
+        if opt_level:
+            flags.extend(['--opt', _normalize_xtb_opt_level(opt_level)])
+        else:
+            flags.append('--opt')
 
     if 'FREQ' in content_upper or '/FREQ' in content_upper or '/NUM' in content_upper:
         flags.append('--hess')
