@@ -2084,8 +2084,36 @@ def update_protocol_cache(stage_name: str, status: str, result: Optional[Dict[st
         }
     
     cache['last_update'] = time.strftime('%Y-%m-%d %H:%M:%S')
-    
+
     save_protocol_cache(cache, cache_file)
+
+
+def invalidate_stage_cache(cache_file: str, *stage_keys: str) -> None:
+    """Remove stage entries from the on-disk cache.
+
+    Callers in execute_workflow_stages keep their own local `cache` dict that
+    goes stale the moment update_protocol_cache writes to disk. Round-tripping
+    through disk here ensures we never overwrite intermediate updates when
+    invalidating a failed stage.
+    """
+    if not cache_file:
+        return
+    try:
+        disk_cache = load_protocol_cache(cache_file)
+    except Exception:
+        return
+    if not disk_cache or 'stages' not in disk_cache:
+        return
+    modified = False
+    for key in stage_keys:
+        if key and key in disk_cache['stages']:
+            del disk_cache['stages'][key]
+            modified = True
+    if modified:
+        try:
+            save_protocol_cache(disk_cache, cache_file)
+        except Exception:
+            pass
 
 
 def parse_exclude_pattern(pattern: str) -> List[int]:
@@ -2727,9 +2755,9 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                     
                     # Stage-specific details
                     if stage_type == 'Replication':  # Annealing
-                        if 'box_size' in result:
+                        if result.get('box_size') is not None:
                             f.write(f"    Box size:         {float(result['box_size']):.1f} Å")
-                            if 'packing' in result:
+                            if result.get('packing') is not None:
                                 f.write(f" ({result['packing']}% packing)")
                             f.write("\n")
                         if 'num_replicas' in result:
@@ -11915,9 +11943,12 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     
     # Load cache if in protocol mode
     cache = {}
+    is_fresh_start = False
     if use_cache:
         cache = load_protocol_cache(cache_file)
-        # Always ensure input_file is stored in cache
+        # Distinguish a brand-new run from a resume BEFORE we seed
+        # input_file, otherwise the cache always looks non-empty below.
+        is_fresh_start = not cache
         if not cache:
             cache = {}
         if 'input_file' not in cache:
@@ -11925,7 +11956,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             # Save immediately so the association is recorded
             with open(cache_file, 'wb') as f:
                 pickle.dump(cache, f)
-        if cache:
+        if not is_fresh_start:
             start_time = cache.get('start_time', None)
             completed_stages = cache.get('stages', {})
             
@@ -12644,15 +12675,20 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 if next_is_cosmic:
                     # Extract redo parameters from optimization stage
                     optimization_args = stage['args']
-                    max_redos = 3   # Fixed: always 3 redo attempts
-                    max_critical = 0  # Fixed: always 0% critical threshold (retry all)
+                    max_redos = 3   # Default redo budget; overridden by --redo=N
+                    max_critical = 0  # Default: 0% critical threshold (retry all)
                     max_skipped = None
                     concurrent_jobs = 1
                     _skipped_set = False
                     _concurrent_given = False
 
                     for arg in optimization_args:
-                        if arg.startswith('--skipped='):
+                        if arg.startswith('--redo='):
+                            try:
+                                max_redos = max(0, int(arg.split('=')[1]))
+                            except ValueError:
+                                pass
+                        elif arg.startswith('--skipped='):
                             max_skipped = float(arg.split('=')[1])
                             _skipped_set = True
                         elif arg.startswith('--concurrent='):
@@ -12706,8 +12742,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         result = execute_optimization_stage(context, stage)
                         if result != 0:
                             print(f"\nError: Optimization failed with code {result}")
+                            if use_cache:
+                                invalidate_stage_cache(
+                                    cache_file,
+                                    f"optimization_{stage_num}",
+                                    f"cosmic_{stage_num + 1}",
+                                )
                             return result
-                        
+
                         # Note: on redo (attempt > 0), execute_optimization_stage's internal
                         # sort step already re-runs collect_out_files_with_tracking, which (a)
                         # places the freshly recalculated .out files into the canonical orca_out
@@ -12729,6 +12771,12 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         result = execute_cosmic_stage(context, cosmic_stage)
                         if result != 0:
                             print(f"\nError: cosmic failed with code {result}")
+                            if use_cache:
+                                invalidate_stage_cache(
+                                    cache_file,
+                                    f"optimization_{stage_num}",
+                                    f"cosmic_{stage_num + 1}",
+                                )
                             return result
 
                         # Parse cosmic results from clustering_summary.txt
@@ -13124,15 +13172,20 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 if next_is_cosmic:
                     # Extract redo parameters from opt stage
                     opt_args = stage['args']
-                    max_redos = 3   # Fixed: always 3 redo attempts
-                    max_critical = 0  # Fixed: always 0% critical threshold (retry all)
+                    max_redos = 3   # Default redo budget; overridden by --redo=N
+                    max_critical = 0  # Default: 0% critical threshold (retry all)
                     max_skipped = None
                     concurrent_jobs = 1
                     _skipped_set = False
                     _concurrent_given = False
 
                     for arg in opt_args:
-                        if arg.startswith('--skipped='):
+                        if arg.startswith('--redo='):
+                            try:
+                                max_redos = max(0, int(arg.split('=')[1]))
+                            except ValueError:
+                                pass
+                        elif arg.startswith('--skipped='):
                             max_skipped = float(arg.split('=')[1])
                             _skipped_set = True
                         elif arg.startswith('--concurrent='):
@@ -13184,12 +13237,12 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         result = execute_refinement_stage(context, stage)
                         if result != 0:
                             print(f"\nError: Refinement failed with code {result}")
-                            # Invalidate cache so we can resume from this stage
-                            opt_key = f"refinement_{stage_num}"
-                            if use_cache and 'stages' in cache and opt_key in cache['stages']:
-                                del cache['stages'][opt_key]
-                                with open(cache_file, 'wb') as f:
-                                    pickle.dump(cache, f)
+                            if use_cache:
+                                invalidate_stage_cache(
+                                    cache_file,
+                                    f"refinement_{stage_num}",
+                                    f"cosmic_{stage_num + 1}",
+                                )
                                 print(f"  Cache invalidated for stage {stage_num}")
                             return result
                         
@@ -13214,6 +13267,12 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         result = execute_cosmic_stage(context, cosmic_stage)
                         if result != 0:
                             print(f"\nError: cosmic failed with code {result}")
+                            if use_cache:
+                                invalidate_stage_cache(
+                                    cache_file,
+                                    f"refinement_{stage_num}",
+                                    f"cosmic_{stage_num + 1}",
+                                )
                             return result
 
                         # Parse cosmic results from clustering_summary.txt
@@ -13478,15 +13537,20 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 if next_is_cosmic:
                     # Extract redo parameters
                     opt_args = stage['args']
-                    max_redos = 3   # Fixed: always 3 redo attempts
-                    max_critical = 0  # Fixed: always 0% critical threshold (retry all)
+                    max_redos = 3   # Default redo budget; overridden by --redo=N
+                    max_critical = 0  # Default: 0% critical threshold (retry all)
                     max_skipped = None
                     concurrent_jobs = 1
                     _skipped_set = False
                     _concurrent_given = False
 
                     for arg in opt_args:
-                        if arg.startswith('--skipped='):
+                        if arg.startswith('--redo='):
+                            try:
+                                max_redos = max(0, int(arg.split('=')[1]))
+                            except ValueError:
+                                pass
+                        elif arg.startswith('--skipped='):
                             max_skipped = float(arg.split('=')[1])
                             _skipped_set = True
                         elif arg.startswith('--concurrent='):
@@ -13534,11 +13598,12 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         result = execute_energy_refinement_stage(context, stage)
                         if result != 0:
                             print(f"\nError: Energy refinement failed with code {result}")
-                            opt_key = f"energy_refinement_{stage_num}"
-                            if use_cache and 'stages' in cache and opt_key in cache['stages']:
-                                del cache['stages'][opt_key]
-                                with open(cache_file, 'wb') as f:
-                                    pickle.dump(cache, f)
+                            if use_cache:
+                                invalidate_stage_cache(
+                                    cache_file,
+                                    f"energy_refinement_{stage_num}",
+                                    f"cosmic_{stage_num + 1}",
+                                )
                                 print(f"  Cache invalidated for stage {stage_num}")
                             return result
 
@@ -13613,6 +13678,12 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         result = execute_cosmic_stage(context, cosmic_stage)
                         if result != 0:
                             print(f"\nError: cosmic failed with code {result}")
+                            if use_cache:
+                                invalidate_stage_cache(
+                                    cache_file,
+                                    f"energy_refinement_{stage_num}",
+                                    f"cosmic_{stage_num + 1}",
+                                )
                             return result
 
                         summary_file = os.path.join(context.cosmic_dir, "clustering_summary.txt")
