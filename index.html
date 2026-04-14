@@ -2935,7 +2935,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     <div class="card-title-row">
                         <h2>COSMIC Screening</h2>
                         <label class="auto-box-compact" style="font-size:0.84em; gap:6px;">
-                            <input type="checkbox" id="smart-sim-same" checked onchange="toggleSmartCOSMICMode()">
+                            <input type="checkbox" id="smart-sim-same" onchange="toggleSmartCOSMICMode()">
                             same for opt/ref
                         </label>
                     </div>
@@ -2965,15 +2965,15 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                     </div>
                     <div class="smart-sim-grid">
-                        <div class="form-group" style="margin-bottom:0; opacity:0.55;" id="smart-sim2-th-wrap">
+                        <div class="form-group" style="margin-bottom:0;" id="smart-sim2-th-wrap">
                             <label id="smart-sim2-th-label">Threshold</label>
-                            <input type="number" id="smart-sim2-th" value="" step="0.5" min="0" placeholder="automatic" onchange="notifyCOSMICThresholdChange('smart-sim2-th')" oninput="notifyCOSMICThresholdChange('smart-sim2-th')">
+                            <input type="number" id="smart-sim2-th" value="2" step="0.5" min="0" placeholder="automatic" onchange="notifyCOSMICThresholdChange('smart-sim2-th')" oninput="notifyCOSMICThresholdChange('smart-sim2-th')">
                         </div>
-                        <div class="form-group" style="margin-bottom:0; opacity:0.55;" id="smart-sim2-rmsd-wrap">
+                        <div class="form-group" style="margin-bottom:0;" id="smart-sim2-rmsd-wrap">
                             <label id="smart-sim2-rmsd-label">RMSD</label>
                             <input type="number" id="smart-sim2-rmsd-th" value="" step="0.5" min="0" placeholder="off" onchange="notifyCOSMICRMSDChange('smart-sim2-rmsd-th')" oninput="notifyCOSMICRMSDChange('smart-sim2-rmsd-th')">
                         </div>
-                        <div class="form-group" style="margin-bottom:0; opacity:0.55;" id="smart-sim2-j-wrap">
+                        <div class="form-group" style="margin-bottom:0;" id="smart-sim2-j-wrap">
                             <label id="smart-sim2-j-label">Parallel (-j)</label>
                             <input type="number" id="smart-sim2-j" value="4" min="1">
                         </div>
@@ -3648,7 +3648,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                 <div class="card">
                     <h2>COSMIC Screening</h2>
                     <div class="toggle-row">
-                        <input type="checkbox" id="adv-sim-same" checked onchange="toggleDifferentSimSettings()">
+                        <input type="checkbox" id="adv-sim-same" onchange="toggleDifferentSimSettings()">
                         <label for="adv-sim-same">Same settings for Opt & Ref stages</label>
                     </div>
                     
@@ -3677,13 +3677,13 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <input type="text" id="adv-sim1-extra" placeholder="--weights='(electronic_energy=0.1)(...)'" oninput="updateAllPreviews()">
                         </div>
                     </div>
-                    <div id="sim2-settings" style="display: none;">
+                    <div id="sim2-settings" style="display: block;">
                         <h3>COSMIC 2 (after refinement)</h3>
                         <div class="form-row-4">
                             <div class="form-group">
                                 <label>Threshold</label>
                                 <div class="threshold-stepper">
-                                    <input type="text" id="adv-sim2-th" value="automatic" list="cosmic-th-options" placeholder="automatic" onchange="notifyCOSMICThresholdChange('adv-sim2-th')" oninput="updateAllPreviews()">
+                                    <input type="text" id="adv-sim2-th" value="2" list="cosmic-th-options" placeholder="automatic" onchange="notifyCOSMICThresholdChange('adv-sim2-th')" oninput="updateAllPreviews()">
                                     <div class="threshold-stepper-arrows">
                                         <button type="button" class="threshold-stepper-btn" onclick="stepCOSMICThreshold('adv-sim2-th', 1)" aria-label="Increase threshold">▲</button>
                                         <button type="button" class="threshold-stepper-btn" onclick="stepCOSMICThreshold('adv-sim2-th', -1)" aria-label="Decrease threshold">▼</button>
