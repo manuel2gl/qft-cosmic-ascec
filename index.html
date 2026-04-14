@@ -3424,6 +3424,16 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                     </div>
                     <div class="form-row">
+                        <div class="form-group" id="adv-opt-xtb-level-group" style="display:none;">
+                            <label>xTB Opt Level</label>
+                            <select id="adv-opt-xtb-level" onchange="updateAllPreviews()">
+                                <option value="normal" selected>Normal</option>
+                                <option value="tight">Tight</option>
+                                <option value="vtight">Very Tight</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
                         <div class="form-group">
                             <label>Rescue Method</label>
                             <div class="custom-inline-control">
@@ -3530,6 +3540,16 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <div class="form-group">
                             <label>Max Iterations</label>
                             <input type="number" id="adv-ref-maxiter" value="80" min="1" oninput="updateAllPreviews()">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" id="adv-ref-xtb-level-group" style="display:none;">
+                            <label>xTB Opt Level</label>
+                            <select id="adv-ref-xtb-level" onchange="updateAllPreviews()">
+                                <option value="normal" selected>Normal</option>
+                                <option value="tight">Tight</option>
+                                <option value="vtight">Very Tight</option>
+                            </select>
                         </div>
                     </div>
                     <div class="form-row">
@@ -4264,6 +4284,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
             updateQuenchVisibility();
             initDefaultProtocol();
             initSmartMode();
+            updateAdvOptMethod();
+            updateAdvRefMethod();
             updateAllPreviews();
             toggleDifferentSimSettings();
             notifyCOSMICThresholdChange('smart-sim-th');
@@ -8600,6 +8622,7 @@ end
             }
             toggleCustomMethod('adv-opt');
             toggleCustomInput('adv-opt-basis', 'adv-opt-basis-custom');
+            syncXtbOptLevelVisibility('adv-opt', theory);
             applyAdvancedOptRescueDefaults();
             syncSemiweightsFromTheory();
         }
@@ -8619,7 +8642,39 @@ end
             if (basisSelect) basisSelect.value = '';
             toggleCustomMethod('adv-ref');
             toggleCustomInput('adv-ref-basis', 'adv-ref-basis-custom');
+            syncXtbOptLevelVisibility('adv-ref', theory);
             applyAdvancedRefRescueDefaults();
+        }
+
+        function normalizeXtbOptLevel(level) {
+            const cleaned = String(level || '').trim().toLowerCase().replace(/\s+/g, '');
+            if (!cleaned) return 'normal';
+            if (cleaned === 'verytight') return 'vtight';
+            return cleaned;
+        }
+
+        function formatXtbOptLevel(level) {
+            const normalized = normalizeXtbOptLevel(level);
+            if (normalized === 'vtight') return 'VTight';
+            return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+        }
+
+        function getXtbOptLevelValue(prefix) {
+            const select = document.getElementById(prefix + '-xtb-level');
+            if (!select) return 'normal';
+            return normalizeXtbOptLevel(select.value || 'normal');
+        }
+
+        function syncXtbOptLevelVisibility(prefix, theory) {
+            const group = document.getElementById(prefix + '-xtb-level-group');
+            const select = document.getElementById(prefix + '-xtb-level');
+            if (!group || !select) return;
+
+            const isXtb = isStandaloneXtbTheory(theory);
+            group.style.display = isXtb ? '' : 'none';
+            if (isXtb) {
+                select.value = normalizeXtbOptLevel(select.value || 'normal');
+            }
         }
 
         // Advanced Energy Refinement: toggle, method update, preview
@@ -9018,7 +9073,8 @@ end
                 const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
                 const xtbRescue = String(rescueMethod || xtbMethod).replace(/^(Native-)+/, '');
                 const xtbRescueHess = rescueHess;
-                const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? 'Opt Freq' : 'Opt';
+                const xtbOptLevel = formatXtbOptLevel(getXtbOptLevelValue('adv-opt'));
+                const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? `Opt ${xtbOptLevel} Freq` : `Opt ${xtbOptLevel}`;
                 const xtbUhf = parseInt(mult) - 1;
                 const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
                 const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
@@ -9087,7 +9143,8 @@ end
                             const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
                             const xtbRescue = String(rescueMethod || xtbMethod).replace(/^(Native-)+/, '');
                             const xtbRescueHess = rescueHess;
-                            const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? 'Opt Freq' : 'Opt';
+                            const xtbOptLevel = formatXtbOptLevel(getXtbOptLevelValue('adv-ref'));
+                            const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? `Opt ${xtbOptLevel} Freq` : `Opt ${xtbOptLevel}`;
                             const xtbUhf = parseInt(mult) - 1;
                             const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
                             const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
