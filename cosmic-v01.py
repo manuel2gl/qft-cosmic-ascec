@@ -3960,7 +3960,7 @@ def compute_mojena_threshold(linkage_matrix, verbose=False):
     if verbose:
         print(f"  Mojena diagnostic (robust, alpha={MOJENA_ALPHA}):")
         print(f"    median={median_h:.4f}, MAD={mad_h:.4f}")
-        print(f"    Mojena threshold = {mojena_t:.4f} (k={mojena_k})")
+        print(f"    Mojena threshold = {mojena_t:.4f} (n_c={mojena_k})")
 
     return mojena_t, mojena_k
 
@@ -4009,11 +4009,11 @@ def compute_knee_threshold(linkage_matrix, verbose=False):
     n_samples = n + 1
     k_cap = max(2, n_samples // 2)
     if k_res < 2 or k_res > k_cap:
-        return t_cut, k_res, False, f"knee gives unreasonable k={k_res}", k_star, h_knee
+        return t_cut, k_res, False, f"knee gives unreasonable n_c={k_res}", k_star, h_knee
 
     if verbose:
         print(f"  Knee diagnostic: knee_index={k_star}/{n-1}, "
-              f"h_knee={h_knee:.4f}, t_cut={t_cut:.4f}, k={k_res}")
+              f"h_knee={h_knee:.4f}, τ_cut={t_cut:.4f}, n_c={k_res}")
     return t_cut, int(k_res), True, "ok", k_star, h_knee
 
 
@@ -4022,7 +4022,7 @@ def resolve_clustering_threshold(linkage_matrix, user_threshold, verbose=False):
     Decide the actual cut height for fcluster().
 
     user_threshold is the string "auto" (default) or a float. Resolution
-    order: explicit user value -> auto-knee -> Mojena -> legacy t=2.0.
+    order: explicit user value -> auto-knee -> Mojena -> legacy τ=2.0.
     Returns (t_cut, k_resulting, source) where source is one of
     "user", "knee", "mojena", "legacy".
     """
@@ -4041,7 +4041,7 @@ def resolve_clustering_threshold(linkage_matrix, user_threshold, verbose=False):
     if k_m >= 2:
         return float(t_m), int(k_m), "mojena"
     if verbose:
-        print(f"  Mojena unsuitable (k={k_m}); falling back to legacy t=2.0.")
+        print(f"  Mojena unsuitable (n_c={k_m}); falling back to legacy τ=2.0.")
     k_l = len(set(fcluster(linkage_matrix, t=2.0, criterion='distance')))
     return 2.0, k_l, "legacy"
 
@@ -4082,7 +4082,7 @@ def plot_annotated_dendrogram(linkage_matrix, optimal_k, cut_height,
     fig1, ax1 = plt.subplots(1, 1, figsize=(12, 8))
     dendrogram(lm, labels=conf_labels, leaf_rotation=90, leaf_font_size=8, ax=ax1)
 
-    cut_label = f'Threshold t={cut_height:.2f} (k={optimal_k})'
+    cut_label = rf'Threshold $\tau$={cut_height:.2f} ($n_c$={optimal_k})'
     ax1.axhline(y=cut_height, color='#e74c3c', linestyle='--', linewidth=1.5,
                 label=cut_label)
     ax1.legend(loc='upper right', fontsize=9)
@@ -4112,13 +4112,13 @@ def plot_annotated_dendrogram(linkage_matrix, optimal_k, cut_height,
     # Applied cut (red dashed) — this is the threshold the run actually used.
     n_above_cut = int(np.sum(heights_sorted > cut_height))
     ax2.axhline(y=cut_height, color='#e74c3c', linestyle='--', linewidth=2,
-                label=f'Applied cut t={cut_height:.2f} (k={n_above_cut + 1})')
+                label=rf'Applied cut $\tau$={cut_height:.2f} ($n_c$={n_above_cut + 1})')
 
     # Mojena reference — listed in the legend for comparison, not drawn on the axes.
     if mojena_threshold is not None:
-        mojena_label = f'Mojena t={mojena_threshold:.2f}'
+        mojena_label = rf'Mojena $\tau$={mojena_threshold:.2f}'
         if mojena_k is not None:
-            mojena_label += f' (k={mojena_k})'
+            mojena_label += rf' ($n_c$={mojena_k})'
         ax2.plot([], [], ' ', label=mojena_label)
 
     # Shade between-cluster region (above applied cut)
@@ -4897,8 +4897,8 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             effective_t, _k_eff, t_source = resolve_clustering_threshold(
                 linkage_matrix, threshold, verbose=VERBOSE)
             initial_cluster_labels = fcluster(linkage_matrix, t=effective_t, criterion='distance')
-            vprint(f"Clustering threshold: t={effective_t:.4f} ({t_source}), "
-                   f"k={len(set(initial_cluster_labels))}")
+            vprint(f"Clustering threshold: τ={effective_t:.4f} ({t_source}), "
+                   f"n_c={len(set(initial_cluster_labels))}")
 
             # Build cluster data from fullest tier
             initial_clusters_data = {}
@@ -5106,7 +5106,7 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             initial_cluster_labels = fcluster(linkage_matrix, t=effective_t, criterion='distance')
             _main_optimal_k = len(set(initial_cluster_labels))
             _main_cut_height = effective_t
-            vprint(f"Clustering threshold: t={effective_t:.4f} ({t_source}), k={_main_optimal_k}")
+            vprint(f"Clustering threshold: τ={effective_t:.4f} ({t_source}), n_c={_main_optimal_k}")
 
             _mojena_t, _mojena_k = compute_mojena_threshold(linkage_matrix, verbose=VERBOSE)
 
