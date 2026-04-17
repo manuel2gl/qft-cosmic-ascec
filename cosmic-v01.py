@@ -75,7 +75,6 @@ def print_version_banner():
 
                           {version}                       
 
-
                         Química Física Teórica - QFT                       
 
 
@@ -971,11 +970,11 @@ def extract_properties_with_xtb(logfile_path):
             r'rotational constants/cm.*?:\s*([-+]?\d+\.\d+E[+-]?\d+)\s+([-+]?\d+\.\d+E[+-]?\d+)\s+([-+]?\d+\.\d+E[+-]?\d+)',
             content, re.IGNORECASE)
         if rot_match:
-            extracted_props['rotational_constants'] = [
+            extracted_props['rotational_constants'] = np.array([
                 float(rot_match.group(1)),
                 float(rot_match.group(2)),
                 float(rot_match.group(3))
-            ]
+            ])
 
         # --- Vibrational frequencies -----------------------------------------
         freq_matches = re.findall(r'([-+]?\d+\.\d+)\s*cm\^-?1', content, re.IGNORECASE)
@@ -4872,6 +4871,11 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             active_numerical_features_for_group, dropped_scalar_features = select_complete_group_scalar_features(fullest_tier, list(_scalar_features))
             use_rotational_constants = all(has_valid_rotational_constants(m) for m in fullest_tier)
 
+            _active_display = list(active_numerical_features_for_group)
+            if use_rotational_constants:
+                _active_display += ['rotational_constants_A', 'rotational_constants_B', 'rotational_constants_C']
+            print(f"  Active features ({len(_active_display)}): {_active_display}")
+
             # Build vectors for fullest tier
             features_for_scaling_raw, ordered_feature_names_for_scaling = _build_feature_vectors(
                 fullest_tier, active_numerical_features_for_group, use_rotational_constants, weights
@@ -5080,10 +5084,14 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             _tier_info = f" (fullest tier: {len(_clustering_pool)}/{len(group_data)})" if _reduced_pool else ""
             print_step(f"Clustering {len(_clustering_pool)} configurations{_hb_tag}{_tier_info}...")
 
+            _active_display = list(active_numerical_features_for_group)
+            if use_rotational_constants:
+                _active_display += ['rotational_constants_A', 'rotational_constants_B', 'rotational_constants_C']
+            print(f"  Active features ({len(_active_display)}): {_active_display}")
             if dropped_scalar_features:
-                vprint(f"  Reduced scalar feature set due to missing values: {', '.join(dropped_scalar_features)}")
+                vprint(f"  Dropped (missing in some structures): {', '.join(dropped_scalar_features)}")
             if not use_rotational_constants:
-                vprint(f"  Reduced vector excludes rotational constants (not available for all structures)")
+                vprint(f"  Rotational constants excluded (not available for all structures)")
 
             # Z-score scaling
             features_for_scaling_raw_np = np.array(features_for_scaling_raw, dtype=float)
