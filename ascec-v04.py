@@ -16578,7 +16578,8 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
         # Clean everything except orca_out_* folders and cache
         items_to_remove = [
             'dendrogram_images', 'extracted_clusters', 'extracted_data',
-            'skipped_structures', 'clustering_summary.txt', 'boltzmann_distribution.txt'
+            'skipped_structures', 'clustering_summary.txt', 'boltzmann_distribution.txt',
+            'resolved_threshold.txt',
         ]
         # Also remove motifs and umotifs folders
         for item in os.listdir(cosmic_base):
@@ -17029,6 +17030,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
     concurrent_jobs = 1   # default: 1 concurrent job for refinement (serial)
     _critical_set = False
     _skipped_set = False
+    _concurrent_given = False
     # Note: --retry removed; launch failures auto-retry up to 10 times (hardcoded)
 
     args = stage.get('args', [])
@@ -17047,10 +17049,30 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
             _skipped_set = True
         elif arg.startswith('--concurrent='):
             concurrent_jobs = max(1, int(arg.split('=')[1]))
+            _concurrent_given = True
 
     # If --skipped given without explicit --critical, clear the default critical=0
     if _skipped_set and not _critical_set:
         max_critical = None
+
+    # Inherit concurrency picked by the workflow orchestrator (or earlier prompt)
+    # when --concurrent= wasn't passed explicitly; otherwise prompt once. Matches
+    # execute_optimization_stage so refinement/energy_refinement actually dispatch
+    # jobs in parallel instead of silently falling back to serial execution.
+    prompted_concurrent = getattr(context, '_concurrent_prompted', None)
+    if not _concurrent_given and prompted_concurrent is not None:
+        try:
+            concurrent_jobs = max(1, int(prompted_concurrent))
+        except (TypeError, ValueError):
+            concurrent_jobs = 1
+    elif not _concurrent_given and prompted_concurrent is None:
+        _prompt_label = 'energy refinement' if _stage_kind == 'energy_refinement' else 'refinement'
+        try:
+            _ans = input(f"  Concurrent QM jobs for {_prompt_label} [1]: ").strip()
+            concurrent_jobs = max(1, int(_ans)) if _ans else 1
+        except (EOFError, ValueError):
+            concurrent_jobs = 1
+        setattr(context, '_concurrent_prompted', concurrent_jobs)
 
     # Store threshold mode in context for redo logic
     # --critical: only retry structures with imaginary freqs (need_recalculation)
@@ -17686,7 +17708,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
                             print(f"  Skipping: {input_file} (excluded)")
                     continue
 
-            output_file = basename + ('.out' if qm_program == 'orca' else '.log')
+            output_file = basename + ('.out' if qm_program in ('orca', 'xtb') else '.log')
             output_path = os.path.join(opt_dir, output_file)
 
             # Skip if output already exists AND is successfully completed
@@ -17710,12 +17732,10 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
                         output_exists = True
 
             if output_exists:
-                if qm_program == 'orca':
-                    is_complete = check_orca_terminated_normally_opi(output_path)
-                else:
-                    with open(output_path, 'r') as f:
-                        output_content = f.read()
-                    is_complete = 'Normal termination of Gaussian' in output_content
+                try:
+                    is_complete = check_qm_output_completed(qm_program, output_path)
+                except Exception:
+                    is_complete = False
                 if is_complete:
                     continue
 
@@ -17746,7 +17766,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
             completed_list=completed_opts,
             all_input_basenames=all_input_basenames,
             cache_file=cache_file,
-            stage_key_prefix='optimization',
+            stage_key_prefix=_stage_kind,
         )
         setattr(context, _attr_job_wall_time, time.time() - _ref_wall_start)
 
@@ -17789,13 +17809,16 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
                 completed_opts = sorted(fallback_completed, key=natural_sort_key)
                 total_completed = min(len(fallback_completed), num_inputs)
 
+        _kind_noun = 'energy refinements' if _stage_kind == 'energy_refinement' else 'refinements'
+        _kind_title = 'Energy refinement' if _stage_kind == 'energy_refinement' else 'Refinement'
+
         if not workflow_concise:
-            print(f"\nStatus: {total_completed}/{num_inputs} optimizations completed")
-        
+            print(f"\nStatus: {total_completed}/{num_inputs} {_kind_noun} completed")
+
         # Store for protocol summary (use total)
         setattr(context, _attr_completed, total_completed)
         setattr(context, _attr_total, num_inputs)
-        
+
         # Clean up old failed files if they exist and all succeeded
         if not failed_optimizations:
             for old_file in [os.path.join(opt_dir, "failed_opt.txt"), os.path.join(opt_dir, "launcher_failed.sh")]:
@@ -17804,31 +17827,31 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
                         os.remove(old_file)
                     except Exception:
                         pass
-        
+
         # Handle failed optimizations
         if failed_optimizations:
             if not workflow_concise:
-                print(f"Failed optimizations: {len(failed_optimizations)}/{num_inputs}")
-            
+                print(f"Failed {_kind_noun}: {len(failed_optimizations)}/{num_inputs}")
+
             # Write failed_opt.txt
             failed_list_file = os.path.join(opt_dir, "failed_opt.txt")
             with open(failed_list_file, 'w') as f:
-                f.write(f"# Failed optimizations: {len(failed_optimizations)}/{num_inputs}\n")
+                f.write(f"# Failed {_kind_noun}: {len(failed_optimizations)}/{num_inputs}\n")
                 f.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
                 for failed_file in sorted(failed_optimizations, key=natural_sort_key):
                     f.write(f"{failed_file}\n")
-            
+
             if not workflow_concise:
-                print(f"Failed optimizations list written to: {failed_list_file}")
-        
-        # Organize files if any optimizations are completed (new or already done)
+                print(f"Failed {_kind_noun} list written to: {failed_list_file}")
+
+        # Organize files if any refinements are completed (new or already done)
         if total_completed > 0:
             if num_completed > 0 and not workflow_concise:
-                print("\n\nRefinement calculations completed")
-            
+                print(f"\n\n{_kind_title} calculations completed")
+
             # Check if this is a redo (recalculated files exist)
             if not workflow_concise:
-                print(f"All refinements completed successfully")
+                print(f"All {_kind_noun} completed successfully")
             
             # Organize results - run full sort/organize for both redo and normal mode
             saved_cwd = os.getcwd()
@@ -17864,7 +17887,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
                 import io
                 import contextlib
                 f = io.StringIO()
-                _ref_actual_wall = getattr(context, 'refinement_job_wall_time', None)
+                _ref_actual_wall = getattr(context, _attr_job_wall_time, None)
                 with contextlib.redirect_stdout(f):
                     group_files_by_base_with_tracking(".")
                     combine_xyz_files()
