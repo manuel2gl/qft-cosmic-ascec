@@ -2941,6 +2941,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     </div>
                     <datalist id="cosmic-th-options">
                         <option value="automatic"></option>
+                        <option value="opt"></option>
                         <option value="0.5"></option>
                         <option value="1"></option>
                         <option value="1.5"></option>
@@ -2967,7 +2968,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     <div class="smart-sim-grid">
                         <div class="form-group" style="margin-bottom:0;" id="smart-sim2-th-wrap">
                             <label id="smart-sim2-th-label">Threshold</label>
-                            <input type="number" id="smart-sim2-th" value="1" step="0.5" min="0" placeholder="automatic" onchange="notifyCOSMICThresholdChange('smart-sim2-th')" oninput="notifyCOSMICThresholdChange('smart-sim2-th')">
+                            <input type="number" id="smart-sim2-th" value="" step="0.5" min="0" placeholder="opt" onchange="notifyCOSMICThresholdChange('smart-sim2-th')" oninput="notifyCOSMICThresholdChange('smart-sim2-th')">
                         </div>
                         <div class="form-group" style="margin-bottom:0;" id="smart-sim2-rmsd-wrap">
                             <label id="smart-sim2-rmsd-label">RMSD</label>
@@ -3703,7 +3704,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <div class="form-group">
                                 <label>Threshold</label>
                                 <div class="threshold-stepper">
-                                    <input type="text" id="adv-sim2-th" value="1" list="cosmic-th-options" placeholder="automatic" onchange="notifyCOSMICThresholdChange('adv-sim2-th')" oninput="updateAllPreviews()">
+                                    <input type="text" id="adv-sim2-th" value="opt" list="cosmic-th-options" placeholder="automatic, opt, or numeric" onchange="notifyCOSMICThresholdChange('adv-sim2-th')" oninput="updateAllPreviews()">
                                     <div class="threshold-stepper-arrows">
                                         <button type="button" class="threshold-stepper-btn" onclick="stepCOSMICThreshold('adv-sim2-th', 1)" aria-label="Increase threshold">▲</button>
                                         <button type="button" class="threshold-stepper-btn" onclick="stepCOSMICThreshold('adv-sim2-th', -1)" aria-label="Decrease threshold">▼</button>
@@ -9542,6 +9543,7 @@ end
         function normalizeCOSMICThresholdValue(raw) {
             const value = (raw || '').trim();
             if (value === '' || /^auto(matic)?$/i.test(value)) return '';
+            if (/^opt$/i.test(value)) return 'opt';
             const parsed = Number(value);
             if (!Number.isFinite(parsed) || parsed <= 0) return '';
             return String(parsed);
@@ -9550,6 +9552,7 @@ end
         function normalizeCOSMICThresholdInput(raw) {
             const value = (raw || '').trim();
             if (value === '' || /^auto(matic)?$/i.test(value)) return 'automatic';
+            if (/^opt$/i.test(value)) return 'opt';
             const parsed = Number(value);
             if (!Number.isFinite(parsed) || parsed <= 0) return 'automatic';
             return String(parsed);
@@ -9558,13 +9561,30 @@ end
         function stepCOSMICThreshold(fieldId, direction) {
             const input = document.getElementById(fieldId);
             if (!input || input.disabled) return;
-            const sequence = ['automatic', '0.5', '1', '1.5', '2', '2.5', '3', '4', '5'];
+            const sequence = ['automatic', 'opt', '0.5', '1', '1.5', '2', '2.5', '3', '4', '5'];
             const current = normalizeCOSMICThresholdInput(input.value);
             const index = Math.max(0, sequence.indexOf(current));
             const len = sequence.length;
             const nextIndex = (index + (direction > 0 ? 1 : -1) + len) % len;
             input.value = sequence[nextIndex];
             notifyCOSMICThresholdChange(fieldId);
+        }
+
+        function handleCOSMICThresholdSpinKey(event, fieldId) {
+            if (!event) return;
+            if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                stepCOSMICThreshold(fieldId, 1);
+            } else if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                stepCOSMICThreshold(fieldId, -1);
+            }
+        }
+
+        function handleCOSMICThresholdSpinWheel(event, fieldId) {
+            if (!event) return;
+            event.preventDefault();
+            stepCOSMICThreshold(fieldId, event.deltaY < 0 ? 1 : -1);
         }
 
         function notifyCOSMICThresholdChange(fieldId) {
