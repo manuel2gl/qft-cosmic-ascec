@@ -3912,25 +3912,17 @@ def preprocess_j_argument(argv):
 
 def compute_mojena_threshold(linkage_matrix, verbose=False):
     """
-    Compute Mojena's stopping rule threshold (robust variant) for diagnostic purposes.
+    Mojena-style stopping rule (robust variant): median(h) + alpha *
+    1.4826 * MAD(h). The 1.4826 factor is the MAD→σ consistency constant
+    for normal distributions. Computed purely for the diagnostic plot —
+    never drives the cut (see resolve_clustering_threshold).
 
-    Uses the robust formulation: median(h) + alpha * 1.4826 * MAD(h)
-    where MAD = median(|h - median(h)|) and 1.4826 is the consistency constant
-    for normal distributions (Mojena, 1977).
-
-    Parameters
-    ----------
-    linkage_matrix : np.ndarray, shape (n_samples-1, 4)
-        Linkage matrix from scipy.cluster.hierarchy.linkage (UPGMA).
-    verbose : bool
-        If True, print diagnostic details to stdout.
-
-    Returns
-    -------
-    mojena_threshold : float
-        The Mojena-recommended threshold (for diagnostic comparison).
-    mojena_k : int
-        Number of clusters at the Mojena threshold.
+    The original 1977 sequential-scan variant (mean + k·std of the first
+    j merges, stop at the first j where h[j+1] exceeds the bound) was
+    evaluated and rejected: it fires on the first non-zero merge in
+    high-structure-count datasets because early-merge heights are
+    near-identical (std ≈ 0, bound ≈ mean, trivially exceeded by the
+    next merge). See cosmic_methodology.tex for the analysis.
     """
     from scipy.cluster.hierarchy import fcluster
     from scipy.stats import median_abs_deviation
@@ -3951,7 +3943,6 @@ def compute_mojena_threshold(linkage_matrix, verbose=False):
     else:
         mojena_t = float(np.mean(heights)) + MOJENA_ALPHA * float(np.std(heights))
 
-    # Clamp within merge height range
     mojena_t = max(float(heights[0]) * 1.01, min(mojena_t, float(heights[-1]) * 0.99))
 
     labels = fcluster(linkage_matrix, t=mojena_t, criterion='distance')
@@ -4017,14 +4008,64 @@ def compute_knee_threshold(linkage_matrix, verbose=False):
     return t_cut, int(k_res), True, "ok", k_star, h_knee
 
 
+def _persist_resolved_threshold(output_base_dir, t_value, source):
+    """Write the resolved τ to a sidecar file so a later cosmic stage can
+    reuse it via --th=opt. Silent no-op on filesystem errors."""
+    if not output_base_dir:
+        return
+    try:
+        with open(os.path.join(output_base_dir, "resolved_threshold.txt"), "w") as _rt:
+            _rt.write(f"{float(t_value):.6f}\n{source}\n")
+    except OSError:
+        pass
+
+
+def _resolve_opt_threshold_from_sibling_cosmic(current_cwd):
+    """Look for a sibling cosmic*/resolved_threshold.txt and return
+    (float_value, source_tag). Prefers the bare 'cosmic' directory (canonical
+    sim1 output); falls back to the lowest-numbered cosmic_N directory.
+    Returns None if no sibling is usable."""
+    try:
+        parent = os.path.dirname(os.path.abspath(current_cwd))
+        entries = sorted(
+            d for d in os.listdir(parent)
+            if d.lower().startswith("cosmic")
+            and os.path.isdir(os.path.join(parent, d))
+        )
+    except OSError:
+        return None
+
+    bare = next((d for d in entries if d.lower() == "cosmic"), None)
+    candidates = [bare] if bare else []
+    candidates.extend(d for d in entries if d != bare)
+
+    self_abs = os.path.abspath(current_cwd)
+    for name in candidates:
+        cand_dir = os.path.join(parent, name)
+        if os.path.abspath(cand_dir) == self_abs:
+            continue
+        rt_path = os.path.join(cand_dir, "resolved_threshold.txt")
+        if not os.path.isfile(rt_path):
+            continue
+        try:
+            with open(rt_path) as f:
+                lines = [l.strip() for l in f if l.strip()]
+            if lines:
+                return float(lines[0]), (lines[1] if len(lines) > 1 else "unknown")
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 def resolve_clustering_threshold(linkage_matrix, user_threshold, verbose=False):
     """
     Decide the actual cut height for fcluster().
 
     user_threshold is the string "auto" (default) or a float. Resolution
-    order: explicit user value -> auto-knee -> Mojena -> legacy τ=2.0.
+    order: explicit user value -> auto-knee -> legacy τ=2.0.
     Returns (t_cut, k_resulting, source) where source is one of
-    "user", "knee", "mojena", "legacy".
+    "user", "knee", "legacy". Mojena is computed separately for the
+    diagnostic plot only and never drives the cut.
     """
     from scipy.cluster.hierarchy import fcluster
     if user_threshold != "auto":
@@ -4036,12 +4077,7 @@ def resolve_clustering_threshold(linkage_matrix, user_threshold, verbose=False):
     if ok:
         return t, k, "knee"
     if verbose:
-        print(f"  Knee detection skipped ({reason}); falling back to Mojena.")
-    t_m, k_m = compute_mojena_threshold(linkage_matrix, verbose=verbose)
-    if k_m >= 2:
-        return float(t_m), int(k_m), "mojena"
-    if verbose:
-        print(f"  Mojena unsuitable (n_c={k_m}); falling back to legacy τ=2.0.")
+        print(f"  Knee detection skipped ({reason}); falling back to legacy τ=2.0.")
     k_l = len(set(fcluster(linkage_matrix, t=2.0, criterion='distance')))
     return 2.0, k_l, "legacy"
 
@@ -4896,6 +4932,7 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             linkage_matrix = linkage(features_scaled, method='average', metric='euclidean')
             effective_t, _k_eff, t_source = resolve_clustering_threshold(
                 linkage_matrix, threshold, verbose=VERBOSE)
+            _persist_resolved_threshold(output_base_dir, effective_t, t_source)
             initial_cluster_labels = fcluster(linkage_matrix, t=effective_t, criterion='distance')
             vprint(f"Clustering threshold: τ={effective_t:.4f} ({t_source}), "
                    f"n_c={len(set(initial_cluster_labels))}")
@@ -5100,9 +5137,10 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
             linkage_matrix = linkage(features_scaled, method='average', metric='euclidean')
 
-            # --- Resolve threshold (auto-knee / Mojena / legacy / user) and cluster ---
+            # --- Resolve threshold (auto-knee / legacy / user) and cluster ---
             effective_t, _k_eff, t_source = resolve_clustering_threshold(
                 linkage_matrix, threshold, verbose=VERBOSE)
+            _persist_resolved_threshold(output_base_dir, effective_t, t_source)
             initial_cluster_labels = fcluster(linkage_matrix, t=effective_t, criterion='distance')
             _main_optimal_k = len(set(initial_cluster_labels))
             _main_cut_height = effective_t
@@ -5761,12 +5799,14 @@ MORE INFORMATION:
 """)
     # Clustering threshold: default 'auto' detects the elbow of the merge-height
     # curve per case; pass a float to override (e.g. 2.0 for legacy 2-sigma rule).
-    parser.add_argument("--threshold", "--th", type=str, default="auto", metavar="FLOAT|auto",
+    parser.add_argument("--threshold", "--th", type=str, default="auto", metavar="FLOAT|auto|opt",
                         help="UPGMA distance threshold for dendrogram cut. Default 'auto' "
                              "detects the elbow of the merge-height curve per case "
                              "(recommended for atomic clusters and van der Waals systems). "
                              "Pass a float to override: 2.0 for the legacy 2-sigma rule, "
-                             "0.5 for tight, 3.0-4.0 for loose clustering.")
+                             "0.5 for tight, 3.0-4.0 for loose clustering. "
+                             "'opt' reuses the threshold resolved by the earliest sibling "
+                             "cosmic run (post-opt sim1) — useful for post-refinement cosmic.")
 
     # Geometric validation
     parser.add_argument("--rmsd", type=float, nargs='?', const=1.0, default=None, metavar="FLOAT",
@@ -5824,16 +5864,32 @@ MORE INFORMATION:
         print_version_banner()
         sys.exit(0)
 
-    # Validate --threshold: accept the sentinel "auto" or a float string.
+    # Validate --threshold: accept the sentinels "auto" / "opt" or a float string.
     if isinstance(args.threshold, str) and args.threshold.lower() == "auto":
         args.threshold = "auto"
+    elif isinstance(args.threshold, str) and args.threshold.lower() == "opt":
+        args.threshold = "opt"
     else:
         try:
             args.threshold = float(args.threshold)
         except (TypeError, ValueError):
-            parser.error("--threshold must be 'auto' or a number")
+            parser.error("--threshold must be 'auto', 'opt', or a number")
 
     clustering_threshold = args.threshold
+
+    # Resolve the "opt" sentinel by reading a sibling cosmic's resolved_threshold.txt.
+    # This lets a post-refinement cosmic reuse whatever τ the post-opt cosmic chose,
+    # instead of re-deriving the knee on the refined (tighter) structures.
+    if clustering_threshold == "opt":
+        resolved = _resolve_opt_threshold_from_sibling_cosmic(os.getcwd())
+        if resolved is not None:
+            _opt_value, _opt_source = resolved
+            print(f"--th=opt resolved to τ={_opt_value:.4f} (from sibling cosmic, source={_opt_source})")
+            clustering_threshold = _opt_value
+        else:
+            print("WARNING: --th=opt requested but no sibling cosmic*/resolved_threshold.txt "
+                  "found; falling back to --th=auto.")
+            clustering_threshold = "auto"
     rmsd_validation_threshold = args.rmsd
     output_directory = args.output_dir
     force_reprocess_cache = args.reprocess_files
@@ -5915,7 +5971,7 @@ MORE INFORMATION:
             num_cores=num_cores,
             temperature_k=temperature_k,
             group_hb=args.group_hb,
-            semiweights=args.semiweights
+            semiweights=args.semiweights,
         )
         print(f"\n--- Finished comparing {len(compare_files)} files: {', '.join(file_names)} ---\n")
 
