@@ -11416,12 +11416,20 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
     def miniprint_cleanup() -> None:
         """
-        Reduce disk usage by removing intermediate files, keeping only:
-        - annealing/ as-is
-        - optimization/refinement dirs: combined_results.*, *_summary.txt
-        - cosmic dirs: untouched (preserved as-is so the user can re-run cosmic)
-        - Root: final_ensemble.* or possible_final_ensemble.*, protocol_summary.txt, .asc file
-        - geometry_optimization/geom_opt_out/ only for optimization-only workflows (no refinement)
+        Reduce disk usage so each stage folder keeps only final-motif outputs
+        and useful files. Layout after cleanup:
+        - annealing/ as-is.
+        - geometry_optimization/: combined_results.*, *_summary.txt,
+          geom_opt_out/{motif,umotif}_NN/ (reps mapped to the final ensemble).
+        - geometry_refinement/: combined_results.*, *_summary.txt,
+          geom_ref_out/{motif,umotif}_NN/.
+        - energy_refinement/: combined_results.*, *_summary.txt,
+          energy_ref_out/{motif,umotif}_NN/.
+        - cosmic*/: boltzmann_distribution.txt, clustering_summary.txt,
+          *_summary.txt, motifs_*/, umotifs_*/, dendrogram_images/.
+          Intermediate caches, extracted_*, xtb_out_*/, orca_out_*/, etc. removed.
+        - Root: final_ensemble.* or possible_final_ensemble.*, boltzmann_distribution.txt,
+          protocol_summary.txt, protocol_*.pkl (kept for resume), .asc file.
         """
         import re as _re
 
@@ -11649,49 +11657,30 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         # --- Determine the final prefix (motif vs umotif) ---
         final_prefix = "umotif" if (final_motifs_dir and "umotif" in os.path.basename(final_motifs_dir)) else "motif"
 
+        # Subdirectories inside each stage dir that must survive the cleaning pass.
+        preserve_subdirs: Dict[str, set] = {}
+
+        def _chain_back(start_mapping, from_cosmic_idx, to_cosmic_idx):
+            """Translate final_rank -> stem from cosmic index `from` back to `to`."""
+            rank_to_stem = dict(start_mapping)
+            for chain_idx in range(from_cosmic_idx, to_cosmic_idx, -1):
+                prev_mapping = cosmic_mappings[chain_idx - 1] if chain_idx - 1 >= 0 else {}
+                new_rank_to_stem = {}
+                for final_rank, current_stem in rank_to_stem.items():
+                    intermediate_rank = extract_rank_from_stem(current_stem)
+                    if intermediate_rank is not None and intermediate_rank in prev_mapping:
+                        new_rank_to_stem[final_rank] = prev_mapping[intermediate_rank]
+                rank_to_stem = new_rank_to_stem
+            return rank_to_stem
+
+        final_cosmic_idx = len(cosmic_mappings) - 1
+
         if ref_stages and final_motif_mapping:
-            # Multiple refinement stages: extract from each, chaining through cosmic stages
-            # ref_stages are ordered: first = geometry refinement, last = energy refinement
-            # Each ref stage N is followed by cosmic_dirs[N] (if cosmic_dirs[0] follows opt, cosmic_dirs[1] follows ref1, etc.)
-
-            # The final cosmic mapping (last entry) gives us: final_rank -> last_ref_stem
-            # To reach earlier ref stages, chain backwards through intermediate cosmic mappings
-
+            # Extract final-rank motif folders inside each refinement stage dir.
             for ref_idx, (ref_dir, _, _) in enumerate(ref_stages):
-                # How many cosmic stages back do we need to chain?
-                # ref_stages[0] is followed by cosmic_dirs[1] (cosmic_dirs[0] follows optimization)
-                # ref_stages[1] is followed by cosmic_dirs[2]
-                # The last cosmic_dirs entry is the final one
-                # We need to chain from the final sim backwards to cosmic_dirs[ref_idx + 1]
-
-                # Number of chain steps from final cosmic back to this ref's cosmic
-                # ref_idx=0 (first ref) → its output is analyzed by cosmic_dirs[1] (if opt exists) or cosmic_dirs[0]
-                # The sim index for this ref stage is: ref_idx + len(opt_only_stages)
                 cosmic_for_this_ref = ref_idx + len(opt_only_stages)
+                rank_to_stem = _chain_back(final_motif_mapping, final_cosmic_idx, cosmic_for_this_ref)
 
-                # Build the mapping: final_rank -> stem in this ref stage's calc dir
-                # Start from final_motif_mapping (final_rank -> stem in last ref)
-                rank_to_stem = dict(final_motif_mapping)
-
-                # Chain backwards through cosmic stages
-                # From the final sim mapping back to cosmic_for_this_ref + 1
-                final_cosmic_idx = len(cosmic_mappings) - 1
-                for chain_idx in range(final_cosmic_idx, cosmic_for_this_ref, -1):
-                    # rank_to_stem currently maps final_rank -> stem at chain_idx level
-                    # We need to translate to chain_idx - 1 level
-                    prev_mapping = cosmic_mappings[chain_idx - 1] if chain_idx - 1 >= 0 else {}
-                    new_rank_to_stem = {}
-                    for final_rank, current_stem in rank_to_stem.items():
-                        # current_stem is something like "umotif_05_opt" from this sim level
-                        # Extract the intermediate rank (e.g., 5)
-                        intermediate_rank = extract_rank_from_stem(current_stem)
-                        if intermediate_rank is not None and intermediate_rank in prev_mapping:
-                            # Map to the previous level's stem
-                            new_rank_to_stem[final_rank] = prev_mapping[intermediate_rank]
-                        # else: can't trace further, skip this rank
-                    rank_to_stem = new_rank_to_stem
-
-                # Determine output directory name
                 if len(ref_stages) == 1:
                     out_dir_name = "geom_ref_out"
                 elif ref_idx == len(ref_stages) - 1:
@@ -11701,32 +11690,44 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 else:
                     out_dir_name = f"ref_{ref_idx + 1}_out"
 
-                out_dir = os.path.join(input_root, out_dir_name)
+                out_dir = os.path.join(ref_dir, out_dir_name)
                 count = extract_motif_folders(ref_dir, rank_to_stem, out_dir, final_prefix)
+                if count > 0:
+                    preserve_subdirs.setdefault(ref_dir, set()).add(out_dir_name)
                 if verbose and count > 0:
-                    print(f"  Created {out_dir_name}/ with {count} {final_prefix} folders")
+                    print(f"  Created {ref_dir}/{out_dir_name}/ with {count} {final_prefix} folders")
 
-        elif opt_only_stages and final_motif_mapping:
-            # No refinement stages — extract from the last optimization stage
+        # Always extract final-rank motif folders inside the last optimization stage.
+        if opt_only_stages and final_motif_mapping:
             last_opt_dir = opt_only_stages[-1][0]
-            out_dir = os.path.join(input_root, last_opt_dir, "geom_opt_out")
-            count = extract_motif_folders(last_opt_dir, final_motif_mapping, out_dir, "motif")
+            if ref_stages:
+                # Rigorous/complete: chain back from final cosmic to cosmic_dirs[0] (follows opt).
+                opt_rank_to_stem = _chain_back(final_motif_mapping, final_cosmic_idx, 0)
+                opt_prefix = final_prefix
+            else:
+                # Preliminar: final cosmic directly reflects opt stems.
+                opt_rank_to_stem = dict(final_motif_mapping)
+                opt_prefix = "motif"
+            out_dir = os.path.join(last_opt_dir, "geom_opt_out")
+            count = extract_motif_folders(last_opt_dir, opt_rank_to_stem, out_dir, opt_prefix)
+            if count > 0:
+                preserve_subdirs.setdefault(last_opt_dir, set()).add("geom_opt_out")
             if verbose and count > 0:
-                print(f"  Created {last_opt_dir}/geom_opt_out/ with {count} motif folders")
+                print(f"  Created {last_opt_dir}/geom_opt_out/ with {count} {opt_prefix} folders")
 
         # --- Clean optimization/refinement directories ---
-        # Keep only: combined_results.*, *_summary.txt and (when applicable) geom_opt_out/
+        # Keep only: combined_results.*, *_summary.txt, and the exported motif folder.
         for i, (calc_dir, _, is_ref) in enumerate(opt_dirs):
             if not os.path.isdir(calc_dir):
                 continue
 
+            preserve = preserve_subdirs.get(calc_dir, set())
             kept_root_files = set()
             removed_count = 0
 
             for entry in os.listdir(calc_dir):
                 entry_path = os.path.join(calc_dir, entry)
 
-                # Keep non-directory files that are summaries
                 if os.path.isfile(entry_path):
                     keep = (entry.startswith("combined_results") or
                             entry in ("orca_summary.txt", "xtb_summary.txt", "gaussian_summary.txt") or
@@ -11737,21 +11738,46 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         os.remove(entry_path)
                         removed_count += 1
                 elif os.path.isdir(entry_path):
-                    # Preserve exported motif representative folders for optimization-only runs.
-                    keep_opt_out = (entry == "geom_opt_out" and not is_ref and not ref_stages)
-                    if keep_opt_out:
+                    if entry in preserve:
                         kept_root_files.add(entry)
                         continue
-                    # Remove all other subdirectories (opt_conf_*, motif_* folders)
                     shutil.rmtree(entry_path)
                     removed_count += 1
 
             if verbose and removed_count > 0:
                 label = "geometry_refinement" if is_ref else "geometry_optimization"
-                print(f"  Cleaned {calc_dir}/ ({label}): kept {len(kept_root_files)} summary files")
+                print(f"  Cleaned {calc_dir}/ ({label}): kept {len(kept_root_files)} items")
 
-        # Cosmic directories are left entirely untouched so the user can re-run
-        # cosmic analysis without redoing QM calculations.
+        # --- Clean cosmic directories: keep final motifs and useful summaries only ---
+        for cosmic_dir_path, _ in cosmic_dirs:
+            if not os.path.isdir(cosmic_dir_path):
+                continue
+
+            kept_items = 0
+            removed_count = 0
+            for entry in os.listdir(cosmic_dir_path):
+                entry_path = os.path.join(cosmic_dir_path, entry)
+                keep = False
+                if os.path.isfile(entry_path):
+                    if (entry in ("boltzmann_distribution.txt", "clustering_summary.txt")
+                            or entry.endswith("_summary.txt")):
+                        keep = True
+                elif os.path.isdir(entry_path):
+                    if (entry.startswith("motifs_") or entry.startswith("umotifs_")
+                            or entry == "dendrogram_images"):
+                        keep = True
+
+                if keep:
+                    kept_items += 1
+                elif os.path.isdir(entry_path):
+                    shutil.rmtree(entry_path)
+                    removed_count += 1
+                else:
+                    os.remove(entry_path)
+                    removed_count += 1
+
+            if verbose and removed_count > 0:
+                print(f"  Cleaned {cosmic_dir_path}/: kept {kept_items} useful items")
 
         # --- Report final disk usage ---
         try:
