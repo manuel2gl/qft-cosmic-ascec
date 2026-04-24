@@ -2794,10 +2794,57 @@ def write_cluster_dat_file(dat_file_prefix, cluster_members_data, output_base_di
             f.write("=" * 90 + "\n\n")
 
         # 4. Cluster Summary Header (ALWAYS print this)
-        f.write(f"Cluster (represented by: {dat_file_prefix}) ({num_configurations} configurations)\n\n") 
+        f.write(f"Cluster (represented by: {dat_file_prefix}) ({num_configurations} configurations)\n\n")
         for mol_data in cluster_members_data:
             f.write(f"    - {mol_data['filename']}\n")
         f.write("\n")
+
+        # 4b. Pearson similarity to initial property-cluster representative
+        _pearson_available = any(
+            m.get('_pearson_rep_r') is not None for m in cluster_members_data
+        )
+        if _pearson_available:
+            rep_filename = next(
+                (m.get('_pearson_rep_filename') for m in cluster_members_data
+                 if m.get('_pearson_rep_filename')),
+                None,
+            )
+            tau_val = next(
+                (m.get('_pearson_threshold_tau') for m in cluster_members_data
+                 if m.get('_pearson_threshold_tau') is not None),
+                None,
+            )
+            n_eff_val = next(
+                (m.get('_pearson_n_eff') for m in cluster_members_data
+                 if m.get('_pearson_n_eff')),
+                None,
+            )
+            f.write("Pearson Similarity to Property-Cluster Representative\n")
+            f.write("  r = 1 - d^2/(2 n_eff); similarity = max(0, r) x 100%\n")
+            if rep_filename:
+                f.write(f"  Representative: {rep_filename}\n")
+            if tau_val is not None and n_eff_val:
+                r_th = _pearson_r_from_distance(tau_val, n_eff_val)
+                pct_th = _pearson_similarity_pct(tau_val, n_eff_val)
+                if r_th is not None and pct_th is not None:
+                    f.write(
+                        f"  Cluster-boundary: tau = {tau_val:.3f}, "
+                        f"n_eff = {n_eff_val:.2f}, "
+                        f"r >= {r_th:.3f} ({pct_th:.1f}% similarity)\n"
+                    )
+            for mol_data in cluster_members_data:
+                pct = mol_data.get('_pearson_rep_pct')
+                d = mol_data.get('_pearson_rep_distance')
+                is_rep = mol_data.get('filename') == rep_filename
+                marker = "  (representative)" if is_rep else ""
+                if pct is None or d is None:
+                    f.write(f"    - {mol_data['filename']}: similarity = N/A{marker}\n")
+                else:
+                    f.write(
+                        f"    - {mol_data['filename']}: "
+                        f"d = {d:.3f}, similarity = {pct:.1f}%{marker}\n"
+                    )
+            f.write("\n")
 
         # 5. Deviation Analysis (ONLY for clusters with >1 configuration)
         if num_configurations > 1:
@@ -3862,23 +3909,45 @@ def _build_feature_vectors(mols, scalar_features, use_rotconsts, weights):
 
 
 def _zscore_scale(raw_np, feature_names, min_std_threshold, abs_tolerances):
-    """Z-score standardize a feature matrix column-wise.  Returns scaled array."""
+    """Z-score standardise a feature matrix column-wise and drop columns that
+    carry no discriminating information: either (i) the feature varies by
+    less than its user-specified absolute tolerance across the pool, or
+    (ii) the population standard deviation is below ``min_std_threshold``.
+    Such columns would contribute nothing to pairwise distances and are
+    removed from the vector entirely rather than retained as zeros.
+
+    Returns
+    -------
+    scaled : np.ndarray
+        Z-scored matrix with shape (n_samples, n_active).
+    active_feature_names : list[str]
+        Names of the columns that survived, in the same order as *scaled*.
+    dropped_feature_names : list[str]
+        Names of the columns that were removed (for diagnostics).
+    """
     from sklearn.preprocessing import StandardScaler
-    scaled = np.zeros_like(raw_np)
+    scaled_cols = []
+    active_feature_names = []
+    dropped_feature_names = []
     for col in range(raw_np.shape[1]):
         col_data = raw_np[:, col]
         fname = feature_names[col]
         max_diff = np.max(col_data) - np.min(col_data)
         if fname in abs_tolerances and max_diff < abs_tolerances[fname]:
-            scaled[:, col] = 0.0
-        else:
-            std = np.std(col_data)
-            if std < min_std_threshold:
-                scaled[:, col] = 0.0
-            else:
-                scaler = StandardScaler()
-                scaled[:, col] = scaler.fit_transform(col_data.reshape(-1, 1)).flatten()
-    return scaled
+            dropped_feature_names.append(fname)
+            continue
+        std = np.std(col_data)
+        if std < min_std_threshold:
+            dropped_feature_names.append(fname)
+            continue
+        scaler = StandardScaler()
+        scaled_cols.append(scaler.fit_transform(col_data.reshape(-1, 1)).flatten())
+        active_feature_names.append(fname)
+    if scaled_cols:
+        scaled = np.column_stack(scaled_cols)
+    else:
+        scaled = np.zeros((raw_np.shape[0], 0), dtype=raw_np.dtype)
+    return scaled, active_feature_names, dropped_feature_names
 
 
 def _apply_weights(scaled, feature_names, weights):
@@ -3888,6 +3957,80 @@ def _apply_weights(scaled, feature_names, weights):
         if w != 1.0:
             scaled[:, col_idx] *= w
     return scaled
+
+
+def _effective_n_features(scaled_matrix):
+    """Effective number of features used in the weighted Pearson identity
+    d^2 = 2 n_eff (1 - r). Constant/within-tolerance features have already
+    been dropped upstream (see _zscore_scale), so every column here has unit
+    variance before weighting. After column-wise weighting by w_k, the pool
+    variance of column k is w_k^2, and sum(w_k^2) over the remaining columns
+    is exactly the n_eff that appears in the Pearson identity when the
+    weights are folded into the vectors."""
+    if scaled_matrix.size == 0:
+        return 0.0
+    return float(np.sum(np.var(scaled_matrix, axis=0)))
+
+
+def _pearson_r_from_distance(d, n_eff):
+    """Pearson correlation between two (weighted) z-standardised feature
+    vectors, derived from their Euclidean distance d via
+    r = 1 - d^2 / (2 n_eff). Returns None if n_eff is not positive; clamps
+    the result to [-1, 1] for numerical safety."""
+    if n_eff is None or n_eff <= 0:
+        return None
+    r = 1.0 - (float(d) * float(d)) / (2.0 * float(n_eff))
+    if r > 1.0:
+        return 1.0
+    if r < -1.0:
+        return -1.0
+    return r
+
+
+def _pearson_similarity_pct(d, n_eff):
+    """Pearson-based similarity as a percentage in [0, 100]. Negative r is
+    clamped at 0%. Returns None if n_eff is not positive."""
+    r = _pearson_r_from_distance(d, n_eff)
+    if r is None:
+        return None
+    return max(0.0, r) * 100.0
+
+
+def _attach_pearson_to_rep(mols, scaled_matrix, cluster_labels, tau):
+    """For each mol in *mols*, find the lowest-energy member of its cluster
+    (the property-cluster representative) and record the Pearson similarity
+    of the mol to that representative. Uses the weighted z-scored vectors in
+    *scaled_matrix* (same row order as *mols*)."""
+    n_eff = _effective_n_features(scaled_matrix)
+    rep_by_label = {}
+    for idx, lbl in enumerate(cluster_labels):
+        current = rep_by_label.get(lbl)
+        mol = mols[idx]
+        if current is None or (_sorting_energy(mol), mol['filename']) < current[2]:
+            rep_by_label[lbl] = (idx, mol, (_sorting_energy(mol), mol['filename']))
+    for idx, mol in enumerate(mols):
+        lbl = cluster_labels[idx]
+        rep_idx, rep_mol, _ = rep_by_label[lbl]
+        d = float(np.linalg.norm(scaled_matrix[idx] - scaled_matrix[rep_idx]))
+        mol['_pearson_rep_filename'] = rep_mol['filename']
+        mol['_pearson_rep_distance'] = d
+        mol['_pearson_n_eff'] = n_eff
+        mol['_pearson_rep_r'] = _pearson_r_from_distance(d, n_eff)
+        mol['_pearson_rep_pct'] = _pearson_similarity_pct(d, n_eff)
+        mol['_pearson_threshold_tau'] = float(tau) if tau is not None else None
+
+
+def _threshold_entry(tau, scaled_matrix, source, group_label=None):
+    """Build a resolved-threshold summary entry with its Pearson equivalent."""
+    n_eff = _effective_n_features(scaled_matrix)
+    return {
+        'tau': float(tau),
+        'n_eff': n_eff,
+        'r_thresh': _pearson_r_from_distance(tau, n_eff),
+        'pct_thresh': _pearson_similarity_pct(tau, n_eff),
+        'source': source,
+        'group_label': group_label,
+    }
 
 
 def _match_reduced_to_clusters(
@@ -3961,21 +4104,35 @@ def _match_reduced_to_clusters(
             continue
 
         raw_np = np.array(raw_vecs, dtype=float)
-        scaled = _zscore_scale(raw_np, feat_names, min_std_threshold, abs_tolerances)
-        scaled = _apply_weights(scaled, feat_names, weights)
+        scaled, active_feat_names, _ = _zscore_scale(
+            raw_np, feat_names, min_std_threshold, abs_tolerances)
+        if scaled.shape[1] == 0:
+            unmatched.extend(tier_mols)
+            continue
+        scaled = _apply_weights(scaled, active_feat_names, weights)
+
+        n_eff_reduced = _effective_n_features(scaled)
 
         # Match each reduced structure to nearest representative
         for idx, mol in enumerate(tier_mols):
             mol_vec = scaled[n_fullest + idx]
             best_dist = float('inf')
             best_label = None
+            best_rep = None
             for lbl, rep in representatives.items():
                 rep_pos = fullest_idx[id(rep)]
                 dist = np.linalg.norm(mol_vec - scaled[rep_pos])
                 if dist < best_dist:
                     best_dist = dist
                     best_label = lbl
+                    best_rep = rep
             if best_dist <= threshold:
+                mol['_pearson_rep_filename'] = best_rep['filename']
+                mol['_pearson_rep_distance'] = float(best_dist)
+                mol['_pearson_n_eff'] = n_eff_reduced
+                mol['_pearson_rep_r'] = _pearson_r_from_distance(best_dist, n_eff_reduced)
+                mol['_pearson_rep_pct'] = _pearson_similarity_pct(best_dist, n_eff_reduced)
+                mol['_pearson_threshold_tau'] = float(threshold) if threshold is not None else None
                 matched_by_label[best_label].append(mol)
             else:
                 unmatched.append(mol)
@@ -4910,6 +5067,7 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
     summary_file_content_lines = []
     comparison_specific_summary_lines = [] # New list for comparison-specific details
+    resolved_threshold_entries = []
 
     total_clusters_outputted = 0
     total_rmsd_outliers_first_pass = 0
@@ -4962,6 +5120,7 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
         summary_file_content_lines.append(f"COSMIC threshold (distance): auto (per-case knee detection)")
     else:
         summary_file_content_lines.append(f"COSMIC threshold (distance): {threshold}")
+    summary_file_content_lines.append("<THRESHOLD_PEARSON_PLACEHOLDER>")
     
     if rmsd_threshold is not None:
         summary_file_content_lines.append(f"RMSD validation threshold: {rmsd_threshold:.3f} Å")
@@ -5096,8 +5255,12 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                 continue
 
             features_for_scaling_raw_np = np.array(features_for_scaling_raw, dtype=float)
-            features_scaled = _zscore_scale(features_for_scaling_raw_np, ordered_feature_names_for_scaling, min_std_threshold, abs_tolerances)
-            features_scaled = _apply_weights(features_scaled, ordered_feature_names_for_scaling, weights)
+            features_scaled, active_feat_names, dropped_constant = _zscore_scale(
+                features_for_scaling_raw_np, ordered_feature_names_for_scaling,
+                min_std_threshold, abs_tolerances)
+            if dropped_constant:
+                vprint(f"  Dropped constant/within-tolerance features: {', '.join(dropped_constant)}")
+            features_scaled = _apply_weights(features_scaled, active_feat_names, weights)
 
             linkage_matrix = linkage(features_scaled, method='average', metric='euclidean')
             effective_t, _k_eff, t_source = resolve_clustering_threshold(
@@ -5302,8 +5465,12 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
             # Z-score scaling
             features_for_scaling_raw_np = np.array(features_for_scaling_raw, dtype=float)
-            features_scaled = _zscore_scale(features_for_scaling_raw_np, ordered_feature_names_for_scaling, min_std_threshold, abs_tolerances)
-            features_scaled = _apply_weights(features_scaled, ordered_feature_names_for_scaling, weights)
+            features_scaled, active_feat_names, dropped_constant = _zscore_scale(
+                features_for_scaling_raw_np, ordered_feature_names_for_scaling,
+                min_std_threshold, abs_tolerances)
+            if dropped_constant:
+                vprint(f"  Dropped constant/within-tolerance features: {', '.join(dropped_constant)}")
+            features_scaled = _apply_weights(features_scaled, active_feat_names, weights)
 
             linkage_matrix = linkage(features_scaled, method='average', metric='euclidean')
 
@@ -5315,6 +5482,13 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             _main_optimal_k = len(set(initial_cluster_labels))
             _main_cut_height = effective_t
             vprint(f"Clustering threshold: τ={effective_t:.4f} ({t_source}), n_c={_main_optimal_k}")
+
+            if not is_compare_mode:
+                _attach_pearson_to_rep(_clustering_pool, features_scaled,
+                                       initial_cluster_labels, effective_t)
+                resolved_threshold_entries.append(_threshold_entry(
+                    effective_t, features_scaled, t_source,
+                    group_label=(hbond_count if group_hb else None)))
 
             _mojena_t, _mojena_k = compute_mojena_threshold(linkage_matrix, verbose=VERBOSE)
 
@@ -5620,7 +5794,38 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     else:
         reduced_unmatched_str = str(len(reduced_unmatched_critical))
 
+    if is_compare_mode or not resolved_threshold_entries:
+        _pearson_threshold_text = "COSMIC threshold (similarity): N/A"
+    elif len(resolved_threshold_entries) == 1:
+        _e = resolved_threshold_entries[0]
+        if _e['r_thresh'] is not None and _e['pct_thresh'] is not None:
+            _pearson_threshold_text = (
+                f"COSMIC threshold (similarity): "
+                f"r >= {_e['r_thresh']:.3f} ({_e['pct_thresh']:.1f}%) "
+                f"[tau = {_e['tau']:.3f}, n_eff = {_e['n_eff']:.2f}, source = {_e['source']}]"
+            )
+        else:
+            _pearson_threshold_text = "COSMIC threshold (similarity): N/A"
+    else:
+        _lines = ["COSMIC threshold (similarity, per group):"]
+        for _e in resolved_threshold_entries:
+            _label = (f"H={_e['group_label']}" if _e['group_label'] is not None
+                      else "all")
+            if _e['r_thresh'] is not None and _e['pct_thresh'] is not None:
+                _lines.append(
+                    f"  - {_label}: r >= {_e['r_thresh']:.3f} "
+                    f"({_e['pct_thresh']:.1f}%) "
+                    f"[tau = {_e['tau']:.3f}, n_eff = {_e['n_eff']:.2f}, "
+                    f"source = {_e['source']}]"
+                )
+            else:
+                _lines.append(f"  - {_label}: N/A")
+        _pearson_threshold_text = "\n".join(_lines)
+
     for i, line in enumerate(summary_file_content_lines):
+        if "<THRESHOLD_PEARSON_PLACEHOLDER>" in line:
+            summary_file_content_lines[i] = line.replace(
+                "<THRESHOLD_PEARSON_PLACEHOLDER>", _pearson_threshold_text)
         if "<TOTAL_CLUSTERS_PLACEHOLDER>" in line:
             summary_file_content_lines[i] = line.replace("<TOTAL_CLUSTERS_PLACEHOLDER>", str(total_clusters_outputted))
         if "<TOTAL_RMSD_OUTLIERS_PLACEHOLDER>" in line:
