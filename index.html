@@ -3411,21 +3411,21 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <label>Max Iterations</label>
                             <input type="number" id="adv-opt-maxiter" value="200" min="1" oninput="updateAllPreviews()">
                         </div>
-                        <div class="form-group" style="flex:1.2; min-width:220px; margin-bottom:0;">
-                            <label class="auto-box-compact" title="Auto-enable for preliminar semiempirical/xTB optimization; disable for DFT or post-HF.">
-                                <input type="checkbox" id="adv-cosmic-semiweights" checked onchange="toggleSemiweightsFlag()">
-                                Use semiempirical weights (<code>--semiweights</code>)
-                            </label>
-                        </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group" id="adv-opt-xtb-level-group" style="display:none;">
                             <label>xTB Opt Level</label>
                             <select id="adv-opt-xtb-level" onchange="updateAllPreviews()">
-                                <option value="normal" selected>Normal</option>
-                                <option value="tight">Tight</option>
+                                <option value="normal">Normal</option>
+                                <option value="tight" selected>Tight</option>
                                 <option value="vtight">Very Tight</option>
                             </select>
+                        </div>
+                        <div class="form-group" id="adv-opt-semiweights-group" style="display:flex; align-items:flex-end;">
+                            <label class="auto-box-compact" title="Auto-enable for preliminar semiempirical/xTB optimization; disable for DFT or post-HF." style="white-space:nowrap; padding-bottom:8px;">
+                                <input type="checkbox" id="adv-cosmic-semiweights" checked onchange="toggleSemiweightsFlag()">
+                                Use semiempirical weights (<code>--semiweights</code>)
+                            </label>
                         </div>
                     </div>
                     <div class="form-row">
