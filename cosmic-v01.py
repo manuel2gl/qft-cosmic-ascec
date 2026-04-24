@@ -3625,6 +3625,169 @@ SEMIEMPIRICAL_WEIGHTS = {
 DEFAULT_WEIGHTS = {k: 1.0 for k in SEMIEMPIRICAL_WEIGHTS}
 
 
+# Display units for the --data extractor.  Labels are embedded in the
+# features.csv header (electronic_energy_(Hartree), etc.).  homo_lumo_gap is
+# stored in eV in the cache but emitted in Hartree for consistency with
+# homo_energy / lumo_energy.
+_EXTRACT_FEATURE_UNITS = {
+    'electronic_energy': 'Hartree',
+    'gibbs_free_energy': 'Hartree',
+    'homo_energy': 'Hartree',
+    'lumo_energy': 'Hartree',
+    'homo_lumo_gap': 'Hartree',
+    'dipole_moment': 'Debye',
+    'radius_of_gyration': 'A',
+    'first_vib_freq': 'cm^-1',
+    'last_vib_freq': 'cm^-1',
+    'average_hbond_distance': 'A',
+    'average_hbond_angle': 'deg',
+    'rotational_constants_A': 'cm^-1',
+    'rotational_constants_B': 'cm^-1',
+    'rotational_constants_C': 'cm^-1',
+}
+
+
+def _extract_labeled(name):
+    unit = _EXTRACT_FEATURE_UNITS.get(name)
+    return f"{name}_({unit})" if unit else name
+
+
+def run_data_extraction(pkl_path, out_dir=None):
+    """Dump per-configuration feature vectors from a data_cache_*.pkl file.
+
+    Writes features.csv (labeled + cluster column), matrix.csv (numeric, no
+    header), and matrix.npy next to the cache (or to out_dir).  Returns 0 on
+    success, nonzero on error.
+    """
+    if not os.path.isfile(pkl_path):
+        print(f"Error: cache file not found: {pkl_path}")
+        return 1
+
+    try:
+        with open(pkl_path, 'rb') as fh:
+            cache = pickle.load(fh)
+    except Exception as exc:
+        print(f"Error: could not read cache file {pkl_path}: {exc}")
+        return 1
+
+    if isinstance(cache, dict) and 'successful' in cache:
+        entries = cache.get('successful') or []
+        skipped = cache.get('skipped') or []
+    elif isinstance(cache, list):
+        entries = cache
+        skipped = []
+    else:
+        print(f"Error: unexpected cache format: {type(cache).__name__}")
+        return 1
+
+    if not entries:
+        print("Error: cache contains no successful entries.")
+        return 1
+
+    cache_dir = os.path.dirname(os.path.abspath(pkl_path))
+    target_dir = out_dir or cache_dir
+    os.makedirs(target_dir, exist_ok=True)
+
+    feature_columns = CLUSTERING_NUMERICAL_FEATURES + ROTATIONAL_CONSTANT_SUBFEATURES
+
+    def _natural_key(entry):
+        fname = entry.get('filename', '') or ''
+        m = re.search(r'(\d+)', fname)
+        return (int(m.group(1)) if m else 0, fname)
+
+    entries = sorted(entries, key=_natural_key)
+
+    filenames = []
+    rows = []
+    for entry in entries:
+        filenames.append(entry.get('filename', '') or '')
+        row = []
+        for feat in feature_columns:
+            val = float('nan')
+            if feat.startswith('rotational_constants_'):
+                axis_idx = {'A': 0, 'B': 1, 'C': 2}[feat[-1]]
+                rc = entry.get('rotational_constants')
+                if rc is not None and hasattr(rc, '__len__') and len(rc) > axis_idx:
+                    try:
+                        val = float(rc[axis_idx])
+                    except (TypeError, ValueError):
+                        val = float('nan')
+            else:
+                key = FEATURE_MAPPING.get(feat, feat)
+                raw = entry.get(key)
+                if raw is not None:
+                    try:
+                        val = float(raw)
+                    except (TypeError, ValueError):
+                        val = float('nan')
+                if feat == 'homo_lumo_gap' and np.isfinite(val):
+                    # Cache stores gap in eV; emit Hartree for consistency.
+                    val = val / HARTREE_TO_EV
+            row.append(val)
+        rows.append(row)
+
+    matrix = np.array(rows, dtype=float)
+
+    # Parse clustering_summary.txt (same dir as cache) for cluster labels.
+    summary_path = os.path.join(cache_dir, 'clustering_summary.txt')
+    cluster_map = {}
+    if os.path.isfile(summary_path):
+        try:
+            with open(summary_path) as fh:
+                current = None
+                for line in fh:
+                    m = re.match(r'^Cluster\s+(\d+)', line)
+                    if m:
+                        current = int(m.group(1))
+                        continue
+                    m = re.match(r'^\s*-\s+(\S+)', line)
+                    if m and current is not None:
+                        cluster_map[m.group(1)] = current
+                        continue
+                    if not line.strip():
+                        current = None
+        except Exception as exc:
+            print(f"Warning: failed to parse {summary_path}: {exc}")
+    else:
+        print(f"Note: clustering_summary.txt not found at {summary_path}; cluster column will be blank.")
+
+    features_csv = os.path.join(target_dir, 'features.csv')
+    matrix_csv = os.path.join(target_dir, 'matrix.csv')
+    matrix_npy = os.path.join(target_dir, 'matrix.npy')
+
+    header = ['filename'] + [_extract_labeled(f) for f in feature_columns] + ['cluster']
+    with open(features_csv, 'w') as fh:
+        fh.write(','.join(header) + '\n')
+        for fname, row in zip(filenames, matrix):
+            fields = [fname]
+            for v in row:
+                fields.append('' if not np.isfinite(v) else f'{v:.9g}')
+            fields.append(str(cluster_map.get(fname, '')))
+            fh.write(','.join(fields) + '\n')
+
+    np.savetxt(matrix_csv, matrix, fmt='%.9g', delimiter=',')
+    np.save(matrix_npy, matrix)
+
+    all_nan_cols = [
+        _extract_labeled(feature_columns[i])
+        for i in range(matrix.shape[1])
+        if np.all(np.isnan(matrix[:, i]))
+    ]
+    labeled_populated = sum(1 for fn in filenames if fn in cluster_map)
+
+    print(f"Wrote {features_csv}")
+    print(f"Wrote {matrix_csv}")
+    print(f"Wrote {matrix_npy}")
+    print(f"Rows (configurations): {matrix.shape[0]}")
+    print(f"Feature columns: {matrix.shape[1]} ({', '.join(feature_columns)})")
+    if all_nan_cols:
+        print(f"All-NaN columns: {', '.join(all_nan_cols)}")
+    print(f"Cluster labels populated for {labeled_populated}/{len(filenames)} rows.")
+    if skipped:
+        print(f"Cache also recorded {len(skipped)} skipped file(s) (not included in output).")
+    return 0
+
+
 def is_valid_scalar(value):
     if value is None:
         return False
@@ -5879,15 +6042,7 @@ MORE INFORMATION:
 
     # --data: dump feature vectors from the given cache file and exit.
     if args.data:
-        if not os.path.isfile(args.data):
-            print(f"Error: --data cache file not found: {args.data}")
-            sys.exit(1)
-        try:
-            from cosmic_extract import run as _extract_run
-        except ImportError as _e:
-            print(f"Error: could not import cosmic_extract: {_e}")
-            sys.exit(1)
-        sys.exit(_extract_run(args.data, out_dir=args.output_dir))
+        sys.exit(run_data_extraction(args.data, out_dir=args.output_dir))
 
     # Validate --threshold: accept the sentinels "auto" / "opt" or a float string.
     if isinstance(args.threshold, str) and args.threshold.lower() == "auto":
