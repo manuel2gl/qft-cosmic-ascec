@@ -459,18 +459,19 @@ def calculate_rotational_constants(atomnos, atomcoords):
     Calculate rotational constants (A, B, C) from the moment of inertia tensor.
 
     Uses the principal moments of inertia Ia <= Ib <= Ic (in amu*Å²)
-    and converts to rotational constants A >= B >= C (in GHz) via:
+    and converts to rotational constants A >= B >= C (in cm^-1) via:
 
-        X = h / (8 π² Ix)
+        X = h / (8 π² c Ix)
 
-    where h is Planck's constant and Ix is a principal moment.
+    where h is Planck's constant, c is the speed of light, and Ix is a principal
+    moment.
 
     Args:
         atomnos (array): Atomic numbers.
         atomcoords (array): Atomic coordinates (N, 3) in Angstroms.
 
     Returns:
-        numpy.ndarray of shape (3,) with [A, B, C] in GHz, or None on error.
+        numpy.ndarray of shape (3,) with [A, B, C] in cm^-1, or None on error.
     """
     try:
         symbols = [atomic_number_to_symbol(n) for n in atomnos]
@@ -509,8 +510,9 @@ def calculate_rotational_constants(atomnos, atomcoords):
         # 1 amu = 1.66053906660e-27 kg, 1 Å = 1e-10 m
         amu_ang2_to_kg_m2 = 1.66053906660e-27 * (1e-10)**2  # 1.66053906660e-47
 
-        # h / (8 π²) in SI (J·s / rad²) → divide by I in kg·m² → Hz → GHz
+        # h / (8 π²) in SI (J·s / rad²) → divide by I in kg·m² → Hz → cm^-1
         h = 6.62607015e-34  # J·s
+        c_cm_per_s = 2.99792458e10  # speed of light in cm/s
         factor = h / (8.0 * np.pi**2)  # J·s / rad²
 
         rot_consts = []
@@ -520,7 +522,7 @@ def calculate_rotational_constants(atomnos, atomcoords):
             else:
                 I_si = I_val * amu_ang2_to_kg_m2
                 freq_hz = factor / I_si
-                rot_consts.append(freq_hz * 1e-9)  # Hz → GHz
+                rot_consts.append(freq_hz / c_cm_per_s)  # Hz → cm^-1
 
         # Convention: A >= B >= C
         rot_consts.sort(reverse=True)
@@ -1430,7 +1432,8 @@ def extract_properties_with_cclib(logfile_path):
                         rot_consts_candidate = data.rotconsts  # type: ignore
                 
                 if rot_consts_candidate is not None and rot_consts_candidate.ndim == 1 and len(rot_consts_candidate) == 3:
-                    extracted_props['rotational_constants'] = rot_consts_candidate.astype(float)
+                    # cclib reports rotational constants in GHz; normalize to cm^-1
+                    extracted_props['rotational_constants'] = rot_consts_candidate.astype(float) / 29.9792458
                 else:
                     # Silently skip if unexpected format (will try custom parse below)
                     extracted_props['rotational_constants'] = None
@@ -1935,16 +1938,20 @@ def _extract_vibfreqs_from_file_opi(lines, extracted_props, logfile_path):
             print(f"  DEBUG: Error extracting frequencies from {os.path.basename(logfile_path)}: {e}")
 
 def _extract_rotconsts_from_file_opi(lines):
-    """Extract rotational constants from ORCA output file lines."""
+    """Extract rotational constants from ORCA output file lines, normalized to cm^-1."""
     try:
         last_match = None
         for line in lines:
-            if 'Rotational constants in cm-1:' in line or 'Rotational constants in MHz:' in line:
+            is_cm = 'Rotational constants in cm-1:' in line
+            is_mhz = 'Rotational constants in MHz:' in line
+            if is_cm or is_mhz:
                 parts = line.split(':')
                 if len(parts) > 1:
                     values = parts[1].strip().split()
                     if len(values) >= 3:
-                        last_match = np.array([float(values[0]), float(values[1]), float(values[2])])
+                        arr = np.array([float(values[0]), float(values[1]), float(values[2])])
+                        # MHz → cm^-1 : divide by c[cm/s] × 1e-6 = 29979.2458
+                        last_match = arr / 29979.2458 if is_mhz else arr
         return last_match
     except:
         pass
@@ -2801,14 +2808,14 @@ def write_cluster_dat_file(dat_file_prefix, cluster_members_data, output_base_di
             _deviation_entries = [
                 ("Electronic Energy (Hartree)", lambda d: d.get('final_electronic_energy'), "electronic_energy"),
                 ("Gibbs Free Energy (Hartree)", lambda d: d.get('gibbs_free_energy'), "gibbs_free_energy"),
-                ("HOMO Energy (eV)", lambda d: d.get('homo_energy'), "homo_energy"),
-                ("LUMO Energy (eV)", lambda d: d.get('lumo_energy'), "lumo_energy"),
-                ("HOMO-LUMO Gap (eV)", lambda d: d.get('homo_lumo_gap'), "homo_lumo_gap"),
+                ("HOMO Energy (Hartree)", lambda d: d.get('homo_energy'), "homo_energy"),
+                ("LUMO Energy (Hartree)", lambda d: d.get('lumo_energy'), "lumo_energy"),
+                ("HOMO-LUMO Gap (Hartree)", lambda d: d.get('homo_lumo_gap'), "homo_lumo_gap"),
                 ("Dipole Moment (Debye)", lambda d: d.get('dipole_moment'), "dipole_moment"),
                 ("Radius of Gyration (Å)", lambda d: d.get('radius_of_gyration'), "radius_of_gyration"),
-                ("Rotational Constant A (GHz)", lambda d: d['rotational_constants'][0] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_A"),
-                ("Rotational Constant B (GHz)", lambda d: d['rotational_constants'][1] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_B"),
-                ("Rotational Constant C (GHz)", lambda d: d['rotational_constants'][2] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_C"),
+                ("Rotational Constant A (cm^-1)", lambda d: d['rotational_constants'][0] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_A"),
+                ("Rotational Constant B (cm^-1)", lambda d: d['rotational_constants'][1] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_B"),
+                ("Rotational Constant C (cm^-1)", lambda d: d['rotational_constants'][2] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_C"),
                 ("First Vibrational Frequency (cm^-1)", lambda d: d.get('first_vib_freq'), "first_vib_freq"),
                 ("Last Vibrational Frequency (cm^-1)", lambda d: d.get('last_vib_freq'), "last_vib_freq"),
                 ("Average H-Bond Distance (Å)", lambda d: d.get('average_hbond_distance'), "average_hbond_distance"),
@@ -2922,9 +2929,9 @@ def write_cluster_dat_file(dat_file_prefix, cluster_members_data, output_base_di
                 mol_data.get('gibbs_free_energy'),
                 lambda value: f"{value:.6f} Hartree ({hartree_to_kcal_mol(value):.2f} kcal/mol, {hartree_to_ev(value):.2f} eV)"
             )
-            write_scalar_descriptor_line(f, "HOMO Energy (eV)", mol_data.get('homo_energy'), lambda value: f"{value:.6f}")
-            write_scalar_descriptor_line(f, "LUMO Energy (eV)", mol_data.get('lumo_energy'), lambda value: f"{value:.6f}")
-            write_scalar_descriptor_line(f, "HOMO-LUMO Gap (eV)", mol_data.get('homo_lumo_gap'), lambda value: f"{value:.6f}")
+            write_scalar_descriptor_line(f, "HOMO Energy (Hartree)", mol_data.get('homo_energy'), lambda value: f"{value:.6f}")
+            write_scalar_descriptor_line(f, "LUMO Energy (Hartree)", mol_data.get('lumo_energy'), lambda value: f"{value:.6f}")
+            write_scalar_descriptor_line(f, "HOMO-LUMO Gap (Hartree)", mol_data.get('homo_lumo_gap'), lambda value: f"{value / HARTREE_TO_EV:.6f}")
         f.write("\n")
 
         f.write("Molecular configuration descriptors:\n")
@@ -2933,9 +2940,9 @@ def write_cluster_dat_file(dat_file_prefix, cluster_members_data, output_base_di
             write_scalar_descriptor_line(f, "Dipole Moment (Debye)", mol_data.get('dipole_moment'), lambda value: f"{value:.6f}")
             rc = mol_data.get('rotational_constants')
             if rc is not None and isinstance(rc, np.ndarray) and rc.ndim == 1 and len(rc) == 3:
-                f.write(f"        Rotational Constants (GHz): {rc[0]:.6f}, {rc[1]:.6f}, {rc[2]:.6f}\n")
+                f.write(f"        Rotational Constants (cm^-1): {rc[0]:.6f}, {rc[1]:.6f}, {rc[2]:.6f}\n")
             else:
-                f.write("        Rotational Constants (GHz): N/A\n")
+                f.write("        Rotational Constants (cm^-1): N/A\n")
             write_scalar_descriptor_line(f, "Radius of Gyration (Å)", mol_data.get('radius_of_gyration'), lambda value: f"{value:.6f}")
             write_scalar_descriptor_line(f, "Average H-Bond Distance (Å)", mol_data.get('average_hbond_distance'), lambda value: f"{value:.6f}")
             write_scalar_descriptor_line(f, "Average H-Bond Angle (°)", mol_data.get('average_hbond_angle'), lambda value: f"{value:.6f}")
@@ -4330,12 +4337,12 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     # Available features:
     # - electronic_energy: Final electronic energy (Hartree)
     # - gibbs_free_energy: Gibbs free energy (Hartree) 
-    # - homo_energy: HOMO energy (eV)
-    # - lumo_energy: LUMO energy (eV)
-    # - homo_lumo_gap: HOMO-LUMO gap (eV)
+    # - homo_energy: HOMO energy (Hartree)
+    # - lumo_energy: LUMO energy (Hartree)
+    # - homo_lumo_gap: HOMO-LUMO gap (Hartree)
     # - dipole_moment: Dipole moment (Debye)
     # - radius_of_gyration: Radius of gyration (Å)
-    # - rotational_constants_A/B/C: Rotational constants (GHz)
+    # - rotational_constants_A/B/C: Rotational constants (cm^-1)
     # - first_vib_freq: First vibrational frequency (cm⁻¹)
     # - last_vib_freq: Last vibrational frequency (cm⁻¹)
     # - average_hbond_distance: Average hydrogen bond distance (Å)
@@ -5842,6 +5849,12 @@ MORE INFORMATION:
                              "(down-weights noisy orbital, dipole, and H-bond features). "
                              "Recommended for PM3/AM1/xTB; leave off for DFT/post-HF.")
 
+    parser.add_argument("--data", type=str, default=None, metavar="PKL",
+                        help="extract per-configuration feature vectors from the given "
+                             "data_cache_*.pkl file and write features.csv (labeled, with units "
+                             "+ cluster column), matrix.csv, and matrix.npy next to it "
+                             "(override with --output-dir). Exits after writing; skips clustering.")
+
     # Hidden/advanced options
     parser.add_argument("--min-std-threshold", type=float, default=1e-6,
                         help=argparse.SUPPRESS)
@@ -5863,6 +5876,18 @@ MORE INFORMATION:
     if args.version:
         print_version_banner()
         sys.exit(0)
+
+    # --data: dump feature vectors from the given cache file and exit.
+    if args.data:
+        if not os.path.isfile(args.data):
+            print(f"Error: --data cache file not found: {args.data}")
+            sys.exit(1)
+        try:
+            from cosmic_extract import run as _extract_run
+        except ImportError as _e:
+            print(f"Error: could not import cosmic_extract: {_e}")
+            sys.exit(1)
+        sys.exit(_extract_run(args.data, out_dir=args.output_dir))
 
     # Validate --threshold: accept the sentinels "auto" / "opt" or a float string.
     if isinstance(args.threshold, str) and args.threshold.lower() == "auto":
