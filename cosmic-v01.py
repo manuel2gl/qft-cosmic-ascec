@@ -3702,9 +3702,11 @@ def _extract_labeled(name):
 def run_data_extraction(pkl_path, out_dir=None):
     """Dump per-configuration feature vectors from a data_cache_*.pkl file.
 
-    Writes features.csv (labeled + cluster column), matrix.csv (numeric, no
-    header), and matrix.npy next to the cache (or to out_dir).  Returns 0 on
-    success, nonzero on error.
+    Writes features.csv (labeled, units in header), matrix.csv (numeric, no
+    header), and matrix.npy next to the cache (or to out_dir).  Columns that
+    are entirely NaN are dropped, and the cluster column is only included when
+    cluster labels were resolved — both keep the file clean for Excel import.
+    Returns 0 on success, nonzero on error.
     """
     if not os.path.isfile(pkl_path):
         print(f"Error: cache file not found: {pkl_path}")
@@ -3802,34 +3804,47 @@ def run_data_extraction(pkl_path, out_dir=None):
     matrix_csv = os.path.join(target_dir, 'matrix.csv')
     matrix_npy = os.path.join(target_dir, 'matrix.npy')
 
-    header = ['filename'] + [_extract_labeled(f) for f in feature_columns] + ['cluster']
+    # Drop columns that are entirely NaN so Excel's import wizard can classify
+    # every remaining column as Number. Whole-NaN columns appear when the cache
+    # lacks features (e.g. single-point xTB jobs have no gibbs/vib/h-bond data).
+    keep_mask = ~np.all(np.isnan(matrix), axis=0) if matrix.size else np.ones(len(feature_columns), dtype=bool)
+    dropped_cols = [_extract_labeled(feature_columns[i]) for i in range(len(feature_columns)) if not keep_mask[i]]
+    kept_features = [feature_columns[i] for i in range(len(feature_columns)) if keep_mask[i]]
+    kept_matrix = matrix[:, keep_mask] if matrix.size else matrix
+
+    # Drop the trailing cluster column when no labels were resolved — a row of
+    # trailing commas confuses Excel's column-type detection.
+    include_cluster = bool(cluster_map)
+
+    header = ['filename'] + [_extract_labeled(f) for f in kept_features]
+    if include_cluster:
+        header.append('cluster')
     with open(features_csv, 'w') as fh:
         fh.write(','.join(header) + '\n')
-        for fname, row in zip(filenames, matrix):
+        for fname, row in zip(filenames, kept_matrix):
             fields = [fname]
             for v in row:
                 fields.append('' if not np.isfinite(v) else f'{v:.9g}')
-            fields.append(str(cluster_map.get(fname, '')))
+            if include_cluster:
+                fields.append(str(cluster_map.get(fname, '')))
             fh.write(','.join(fields) + '\n')
 
-    np.savetxt(matrix_csv, matrix, fmt='%.9g', delimiter=',')
-    np.save(matrix_npy, matrix)
+    np.savetxt(matrix_csv, kept_matrix, fmt='%.9g', delimiter=',')
+    np.save(matrix_npy, kept_matrix)
 
-    all_nan_cols = [
-        _extract_labeled(feature_columns[i])
-        for i in range(matrix.shape[1])
-        if np.all(np.isnan(matrix[:, i]))
-    ]
     labeled_populated = sum(1 for fn in filenames if fn in cluster_map)
 
     print(f"Wrote {features_csv}")
     print(f"Wrote {matrix_csv}")
     print(f"Wrote {matrix_npy}")
-    print(f"Rows (configurations): {matrix.shape[0]}")
-    print(f"Feature columns: {matrix.shape[1]} ({', '.join(feature_columns)})")
-    if all_nan_cols:
-        print(f"All-NaN columns: {', '.join(all_nan_cols)}")
-    print(f"Cluster labels populated for {labeled_populated}/{len(filenames)} rows.")
+    print(f"Rows (configurations): {kept_matrix.shape[0]}")
+    print(f"Feature columns: {kept_matrix.shape[1]} ({', '.join(kept_features)})")
+    if dropped_cols:
+        print(f"Dropped all-NaN columns: {', '.join(dropped_cols)}")
+    if include_cluster:
+        print(f"Cluster labels populated for {labeled_populated}/{len(filenames)} rows.")
+    else:
+        print("Cluster column omitted (no cluster labels found).")
     if skipped:
         print(f"Cache also recorded {len(skipped)} skipped file(s) (not included in output).")
     return 0
@@ -6219,9 +6234,10 @@ MORE INFORMATION:
 
     parser.add_argument("--data", type=str, default=None, metavar="PKL",
                         help="extract per-configuration feature vectors from the given "
-                             "data_cache_*.pkl file and write features.csv (labeled, with units "
-                             "+ cluster column), matrix.csv, and matrix.npy next to it "
-                             "(override with --output-dir). Exits after writing; skips clustering.")
+                             "data_cache_*.pkl file and write features.csv (labeled with units), "
+                             "matrix.csv, and matrix.npy next to it (override with --output-dir). "
+                             "All-NaN columns are dropped; cluster column only emitted when labels "
+                             "are available. Exits after writing; skips clustering.")
 
     # Hidden/advanced options
     parser.add_argument("--min-std-threshold", type=float, default=1e-6,
