@@ -34,6 +34,7 @@ __all__ = [
     "load_protocol_cache",
     "save_protocol_cache",
     "update_protocol_cache",
+    "accumulate_stage_wall_time",
     "invalidate_stage_cache",
 ]
 
@@ -63,6 +64,39 @@ def save_protocol_cache(cache_data: Dict[str, Any], cache_file: str = "protocol_
             pickle.dump(cache_data, f)
     except Exception as e:
         print(f"Warning: Failed to save cache file: {e}")
+
+
+def accumulate_stage_wall_time(cache_file: str, stage_key: str,
+                               session_seconds: Optional[float]) -> float:
+    """Add this session's *active* wall seconds to a stage's running total.
+
+    The per-stage ``wall_time`` recorded by :func:`update_protocol_cache` is a
+    *calendar* span (completion minus first start) and so includes idle gaps
+    between resume sessions. For the per-stage QM batch we instead want the
+    *active* wall time — the sum of each session's concurrent-run duration — so
+    that a resumed run reports a "Total wall time" that is never shorter than
+    its longest single job. The counter lives under the stage entry's
+    ``accumulated_wall_time`` key so it survives across resumes.
+
+    Returns the cumulative active wall time (prior total + this session).
+    """
+    session = max(0.0, session_seconds or 0.0)
+    if not cache_file or not stage_key:
+        return session
+    try:
+        cache = load_protocol_cache(cache_file)
+    except Exception:
+        return session
+    stages = cache.setdefault('stages', {})
+    entry = stages.setdefault(stage_key, {})
+    total = (entry.get('accumulated_wall_time') or 0.0) + session
+    entry['accumulated_wall_time'] = total
+    cache['last_update'] = time.strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        save_protocol_cache(cache, cache_file)
+    except Exception:
+        pass
+    return total
 
 
 def update_protocol_cache(stage_name: str, status: str, result: Optional[Dict[str, Any]] = None,
@@ -98,25 +132,33 @@ def update_protocol_cache(stage_name: str, status: str, result: Optional[Dict[st
         if result:
             merged_result.update(result)
 
-        cache['stages'][stage_name] = {
+        new_entry = {
             'status': status,
             'start_time': existing_stage.get('start_time', time.time()),
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
             'result': merged_result
         }
+        # Preserve the cross-session active-wall counter (see
+        # accumulate_stage_wall_time); rebuilding the entry must not drop it.
+        if 'accumulated_wall_time' in existing_stage:
+            new_entry['accumulated_wall_time'] = existing_stage['accumulated_wall_time']
+        cache['stages'][stage_name] = new_entry
     else:
         # For completed/failed: calculate wall time
         stage_data = cache['stages'].get(stage_name, {})
         start_time = stage_data.get('start_time', time.time())
         wall_time = time.time() - start_time
 
-        cache['stages'][stage_name] = {
+        new_entry = {
             'status': status,
             'start_time': start_time,
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
             'wall_time': wall_time,
             'result': result or {}
         }
+        if 'accumulated_wall_time' in stage_data:
+            new_entry['accumulated_wall_time'] = stage_data['accumulated_wall_time']
+        cache['stages'][stage_name] = new_entry
 
     cache['last_update'] = time.strftime('%Y-%m-%d %H:%M:%S')
 

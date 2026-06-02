@@ -112,6 +112,7 @@ from cosmic_ascec.workflow.job_registry import (
     _update_ascec_job,
 )
 from cosmic_ascec.workflow.protocol_cache import (
+    accumulate_stage_wall_time,
     invalidate_stage_cache,
     load_protocol_cache,
     save_protocol_cache,
@@ -4864,7 +4865,30 @@ def validate_cached_refinement_cosmic(cache: dict, stage: Dict[str, Any], stage_
 # =========================================================================== #
 
 
-def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]], 
+def _record_redo_attempt(cache_file: str, stage_key: str, attempt: int,
+                         max_redos: int, use_cache: bool = True) -> None:
+    """Persist the *current* redo attempt into the stage cache entry.
+
+    The cache only records the final ``attempts`` count when a stage completes,
+    so a live ``ascec status`` view (and the in-progress protocol summary) has
+    no way to tell which redo is currently running. Writing ``current_redo`` /
+    ``redo_max`` here (merged into the in-progress result) lets those views show
+    e.g. ``(Redo 1/3)``. The field is naturally dropped when the stage is later
+    marked completed (which replaces the result wholesale).
+    """
+    if not use_cache or not cache_file or not stage_key or attempt <= 0:
+        return
+    try:
+        update_protocol_cache(
+            stage_key, 'in_progress',
+            {'current_redo': attempt, 'redo_max': max_redos},
+            cache_file,
+        )
+    except Exception:
+        pass
+
+
+def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                            use_cache: bool = False, protocol_text: str = "") -> int:
     """
     Execute all workflow stages in sequence with context passing.
@@ -6415,12 +6439,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             _upd = getattr(context, 'update_progress', None)
                             if callable(_upd):
                                 _upd(f"Redo {attempt}/{max_redos}")
+                            _record_redo_attempt(cache_file, f"optimization_{stage_num}",
+                                                 attempt, max_redos, use_cache)
                             if context.workflow_verbose_level >= 1:
                                 print(f"\n{'-' * 60}")
                                 print(f"Redo {attempt}/{max_redos}")
 
                         # Don't delete cosmic folder - we'll update it with corrected calculations
-                        
+
                         # Run calculation (which includes sort step that creates cosmic/)
                         result = execute_optimization_stage(context, stage)
                         if result != 0:
@@ -6924,6 +6950,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             _upd = getattr(context, 'update_progress', None)
                             if callable(_upd):
                                 _upd(f"Redo {attempt}/{max_redos}")
+                            _record_redo_attempt(cache_file, f"refinement_{stage_num}",
+                                                 attempt, max_redos, use_cache)
                             if context.workflow_verbose_level >= 1:
                                 print(f"\n{'-' * 60}")
                                 print(f"Redo {attempt}/{max_redos}")
@@ -7282,6 +7310,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             _upd = getattr(context, 'update_progress', None)
                             if callable(_upd):
                                 _upd(f"Redo {attempt}/{max_redos}")
+                            _record_redo_attempt(cache_file, f"energy_refinement_{stage_num}",
+                                                 attempt, max_redos, use_cache)
                             if context.workflow_verbose_level >= 1:
                                 print(f"\n{'-' * 60}")
                                 print(f"Redo {attempt}/{max_redos}")
@@ -7967,35 +7997,36 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
             while not _monitor_stop.wait(2.0):
                 if not callable(progress_cb):
                     continue
-                running_done_sum = 0
+                # Per-replica step readout. Each replica writes "x/y" (current
+                # step / total steps) to its .ascec_step; we show every replica
+                # so concurrent progress is visible, and never double-count
+                # finished replicas (their file already reads ~y/y).
                 steps_total_each = 0
-                for d in _replica_dirs_to_watch:
+                per_replica = []  # (replica_index, current_step or None)
+                for i, d in enumerate(_replica_dirs_to_watch, 1):
                     spf = os.path.join(d, '.ascec_step')
+                    x = None
                     try:
                         with open(spf, 'r') as f:
                             line = f.readline().strip()
-                    except OSError:
-                        continue
-                    if '/' not in line:
-                        continue
-                    try:
                         x_str, y_str = line.split('/', 1)
                         x = int(x_str.strip())
                         y = int(y_str.strip())
-                    except ValueError:
-                        continue
-                    if y <= 0:
-                        continue
-                    running_done_sum += x
-                    if steps_total_each == 0:
-                        steps_total_each = y
+                        if y > 0 and steps_total_each == 0:
+                            steps_total_each = y
+                    except (OSError, ValueError):
+                        x = None
+                    per_replica.append((i, x))
                 if steps_total_each <= 0:
                     continue
                 with _replica_lock:
                     cr = completed_replicas
-                overall_done = cr * steps_total_each + running_done_sum
-                overall_total = num_replicas * steps_total_each
-                progress_cb(f"{cr}/{num_replicas} (step {overall_done}/{overall_total})")
+                parts = " ".join(
+                    f"r{i}:{min(x, steps_total_each)}/{steps_total_each}" if x is not None
+                    else f"r{i}:-/{steps_total_each}"
+                    for i, x in per_replica
+                )
+                progress_cb(f"{cr}/{num_replicas} ({parts})")
 
         _monitor_thread = threading.Thread(target=_aggregate_step_monitor, daemon=True)
         if not verbose and callable(progress_cb):
@@ -10069,7 +10100,14 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                     # For in-progress stages: show elapsed time and skip detailed result block
                     if status == 'in_progress':
                         elapsed = time.time() - stage_info.get('start_time', time.time())
-                        f.write(f"  [{step_num}/{total_stages}] {stage_name} ⟳ (running)\n")
+                        # Show the active redo attempt instead of plain "(running)".
+                        _redo_n = result.get('current_redo')
+                        if _redo_n:
+                            _redo_max = result.get('redo_max')
+                            _run_tag = f"(Redo {_redo_n}/{_redo_max})" if _redo_max else f"(Redo {_redo_n})"
+                        else:
+                            _run_tag = "(running)"
+                        f.write(f"  [{step_num}/{total_stages}] {stage_name} ⟳ {_run_tag}\n")
                         f.write(f"  {'─' * 40}\n")
                         f.write(f"    Elapsed:          {format_duration(elapsed)}\n")
                         f.write("\n")
@@ -11717,7 +11755,10 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                     cache_file=cache_file,
                     stage_key_prefix='calculation',
                 )
-                context.optimization_job_wall_time = time.time() - _opt_wall_start
+                # Accumulate active wall across resume sessions so the summary's
+                # "Total wall time" survives interruptions (never < longest job).
+                context.optimization_job_wall_time = accumulate_stage_wall_time(
+                    cache_file, _opt_stage_key, time.time() - _opt_wall_start)
                 
                 # Print status (not "results" - that's redundant)
                 # Recalculate num_inputs from the updated set to reflect newly completed calculations
@@ -13028,6 +13069,12 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
             
             # 1b. Check for flat files in optimization directory
             for item in os.listdir(opt_dir):
+                # Skip rescue artifacts (e.g. motif_24_opt_rescue.out): they are
+                # intermediate redo outputs for a parent motif, not a distinct
+                # refinement. Counting them double-inflates completed/total (and
+                # the inflated value then gets locked across redo attempts).
+                if '_rescue' in item:
+                    continue
                 if item.endswith('.out') or item.endswith('.log'):
                     basename = os.path.splitext(item)[0]
                     # Skip if already found in subdir or marked for redo
@@ -13082,6 +13129,10 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
                     out_dir = os.path.join(refinement_cosmic_folder, subitem)
                     if os.path.isdir(out_dir):
                         for f in os.listdir(out_dir):
+                            # Skip rescue artifacts — intermediate redo outputs,
+                            # not distinct refinements (see flat-file scan above).
+                            if '_rescue' in f:
+                                continue
                             if f.endswith('.out') or f.endswith('.log'):
                                 basename = os.path.splitext(f)[0]
                                 if basename not in actual_completed and basename not in redo_files:
@@ -13239,7 +13290,10 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
             cache_file=cache_file,
             stage_key_prefix=_stage_kind,
         )
-        setattr(context, _attr_job_wall_time, time.time() - _ref_wall_start)
+        # Accumulate active wall across resume sessions so the summary's
+        # "Total wall time" survives interruptions (never < longest job).
+        setattr(context, _attr_job_wall_time, accumulate_stage_wall_time(
+            cache_file, _ref_stage_key, time.time() - _ref_wall_start))
 
         # Print status
         # Recalculate num_inputs from the updated set to reflect newly completed optimizations
@@ -13265,6 +13319,9 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
             for root, _, files in os.walk(opt_dir):
                 for filename in files:
                     if filename.endswith('.backup'):
+                        continue
+                    # Rescue artifacts are intermediate redo outputs, not distinct refinements.
+                    if '_rescue' in filename:
                         continue
                     if not (filename.endswith('.out') or filename.endswith('.log')):
                         continue
@@ -15052,7 +15109,14 @@ def show_ascec_status() -> None:
                     'energy_refinement': 'energy_refinement',
                 }
                 stage_name = stage_name_map.get(stage_type, stage_type)
-                replacement = f"[{stage_num}/{stages_total}] {stage_name} {done_i}/{total_i} ..."
+                # Surface an active redo (e.g. "⟳ (Redo 1/3)") when the stage is
+                # being re-run; current_redo/redo_max are written by the redo loop.
+                _redo_n = result.get('current_redo')
+                _redo_tag = ""
+                if _redo_n:
+                    _redo_max = result.get('redo_max')
+                    _redo_tag = f" ⟳ (Redo {_redo_n}/{_redo_max})" if _redo_max else f" ⟳ (Redo {_redo_n})"
+                replacement = f"[{stage_num}/{stages_total}] {stage_name} {done_i}/{total_i} ...{_redo_tag}"
 
                 prefix = f"[{stage_num}/{stages_total}] "
                 replaced = False
