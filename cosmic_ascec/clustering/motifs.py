@@ -145,17 +145,8 @@ def create_unique_motifs_folder(
         print("  No clusters found. Skipping motifs creation.")
         return {}
 
-    num_motifs = len(all_clusters_data)
-    motifs_dir = os.path.join(output_base_dir, f"{folder_prefix}_{num_motifs:02d}")
-    os.makedirs(motifs_dir, exist_ok=True)
-
     # Determine display name based on prefix
     display_name = "unique motifs" if output_prefix == 'umotif' else "motifs"
-
-    print()
-    print()
-    print_step(f"Creating {num_motifs} {display_name} from cluster representatives...")
-    vprint(f"  Output directory: {motifs_dir}")
 
     representatives = []
     representative_cluster_ids = []
@@ -193,6 +184,20 @@ def create_unique_motifs_folder(
 
         representatives.append(representative)
         representative_cluster_ids.append(cluster_id)
+
+    # Name the folder by the number of representatives ACTUALLY created — one per
+    # cluster that yielded a converged minimum. Clusters whose only members are
+    # non-converged / imaginary produce no representative (skipped above), so this
+    # count matches the umotif files written and the reported motifs_created,
+    # rather than the raw cluster count (which over-counts those empty clusters).
+    num_motifs = len(representatives)
+    motifs_dir = os.path.join(output_base_dir, f"{folder_prefix}_{num_motifs:02d}")
+    os.makedirs(motifs_dir, exist_ok=True)
+
+    print()
+    print()
+    print_step(f"Creating {num_motifs} {display_name} from cluster representatives...")
+    vprint(f"  Output directory: {motifs_dir}")
 
     # Sort representatives by Boltzmann population (if available) or Gibbs free energy as fallback
     representatives_with_ids = list(zip(representatives, representative_cluster_ids))

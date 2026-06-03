@@ -13348,6 +13348,21 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
         _kind_noun = 'energy refinements' if _stage_kind == 'energy_refinement' else 'refinements'
         _kind_title = 'Energy refinement' if _stage_kind == 'energy_refinement' else 'Refinement'
 
+        # Collapse redo/rescue reruns to their parent-motif identity before
+        # recording the result. Across redo attempts the live counter and its
+        # locked maximum can grow past the real target count (each rerun of a
+        # non-converged motif, or a rescue variant like ``motif_24_opt_rescue``,
+        # otherwise inflates total/completed). extract_base() strips the
+        # _opt/_calc/_rescue suffixes so motif_03_opt and motif_03_opt_rescue both
+        # map to motif_03 — the distinct-parent count is the true number of
+        # refinement targets (e.g. 27, not the redo-inflated 37).
+        if all_input_basenames:
+            _distinct_targets = len({extract_base(b) for b in all_input_basenames})
+            if _distinct_targets > 0:
+                _distinct_completed = len({extract_base(b) for b in completed_opts})
+                num_inputs = min(num_inputs, _distinct_targets)
+                total_completed = min(total_completed, _distinct_completed, num_inputs)
+
         if not workflow_concise:
             print(f"\nStatus: {total_completed}/{num_inputs} {_kind_noun} completed")
 

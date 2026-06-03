@@ -343,8 +343,10 @@ def resolve_clustering_threshold(
 
     *user_threshold* may be "auto", a float, or an ``(mode, params)`` tuple
     (``opt-pearson`` / ``opt-spread``). Returns ``(t_cut, k_resulting, source)``
-    where source is one of "user", "knee", "legacy", "opt-pearson",
-    "opt-spread".
+    where source is one of "user", "knee", "knee-capped", "legacy",
+    "opt-pearson", "opt-spread". "knee-capped" means the knee was detected but
+    its cut height exceeded the empirical ceiling τ=2.0, so τ=2.0 was applied
+    instead (the raw knee is still surfaced on the diagnostic plot).
 
     Verbatim port of cosmic-v01's ``resolve_clustering_threshold`` (4476-4540).
     """
@@ -388,6 +390,17 @@ def resolve_clustering_threshold(
 
     t, k, ok, reason, _, _ = compute_knee_threshold(linkage_matrix, verbose=verbose)
     if ok:
+        if t > 2.0:
+            # Knee landed above the empirical ceiling τ=2.0. A knee that high
+            # means the merge-height curve never really flattens, so the elbow
+            # is unreliable; fall back to the standard empirical cut but keep
+            # "knee" provenance so the diagnostic plot still shows where the
+            # detected knee was.
+            k_cap = len(set(fcluster(linkage_matrix, t=2.0, criterion='distance')))
+            if verbose:
+                print(f"  Knee τ={t:.4f} exceeds empirical ceiling 2.0; "
+                      f"using empirical τ=2.0 (n_c={k_cap}).")
+            return 2.0, k_cap, "knee-capped"
         return t, k, "knee"
     if verbose:
         print(f"  Knee detection skipped ({reason}); falling back to legacy τ=2.0.")
