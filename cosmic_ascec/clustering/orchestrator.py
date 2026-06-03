@@ -83,6 +83,7 @@ from cosmic_ascec.clustering.scaling import (
 )
 from cosmic_ascec.clustering.thresholds import (
     attach_pearson_to_rep,
+    compute_knee_threshold,
     compute_mojena_threshold,
     resolve_clustering_threshold,
     threshold_entry,
@@ -1019,6 +1020,14 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
             _mojena_t, _mojena_k = compute_mojena_threshold(linkage_matrix, verbose=console.VERBOSE)
 
+            # Always surface the detected knee on the diagnostic plot — drawn as
+            # its own line/legend entry like the applied cut — so the elbow is
+            # visible whether or not it was capped to the empirical τ=2.0 ceiling.
+            _knee_t = _knee_k = None
+            _kt, _kk, _kok, _kr, _ki, _kh = compute_knee_threshold(linkage_matrix)
+            if _kok:
+                _knee_t, _knee_k = _kt, _kk
+
             # --- Extract configuration labels for dendrogram ---
             import re
             conf_labels = []
@@ -1051,7 +1060,8 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                 dendrogram_filename, title_suffix=dendrogram_title_suffix,
                 conf_labels=conf_labels,
                 mojena_threshold=_mojena_t, mojena_k=_mojena_k,
-                n_eff=_diag_n_eff)
+                n_eff=_diag_n_eff,
+                knee_threshold=_knee_t, knee_k=_knee_k)
             vprint(f"Dendrogram saved as '{os.path.basename(dendrogram_filename)}'")
 
             # --- Match reduced-tier structures against fullest-tier clusters ---
@@ -1336,7 +1346,8 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     else:
         reduced_matched_str = str(len(all_reduced_matched))
 
-    _method_label = {"knee": "knee detection"}
+    _method_label = {"knee": "knee detection",
+                     "knee-capped": "knee detection, capped to empirical 2.0"}
     if is_compare_mode or not resolved_threshold_entries:
         _cosmic_threshold_text = "COSMIC threshold: N/A"
     elif len(resolved_threshold_entries) == 1:

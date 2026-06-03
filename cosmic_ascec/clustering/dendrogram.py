@@ -170,13 +170,13 @@ def plot_annotated_dendrogram(
     ax2.plot([], [], ' ',
              label=rf'Standard $\tau$=2.00 ($n_c$={n_standard})')
 
-    # Detected knee — drawn when it differs from the applied cut, i.e. when the
-    # knee was capped to the empirical τ=2.0 ceiling. Keeps the elbow visible so
-    # the diagnostic still explains where automatic detection pointed.
+    # Detected knee — legend-only entry (like Standard / Mojena); the only line
+    # drawn on the plot is the applied cut. Surfaces where automatic detection
+    # pointed, whether or not it was capped to the empirical τ=2.0 ceiling.
     if knee_threshold is not None:
         _knee_k = knee_k if knee_k is not None else int(np.sum(heights_sorted > knee_threshold)) + 1
-        ax2.axhline(y=knee_threshold, color='#27ae60', linestyle=':', linewidth=2,
-                    label=rf'Knee $\tau$={knee_threshold:.2f} ($n_c$={_knee_k})')
+        ax2.plot([], [], ' ',
+                 label=rf'Knee $\tau$={knee_threshold:.2f} ($n_c$={_knee_k})')
 
     if mojena_threshold is not None:
         _moj_k = mojena_k if mojena_k is not None else int(np.sum(heights_sorted > mojena_threshold)) + 1
@@ -220,6 +220,8 @@ def plot_annotated_dendrogram(
         trust_segments.append(_fmt_trust_segment("Applied", cut_height))
         if not applied_is_standard:
             trust_segments.append(_fmt_trust_segment("Standard", STANDARD_T))
+        if knee_threshold is not None:
+            trust_segments.append(_fmt_trust_segment("Knee", float(knee_threshold)))
         if mojena_threshold is not None:
             trust_segments.append(_fmt_trust_segment("Mojena", float(mojena_threshold)))
 
