@@ -2722,8 +2722,8 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     </label>
                 </div>
                 <div class="sampling-mode-grid">
-                    <button type="button" class="sampling-mode-choice" data-sampling-mode="preliminar" onclick="applySamplingPreset('preliminar')" aria-pressed="false">
-                        <span class="sampling-mode-choice-title">Preliminar</span>
+                    <button type="button" class="sampling-mode-choice" data-sampling-mode="preliminary" onclick="applySamplingPreset('preliminary')" aria-pressed="false">
+                        <span class="sampling-mode-choice-title">Preliminary</span>
                         <div class="sampling-mode-body">
                             <svg class="sampling-mode-clock sampling-mode-clock-33" viewBox="0 0 60 60" aria-hidden="true">
                                 <circle class="sampling-mode-clock-ring" cx="30" cy="30" r="22"></circle>
@@ -2734,7 +2734,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             </svg>
                             <div class="sampling-mode-copy">
                                 <span class="sampling-mode-stop">Stop after geometry optimization.</span>
-                                <span class="sampling-mode-choice-desc">Fast semiempirical first pass for preliminar structures.</span>
+                                <span class="sampling-mode-choice-desc">Fast semiempirical first pass for preliminary structures.</span>
                             </div>
                         </div>
                     </button>
@@ -2754,8 +2754,8 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             </div>
                         </div>
                     </button>
-                    <button type="button" class="sampling-mode-choice" data-sampling-mode="complete" onclick="applySamplingPreset('complete')" aria-pressed="false">
-                        <span class="sampling-mode-choice-title">Complete</span>
+                    <button type="button" class="sampling-mode-choice" data-sampling-mode="ultimate" onclick="applySamplingPreset('ultimate')" aria-pressed="false">
+                        <span class="sampling-mode-choice-title">Ultimate</span>
                         <div class="sampling-mode-body">
                             <svg class="sampling-mode-clock sampling-mode-clock-100" viewBox="0 0 60 60" aria-hidden="true">
                                 <circle class="sampling-mode-clock-ring" cx="30" cy="30" r="22"></circle>
@@ -2766,7 +2766,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             </svg>
                             <div class="sampling-mode-copy">
                                 <span class="sampling-mode-stop">Stop after energy refinement.</span>
-                                <span class="sampling-mode-choice-desc">Run the full workflow for the complete PES description.</span>
+                                <span class="sampling-mode-choice-desc">Run the full workflow for the ultimate PES description.</span>
                             </div>
                         </div>
                     </button>
@@ -3560,7 +3560,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             </select>
                         </div>
                         <div class="form-group" id="adv-opt-partialweights-group" style="display:flex; align-items:flex-end;">
-                            <label class="auto-box-compact" title="Auto-enable for preliminar semiempirical/xTB optimization; disable for DFT or post-HF." style="white-space:nowrap; padding-bottom:8px;">
+                            <label class="auto-box-compact" title="Auto-enable for preliminary semiempirical/xTB optimization; disable for DFT or post-HF." style="white-space:nowrap; padding-bottom:8px;">
                                 <input type="checkbox" id="adv-cosmic-partialweights" checked onchange="togglePartialweightsFlag()">
                                 Use semiempirical weights (<code>--partialweights</code>)
                             </label>
@@ -7289,9 +7289,9 @@ H  -0.757000  0.586000  0.000000"></textarea>
         function getSamplingPresetFromState() {
             const erefEnabled = document.getElementById('smart-energy-ref-enabled')?.checked;
             const refEnabled = document.getElementById('smart-ref-enabled')?.checked !== false;
-            if (erefEnabled) return 'complete';
+            if (erefEnabled) return 'ultimate';
             if (refEnabled) return 'rigorous';
-            return 'preliminar';
+            return 'preliminary';
         }
 
         function updateSamplingPresetUI() {
@@ -7309,7 +7309,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
         }
 
         function applySamplingPreset(mode) {
-            const selectedMode = mode || 'preliminar';
+            const selectedMode = mode || 'preliminary';
 
             // --- Annealing: standalone xTB / GFN2-xTB, 1 proc for all presets ---
             const annealTheory = document.getElementById('smart-annealing-theory');
@@ -7319,27 +7319,27 @@ H  -0.757000  0.586000  0.000000"></textarea>
             const annealNprocs = document.getElementById('smart-annealing-nprocs');
             if (annealNprocs) annealNprocs.value = '1';
             const annealConcurrent = document.getElementById('smart-annealing-concurrent');
-            if (annealConcurrent) annealConcurrent.value = (selectedMode === 'preliminar') ? '1' : '3';
+            if (annealConcurrent) annealConcurrent.value = (selectedMode === 'preliminary') ? '1' : '3';
 
             // --- Quenching ---
             const quenchRoute = document.getElementById('smart-quench-route');
             if (quenchRoute) quenchRoute.value = '2'; // geometric
             const quenchTi = document.getElementById('smart-quench-ti');
-            if (quenchTi) quenchTi.value = (selectedMode === 'preliminar') ? '300' : '500';
+            if (quenchTi) quenchTi.value = (selectedMode === 'preliminary') ? '300' : '500';
             const quenchFactor = document.getElementById('smart-quench-factor');
             if (quenchFactor) quenchFactor.value = '5';
             const quenchSteps = document.getElementById('smart-quench-steps');
-            if (quenchSteps) quenchSteps.value = (selectedMode === 'preliminar') ? '80' : '100';
+            if (quenchSteps) quenchSteps.value = (selectedMode === 'preliminary') ? '80' : '100';
             updateSmartQuenchParams();
 
             // --- Replicas & Packing ---
             const replicas = document.getElementById('smart-replicas');
-            if (replicas) replicas.value = (selectedMode === 'preliminar') ? '1' : '3';
+            if (replicas) replicas.value = (selectedMode === 'preliminary') ? '1' : '3';
             syncAnnealingConcurrentWithReplicas('smart-replicas', 'smart-annealing-concurrent', true);
             syncAnnealingConcurrentWithReplicas('adv-replicas', 'adv-annealing-concurrent', true);
             const packing = document.getElementById('smart-packing');
             if (packing) {
-                packing.value = (selectedMode === 'preliminar') ? '30' : '20';
+                packing.value = (selectedMode === 'preliminary') ? '30' : '20';
                 toggleCustomInput('smart-packing', 'smart-packing-custom', false);
             }
             updateSmartBoxSize();
@@ -7360,7 +7360,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             if (optJob) optJob.value = 'Opt';
 
             // --- Geometry Refinement & Energy Refinement toggles ---
-            if (selectedMode === 'preliminar') {
+            if (selectedMode === 'preliminary') {
                 setCheckboxState('smart-ref-enabled', false);
                 toggleSmartRef();
                 setCheckboxState('smart-energy-ref-enabled', false);
@@ -7378,7 +7378,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             }
 
             // --- Geometry Refinement: DFT B3LYP 6-31G* Opt Freq ---
-            if (selectedMode !== 'preliminar') {
+            if (selectedMode !== 'preliminary') {
                 const refTheory = document.getElementById('smart-ref-theory');
                 if (refTheory) { refTheory.value = 'dft'; updateSmartRefMethod(); }
                 const refMethod = document.getElementById('smart-ref-method');
@@ -7390,7 +7390,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             }
 
             // --- Energy Refinement: DLPNO ---
-            if (selectedMode === 'complete') {
+            if (selectedMode === 'ultimate') {
                 const erefTheory = document.getElementById('smart-eref-theory');
                 if (erefTheory) { erefTheory.value = 'post-hf'; updateSmartEnergyRefMethod(); }
             }
@@ -7479,9 +7479,9 @@ H  -0.757000  0.586000  0.000000"></textarea>
         };
 
         const SMART_MODE_SAMPLING_HELP_TEXTS = {
-            preliminar: 'Preliminar: stop after optimization',
+            preliminary: 'Preliminary: stop after optimization',
             rigorous: 'Rigorous: includes geometry refinement',
-            complete: 'Complete: includes energy refinement'
+            ultimate: 'Ultimate: includes energy refinement'
         };
 
         const SMART_MODE_POPUP_KEYS = new Set([
@@ -7563,7 +7563,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             });
 
             document.querySelectorAll('#basic-tab [data-sampling-mode]').forEach((button) => {
-                const mode = button.getAttribute('data-sampling-mode') || 'preliminar';
+                const mode = button.getAttribute('data-sampling-mode') || 'preliminary';
                 const key = `sampling-${mode}`;
                 const hint = SMART_MODE_SAMPLING_HELP_TEXTS[mode] || '';
                 if (hint && !button.getAttribute('title')) button.setAttribute('title', hint);
@@ -8917,7 +8917,7 @@ end
             const syncKey = `${preset}|${theory || ''}`;
             if (syncKey === lastPartialweightsSyncedKey) return;
             lastPartialweightsSyncedKey = syncKey;
-            cb.checked = preset === 'preliminar' && (theory === 'semiempirical' || theory === 'xtb');
+            cb.checked = preset === 'preliminary' && (theory === 'semiempirical' || theory === 'xtb');
             applyPartialweightsToExtraFlags();
         }
 
