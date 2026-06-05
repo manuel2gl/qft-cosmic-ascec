@@ -3667,7 +3667,19 @@ def parse_orca_output(filepath):
     cycles_match = re.search(r"\(AFTER\s+(\d+)\s+CYCLES\)", content)
     results['cycles'] = int(cycles_match.group(1)) if cycles_match else None
 
-    results['converged'] = "THE OPTIMIZATION HAS CONVERGED" in content
+    # An energy-refinement single point (e.g. DLPNO-CCSD(T)) runs no geometry
+    # optimization, so "THE OPTIMIZATION HAS CONVERGED" is never printed and it
+    # has no opt cycles.  Judging such a job by that string wrongly flags it as
+    # non-converged.  Only apply the optimization criterion to actual opt jobs;
+    # for single points, convergence == ORCA terminating normally.
+    is_optimization = (
+        "GEOMETRY OPTIMIZATION CYCLE" in content
+        or "*** OPTIMIZATION RUN DONE ***" in content
+    )
+    if is_optimization:
+        results['converged'] = "THE OPTIMIZATION HAS CONVERGED" in content
+    else:
+        results['converged'] = "ORCA TERMINATED NORMALLY" in content
 
     time_match = re.search(r"TOTAL RUN TIME:\s*(\d+)\s*days\s*(\d+)\s*hours\s*(\d+)\s*minutes\s*(\d+)\s*seconds\s*(\d+)\s*msec", content)
     if time_match:

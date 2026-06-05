@@ -84,10 +84,33 @@ def detect_motif_input_level(filenames: Sequence[str]) -> Tuple[str, str, bool]:
     return 'motif', 'motifs', False
 
 
+def representative_energy_comment(mol_data: Record, mode: EnergyMode) -> str:
+    """Energy fragment for an XYZ comment line, e.g. ``G = -37.40 Hartree (...)``.
+
+    Prefers the composite Gibbs energy (energy-refinement stage) when present,
+    otherwise falls back to the stage's own Gibbs (freq mode) or electronic
+    (opt-only) energy.  This mirrors :func:`sorting_energy`, so the value shown
+    in the file matches the one used to rank the structure.
+    """
+    composite = mol_data.get('composite_gibbs')
+    if composite is not None:
+        label, value = 'G', composite
+    elif mode.has_freq:
+        label, value = 'G', mol_data.get('gibbs_free_energy')
+    else:
+        label, value = 'E', mol_data.get('final_electronic_energy')
+
+    if value is None:
+        return f"{label} = N/A"
+    return (f"{label} = {value:.6f} Hartree "
+            f"({hartree_to_kcal_mol(value):.2f} kcal/mol, {hartree_to_ev(value):.2f} eV)")
+
+
 def write_xyz_file(mol_data: Record, filename: str, mode: EnergyMode) -> None:
     """
     Writes atomic coordinates to an XYZ file with energy in the comment line.
     Freq mode: Gibbs free energy (original).  Opt-only mode: electronic energy.
+    Energy-refinement mode: composite Gibbs energy.
 
     Verbatim port of cosmic-v01's ``write_xyz_file`` (3157-3186); cosmic-v01's
     ``_DATASET_HAS_FREQ`` global becomes the explicit *mode* argument.
@@ -100,15 +123,7 @@ def write_xyz_file(mol_data: Record, filename: str, mode: EnergyMode) -> None:
         return
 
     base_name = os.path.splitext(os.path.basename(mol_data['filename']))[0]
-
-    if mode.has_freq:
-        gibbs_free_energy = mol_data.get('gibbs_free_energy')
-        gibbs_str = f"{gibbs_free_energy:.6f} Hartree ({hartree_to_kcal_mol(gibbs_free_energy):.2f} kcal/mol, {hartree_to_ev(gibbs_free_energy):.2f} eV)" if gibbs_free_energy is not None else "N/A"
-        comment_line = f"{base_name} (G = {gibbs_str})"
-    else:
-        electronic_energy = mol_data.get('final_electronic_energy')
-        elec_str = f"{electronic_energy:.6f} Hartree ({hartree_to_kcal_mol(electronic_energy):.2f} kcal/mol, {hartree_to_ev(electronic_energy):.2f} eV)" if electronic_energy is not None else "N/A"
-        comment_line = f"{base_name} (E = {elec_str})"
+    comment_line = f"{base_name} ({representative_energy_comment(mol_data, mode)})"
 
     symbols = [atomic_number_to_symbol(n) for n in atomnos]
 
@@ -157,10 +172,15 @@ def create_unique_motifs_folder(
 
         # CRITICAL: No motif can have imaginary frequencies or non-converged data.
         if dataset_has_freq:
+            # In the energy-refinement (composite) stage the representative carries
+            # only a composite Gibbs energy — the high-level single point has no
+            # frequencies, so gibbs_free_energy is None.  Accept either so these
+            # structures still yield a representative instead of an empty folder.
             valid_members = [
                 m for m in cluster_members
                 if not m.get('_has_imaginary_freqs', False)
-                and m.get('gibbs_free_energy') is not None
+                and (m.get('gibbs_free_energy') is not None
+                     or m.get('composite_gibbs') is not None)
                 and m.get('_is_full_feature', True)
             ]
         else:
@@ -278,14 +298,7 @@ def create_unique_motifs_folder(
                 continue
 
             base_name = os.path.splitext(rep_data['filename'])[0]
-            if dataset_has_freq:
-                gibbs_free_energy = rep_data.get('gibbs_free_energy')
-                gibbs_str = f"{gibbs_free_energy:.6f} Hartree ({hartree_to_kcal_mol(gibbs_free_energy):.2f} kcal/mol, {hartree_to_ev(gibbs_free_energy):.2f} eV)" if gibbs_free_energy is not None else "N/A"
-                energy_comment = f"G = {gibbs_str}"
-            else:
-                electronic_energy = rep_data.get('final_electronic_energy')
-                elec_str = f"{electronic_energy:.6f} Hartree ({hartree_to_kcal_mol(electronic_energy):.2f} kcal/mol, {hartree_to_ev(electronic_energy):.2f} eV)" if electronic_energy is not None else "N/A"
-                energy_comment = f"E = {elec_str}"
+            energy_comment = representative_energy_comment(rep_data, mode)
             # Use the output_prefix for naming, include source info for umotif
             if output_prefix == 'umotif':
                 # For umotifs, include the source motif name in the comment for traceability

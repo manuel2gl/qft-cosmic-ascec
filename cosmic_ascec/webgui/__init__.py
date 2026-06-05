@@ -1,10 +1,11 @@
-"""``ascec input`` — verbatim port of v04's web-input-generator server.
+"""``ascec input`` — web-input-generator launcher.
 
-v04 ships ``index.html`` (the GUI that produces ``.asc`` inputs) and serves it
-directly from the script's own directory via ``http.server`` (ascec-v04.py
-lines 21181-21216). The launch is gated on ``sys.argv[1] == "input"`` in v04's
-``if __name__ == "__main__"`` block; v05's root shim ``ascec.py`` keeps the
-same dispatch and calls into :func:`run_input_server` here.
+v04 ships ``index.html`` (the GUI that produces ``.asc`` inputs) and served it
+from the script's own directory via ``http.server`` (ascec-v04.py lines
+21181-21216). v05 changes the default: ``ascec input`` now opens the hosted
+GitHub Pages deployment (:func:`open_hosted_input`) so no local server is
+needed, while ``ascec input local [port]`` preserves v04's local-server path
+(:func:`run_input_server`) for offline use or serving an edited ``index.html``.
 
 The implementation is a verbatim port of v04's inline server: the static-file
 handler serves the directory containing the root shim (``index.html`` lives
@@ -26,6 +27,28 @@ import socketserver
 import sys
 import webbrowser
 from functools import partial
+
+
+#: Public GitHub Pages deployment of ``index.html``. ``ascec input`` opens this
+#: directly so no local server is required; ``ascec input local`` falls back to
+#: :func:`run_input_server` for offline / development use.
+HOSTED_INPUT_URL = "https://manuel2gl.github.io/qft-cosmic-ascec/"
+
+
+def open_hosted_input(url: str = HOSTED_INPUT_URL) -> int:
+    """Open the hosted WebGUI in the user's browser — no local server needed.
+
+    This is the default for ``ascec input``. The page is served from GitHub
+    Pages, so it works without binding a port or shipping ``index.html``
+    locally. Use ``ascec input local [port]`` (:func:`run_input_server`) when
+    offline or when serving an edited local copy.
+    """
+    print(f"\n  ASCEC Input Generator")
+    print(f"  ─────────────────────")
+    print(f"  Opening: {url}")
+    print(f"  (run 'ascec input local' to serve it from localhost instead)\n")
+    webbrowser.open(url)
+    return 0
 
 
 def run_input_server(port: int = 8080, script_dir: str | None = None) -> int:
@@ -75,4 +98,4 @@ def run_input_server(port: int = 8080, script_dir: str | None = None) -> int:
     return 0
 
 
-__all__ = ["run_input_server"]
+__all__ = ["open_hosted_input", "run_input_server", "HOSTED_INPUT_URL"]
