@@ -20,7 +20,8 @@ because they don't need the full annealing machinery:
   a system from an existing .xyz file.
 * ``ascec test_box`` — run the diagnostic self-test for the box-length
   calculator.
-* ``ascec input [port]`` — launch the local WebGUI that builds .asc files.
+* ``ascec input`` — open the hosted WebGUI that builds .asc files in the
+  browser; ``ascec input local [port]`` serves it from a local ``http.server``.
 
 Everything else is handed to ``cosmic_ascec.command_line.ascec.main``.
 """
@@ -53,9 +54,13 @@ def _route_aux_modes() -> int | None:
         test_box_length_analysis()
         return 0
     if cmd == "input":
-        from cosmic_ascec.webgui import run_input_server
-        port = int(sys.argv[2]) if len(sys.argv) > 2 else 8080
-        return run_input_server(port=port, script_dir=_HERE)
+        rest = sys.argv[2:]
+        if rest and rest[0] == "local":
+            from cosmic_ascec.webgui import run_input_server
+            port = int(rest[1]) if len(rest) > 1 else 8080
+            return run_input_server(port=port, script_dir=_HERE)
+        from cosmic_ascec.webgui import open_hosted_input
+        return open_hosted_input()
     return None
 
 
