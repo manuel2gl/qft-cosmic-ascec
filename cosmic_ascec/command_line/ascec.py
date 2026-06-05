@@ -647,6 +647,18 @@ def _print_protocol_logo() -> None:
     print("===========================================================================")
 
 
+def _stage_key_num(key: str) -> int:
+    """Return the trailing stage index from a cache key.
+
+    Stage keys are ``<type>_<num>`` but ``<type>`` may itself contain
+    underscores (``energy_refinement_6``, ``geometry_optimization_2``), so the
+    number is always the LAST underscore-separated field — not ``split("_")[1]``,
+    which yields ``"refinement"`` for two-word types and raises ValueError.
+    """
+    m = re.search(r"_(\d+)$", key)
+    return int(m.group(1)) if m else -1
+
+
 def _dispatch_protocol(argv: list[str]) -> int:
     """v04 lines 19445-19775 — ``ascec <file> protocol [stage] [-i]``."""
     input_file = argv[1]
@@ -707,7 +719,7 @@ def _dispatch_protocol(argv: list[str]) -> int:
             cache = load_protocol_cache(cache_file)
             all_stage_keys = sorted(
                 cache.get("stages", {}).keys(),
-                key=lambda k: int(k.split("_")[1]),
+                key=_stage_key_num,
             )
             optimization_stages = [k for k in all_stage_keys if k.startswith("optimization_")]
             refinement_stages = [k for k in all_stage_keys if k.startswith("refinement_")]
@@ -715,7 +727,7 @@ def _dispatch_protocol(argv: list[str]) -> int:
             try:
                 stage_num = int(restart_stage)
                 for stage_key in cache.get("stages", {}).keys():
-                    if int(stage_key.split("_")[1]) == stage_num:
+                    if _stage_key_num(stage_key) == stage_num:
                         stages_to_restart.append(stage_key)
             except ValueError:
                 if restart_stage in ("opt", "opt1") and optimization_stages:
@@ -747,7 +759,7 @@ def _dispatch_protocol(argv: list[str]) -> int:
                 else:
                     print(f"\nRestarting stage(s): {', '.join(stages_to_restart)}")
                 min_restart_num = min(
-                    int(key.split("_")[1]) for key in stages_to_restart
+                    _stage_key_num(key) for key in stages_to_restart
                 )
                 if not incomplete_mode:
                     print(
@@ -781,11 +793,11 @@ def _dispatch_protocol(argv: list[str]) -> int:
                                     pass
                 all_stage_keys = sorted(
                     cache.get("stages", {}).keys(),
-                    key=lambda k: int(k.split("_")[1]),
+                    key=_stage_key_num,
                 )
                 stages_to_remove = [
                     k for k in all_stage_keys
-                    if int(k.split("_")[1]) >= min_restart_num
+                    if _stage_key_num(k) >= min_restart_num
                 ]
                 if stages_to_remove:
                     print(f"\n  → Clearing cache entries: {', '.join(stages_to_remove)}")
