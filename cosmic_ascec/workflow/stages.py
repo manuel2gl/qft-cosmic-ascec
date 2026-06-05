@@ -9258,6 +9258,19 @@ def check_qm_output_completed(qm_program: str, output_path: str) -> bool:
         if qm_program == 'auto':
             if output_path.lower().endswith('.log'):
                 return check_qm_output_completed('gaussian', output_path)
+            # Disambiguate ORCA vs xTB by content before dispatching. A crashed
+            # ORCA job (e.g. MDCI out-of-memory) still prints "Total Energy", and
+            # the xTB check's loose fallback only greps for "total energy" — so an
+            # ORCA file must NOT fall through to the xTB check, or error-terminated
+            # ORCA jobs get misreported as completed. Detect the ORCA banner and
+            # use the ORCA-specific normal-termination check for those files.
+            try:
+                with open(output_path, 'r', encoding='utf-8', errors='replace') as f:
+                    head = f.read(4000)
+            except Exception:
+                head = ''
+            if 'O   R   C   A' in head:
+                return check_qm_output_completed('orca', output_path)
             return (
                 check_qm_output_completed('orca', output_path) or
                 check_qm_output_completed('xtb', output_path)
@@ -13571,7 +13584,11 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
                     pass
 
         else:
-            print("✗ No output files found")
+            if failed_optimizations:
+                print(f"✗ All {num_inputs} {_kind_noun} failed "
+                      f"(0 normal terminations) — see {os.path.join(opt_dir, 'failed_opt.txt')}")
+            else:
+                print("✗ No output files found")
             return 1
     else:
         print(f"Warning: No launcher script found in {opt_dir}/")
