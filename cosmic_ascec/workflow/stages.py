@@ -7763,7 +7763,34 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
         return 1
     
     context.annealing_dirs = [os.path.dirname(f) for f in replicated_files]
-    
+
+    # Optional per-replica seed pinning for reproducible re-runs (D-038 flow).
+    # COSMIC_ASCEC_SEEDS is a comma-separated list mapped one seed per replica,
+    # in replica order (li5_1, li5_2, ...). Each replica subprocess receives its
+    # own COSMIC_ASCEC_SEED so the whole protocol can be reproduced in a single
+    # command. A single COSMIC_ASCEC_SEED (no plural) would otherwise be shared
+    # by every replica subprocess, forcing them all to identical trajectories.
+    replica_seeds: Dict[str, str] = {}
+    _seeds_raw = os.environ.get("COSMIC_ASCEC_SEEDS", "").strip()
+    if _seeds_raw:
+        _seed_list = [s.strip() for s in _seeds_raw.split(",") if s.strip()]
+        for _s in _seed_list:
+            try:
+                int(_s)
+            except ValueError:
+                raise ValueError(
+                    f"COSMIC_ASCEC_SEEDS contains a non-integer value: {_s!r}"
+                )
+        if len(_seed_list) != len(replicated_files):
+            raise ValueError(
+                f"COSMIC_ASCEC_SEEDS has {len(_seed_list)} seed(s) but the "
+                f"replication stage created {len(replicated_files)} replica(s); "
+                f"provide exactly one seed per replica."
+            )
+        replica_seeds = dict(zip(replicated_files, _seed_list))
+        if verbose:
+            print(f"Pinning per-replica seeds: {', '.join(_seed_list)}")
+
     # Actually run the annealing simulations
     if verbose:
         print(f"Running {num_replicas} annealing simulation(s)")
@@ -7823,6 +7850,12 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
         try:
             cmd = [sys.executable, os.path.abspath(sys.argv[0]), input_basename]
             env = {**os.environ, "ASCEC_DISABLE_EMBEDDED_PROTOCOL": "1"}
+            # Per-replica seed pin (from COSMIC_ASCEC_SEEDS). Overrides any single
+            # COSMIC_ASCEC_SEED inherited from the parent so each replica gets its
+            # own seed rather than all sharing one.
+            _pinned_seed = replica_seeds.get(input_file)
+            if _pinned_seed is not None:
+                env["COSMIC_ASCEC_SEED"] = _pinned_seed
 
             if on_step is not None:
                 proc = subprocess.Popen(
