@@ -5362,11 +5362,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         if opt_only_stages and final_motif_mapping:
             last_opt_dir = opt_only_stages[-1][0]
             if ref_stages:
-                # Rigorous/complete: chain back from final cosmic to cosmic_dirs[0] (follows opt).
+                # Rigorous/ultimate: chain back from final cosmic to cosmic_dirs[0] (follows opt).
                 opt_rank_to_stem = _chain_back(final_motif_mapping, final_cosmic_idx, 0)
                 opt_prefix = final_prefix
             else:
-                # Preliminar: final cosmic directly reflects opt stems.
+                # Preliminary: final cosmic directly reflects opt stems.
                 opt_rank_to_stem = dict(final_motif_mapping)
                 opt_prefix = "motif"
             out_dir = os.path.join(last_opt_dir, "geom_opt_out")
