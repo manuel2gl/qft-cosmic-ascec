@@ -233,6 +233,31 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             transition: border-color 0.3s;
         }
 
+        /* Cross-browser <select>: replace the native dropdown arrow (whose width
+           and clipping behaviour differ between Chrome/Firefox/Safari) with a
+           consistent custom chevron, reserve room for it via padding-right, and
+           let overlong option text degrade to an ellipsis instead of being cut
+           mid-character under the arrow. Keeps every dropdown clean and identical
+           across browsers and zoom levels. */
+        select {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            background-color: #fff;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5L6 8.5L10 4.5' fill='none' stroke='%237a838d' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 9px center;
+            padding-right: 28px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+
+        /* Hide the legacy default arrow that IE/Edge add on top of ours. */
+        select::-ms-expand {
+            display: none;
+        }
+
         .threshold-stepper {
             display: grid;
             grid-template-columns: 1fr 22px;
@@ -1299,6 +1324,20 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             background: #ffffff;
         }
 
+        /* Compact selects: re-apply the custom chevron at a smaller scale and
+           reserve just enough room so it never overlaps their short values.
+           (The `background: #fff` shorthand above clears the global arrow, so it
+           must be restored here.) */
+        .smart-box-top-controls .form-group select,
+        .smart-pack-mini select {
+            background-color: #ffffff;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5L6 8.5L10 4.5' fill='none' stroke='%237a838d' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 5px center;
+            background-size: 8px 8px;
+            padding-right: 18px;
+        }
+
         .smart-box-top-controls .auto-box-compact {
             margin-top: 1px;
             margin-left: 0;
@@ -1645,7 +1684,10 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
 
         .smart-compact-grid {
             display: grid;
-            grid-template-columns: repeat(3, minmax(260px, 1fr));
+            /* minmax(0, 1fr): columns shrink proportionally with zoom and never
+               overflow, so the three cards stay a clean, fixed 3-up row instead
+               of reflowing to an awkward 2+1 or stretching full-width. */
+            grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 12px;
             margin-bottom: 14px;
             align-items: stretch;
@@ -1656,6 +1698,15 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             padding: 16px;
             align-self: stretch;
             height: 100%;
+        }
+
+        /* The field rows inside each settings card are CSS grids
+           (grid-template-columns: repeat(N, minmax(0, 1fr))). Neutralise the
+           legacy inline min-width on each field so the grid columns shrink
+           smoothly with zoom and stay in a clean fixed layout, instead of a
+           field rewrapping onto its own full-width row. */
+        .smart-compact-grid .card .form-group {
+            min-width: 0 !important;
         }
 
         .auto-box-compact {
@@ -1672,13 +1723,10 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             height: 13px;
         }
 
-        @media (max-width: 1200px) {
-            .smart-compact-grid {
-                grid-template-columns: repeat(2, minmax(240px, 1fr));
-            }
-        }
-
-        @media (max-width: 820px) {
+        /* Keep the three cards as one fixed row across desktop zoom levels.
+           Only stack to a single column on genuinely phone-sized screens,
+           below the width where each card's inner controls would overflow. */
+        @media (max-width: 640px) {
             .smart-compact-grid {
                 grid-template-columns: 1fr;
             }
@@ -2782,7 +2830,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             conformational
                         </label>
                     </div>
-                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                    <div style="display:grid; gap:10px; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:end;">
                         <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                             <label>Theory</label>
                             <select id="smart-annealing-theory" onchange="updateSmartAnnealingMethod()">
@@ -2817,7 +2865,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             </div>
                         </div>
                     </div>
-                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-top:8px;">
+                    <div style="display:grid; gap:10px; grid-template-columns:repeat(4,minmax(0,1fr)); align-items:end; margin-top:8px;">
                         <div class="form-group" style="flex:1; min-width:70px; margin-bottom:0;">
                             <label>nprocs</label>
                             <input type="number" id="smart-annealing-nprocs" value="1" min="1">
@@ -2845,7 +2893,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             auto box
                         </label>
                     </div>
-                    <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+                    <div style="display:grid; gap:10px; align-items:end; grid-template-columns:repeat(4,minmax(0,1fr));">
                         <div class="form-group" style="flex:2; min-width:130px; margin-bottom:0;">
                             <label>Route</label>
                             <select id="smart-quench-route" onchange="updateSmartQuenchParams()">
@@ -2866,7 +2914,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             <input type="number" id="smart-quench-steps" value="80" min="1" oninput="updateSmartQuenchParams()">
                         </div>
                     </div>
-                    <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-top:10px;">
+                    <div style="display:grid; gap:10px; align-items:end; grid-template-columns:repeat(3,minmax(0,1fr)); margin-top:10px;">
                         <div class="form-group" style="flex:1; min-width:70px; margin-bottom:0;">
                             <label>Replicas</label>
                             <input type="number" id="smart-replicas" value="1" min="1" max="10" oninput="syncAnnealingConcurrentWithReplicas('smart-replicas', 'smart-annealing-concurrent', true); syncSmartBoxControlsToTop(); updateAllPreviews();">
@@ -2902,7 +2950,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
 
                 <div class="card">
                     <h2>Geometry Optimization</h2>
-                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                    <div style="display:grid; gap:10px; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:end;">
                         <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                             <label>Theory</label>
                             <select id="smart-opt-theory" onchange="updateSmartOptMethod()">
@@ -2929,6 +2977,8 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                                 </div>
                             </div>
                         </div>
+                    </div>
+                    <div style="display:grid; gap:10px; grid-template-columns:repeat(4,minmax(0,1fr)); align-items:end; margin-top:8px;">
                         <div class="form-group" style="flex:0 0 80px; margin-bottom:0;">
                             <label>nprocs</label>
                             <input type="number" id="smart-opt-nprocs" value="1" min="1">
@@ -2961,7 +3011,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </label>
                     </div>
                     <div id="smart-ref-body" style="opacity:0.4; pointer-events:none;">
-                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                    <div style="display:grid; gap:10px; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:end;">
                         <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                             <label>Theory</label>
                             <select id="smart-ref-theory" onchange="updateSmartRefMethod()">
@@ -2988,6 +3038,8 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                                 </div>
                             </div>
                         </div>
+                    </div>
+                    <div style="display:grid; gap:10px; grid-template-columns:repeat(4,minmax(0,1fr)); align-items:end; margin-top:8px;">
                         <div class="form-group" style="flex:0 0 80px; margin-bottom:0;">
                             <label>nprocs</label>
                             <input type="number" id="smart-ref-nprocs" value="8" min="1">
@@ -3021,7 +3073,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </label>
                     </div>
                     <div id="smart-energy-ref-body" style="opacity:0.4; pointer-events:none;">
-                        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                        <div style="display:grid; gap:10px; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:end;">
                             <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                                 <label>Theory</label>
                                 <select id="smart-eref-theory" onchange="updateSmartEnergyRefMethod(); syncSmartToAdvanced();">
