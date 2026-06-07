@@ -51,6 +51,42 @@ if [ -f "$SCRIPT_DIR/ascec-v04.py" ] && [ -d "$SCRIPT_DIR/cosmic_ascec" ]; then
     LOCAL_MODE=TRUE
 fi
 
+# Ensure git is available — only needed on the clone/pull paths below. Tries
+# the host's package manager (with sudo when not already root); if none works,
+# bails with a clear message instead of a raw "git: command not found".
+ensure_git() {
+    if command -v git &> /dev/null; then
+        return 0
+    fi
+    echo "> git not found — attempting to install it..."
+    SUDO=""
+    if [ "$(id -u)" -ne 0 ]; then
+        if command -v sudo &> /dev/null; then
+            SUDO="sudo"
+        else
+            echo "  Cannot install git: not root and sudo unavailable."
+            return 1
+        fi
+    fi
+    if command -v apt-get &> /dev/null; then
+        $SUDO apt-get update && $SUDO apt-get install -y git
+    elif command -v dnf &> /dev/null; then
+        $SUDO dnf install -y git
+    elif command -v yum &> /dev/null; then
+        $SUDO yum install -y git
+    elif command -v zypper &> /dev/null; then
+        $SUDO zypper install -y git
+    elif command -v pacman &> /dev/null; then
+        $SUDO pacman -Sy --noconfirm git
+    elif command -v apk &> /dev/null; then
+        $SUDO apk add git
+    else
+        echo "  No supported package manager found (apt/dnf/yum/zypper/pacman/apk)."
+        return 1
+    fi
+    command -v git &> /dev/null
+}
+
 echo "> Setting up directories at $TARGET_DIR..."
 mkdir -p "$TARGET_DIR"
 
@@ -68,9 +104,23 @@ elif [ "$LOCAL_MODE" = "TRUE" ] && [ "$SCRIPT_DIR" = "$TARGET_DIR" ]; then
     echo "> Installing in place at $TARGET_DIR (no copy needed)..."
 elif [ -d "$TARGET_DIR/.git" ]; then
     echo "> Repo exists, pulling latest updates..."
+    ensure_git || { echo "> ERROR: git is required to pull updates. Install git and re-run."; exit 1; }
     cd "$TARGET_DIR" && git pull
 else
     echo "> Cloning repository..."
+    if ! ensure_git; then
+        echo "-------------------------------------------------------"
+        echo "> ERROR: git is required to clone the repository, and it"
+        echo "> could not be installed automatically."
+        echo "> "
+        echo "> SOLUTIONS:"
+        echo ">   - Install git manually, then re-run this script, OR"
+        echo ">   - Run install.sh from a local checkout (a directory"
+        echo ">     containing both ascec-v04.py and cosmic_ascec/), which"
+        echo ">     copies the source instead of cloning (no git needed)."
+        echo "-------------------------------------------------------"
+        exit 1
+    fi
     git clone https://github.com/manuel2gl/qft-cosmic-ascec.git "$TARGET_DIR"
 fi
 
