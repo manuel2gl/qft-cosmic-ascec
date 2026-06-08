@@ -1458,6 +1458,9 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                     'cluster_id': final_cluster_id,
                     'filename': rep['filename'],
                     'energy': energy_for_boltz,
+                    'dft_gibbs': rep.get('composite_dft_gibbs'),
+                    'ccsdt_elec': rep.get('composite_ccsdt_elec'),
+                    'thermal': rep.get('composite_thermal'),
                     'cluster_size': len(cluster_members)
                 })
 
@@ -1479,6 +1482,9 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
             boltzmann_final_data[rep['cluster_id']] = {
                 'energy': rep['energy'],
+                'dft_gibbs': rep.get('dft_gibbs'),
+                'ccsdt_elec': rep.get('ccsdt_elec'),
+                'thermal': rep.get('thermal'),
                 'filename': rep['filename'],
                 'population': factor,
                 'cluster_size': rep['cluster_size']
@@ -1578,8 +1584,26 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
             boltzmann_file_content_lines.append(cluster_line)
             boltzmann_file_content_lines.append(f"  From structure: {os.path.splitext(data['filename'])[0]}")
+            # For composite (eref) runs, break the composite Gibbs energy down
+            # into its contributions before the combined value: the Gibbs energy
+            # from the geometry-refinement stage (thermal-correction source) and
+            # the electronic energy from the energy-refinement stage. Labels are
+            # stage-based so they stay method-agnostic.
+            if mode.has_composite:
+                if data.get('dft_gibbs') is not None:
+                    dft_g = data['dft_gibbs']
+                    boltzmann_file_content_lines.append(f"  Geometry Refinement Gibbs Energy: {dft_g:.6f} Hartree ({hartree_to_kcal_mol(dft_g):.2f} kcal/mol, {hartree_to_ev(dft_g):.2f} eV)")
+                if data.get('thermal') is not None:
+                    therm = data['thermal']
+                    boltzmann_file_content_lines.append(f"  Thermal Correction: {therm:.6f} Hartree ({hartree_to_kcal_mol(therm):.2f} kcal/mol, {hartree_to_ev(therm):.2f} eV)")
+                if data.get('ccsdt_elec') is not None:
+                    cc_e = data['ccsdt_elec']
+                    boltzmann_file_content_lines.append(f"  Energy Refinement: {cc_e:.6f} Hartree ({hartree_to_kcal_mol(cc_e):.2f} kcal/mol, {hartree_to_ev(cc_e):.2f} eV)")
             energy_label = "Composite Gibbs Energy" if mode.has_composite else "Gibbs Energy"
             boltzmann_file_content_lines.append(f"  {energy_label}: {data['energy']:.6f} Hartree ({hartree_to_kcal_mol(data['energy']):.2f} kcal/mol, {hartree_to_ev(data['energy']):.2f} eV)")
+            # Relative Gibbs energy (ΔG) referenced to the global minimum (umotif_01).
+            delta_g = data['energy'] - final_global_min_energy
+            boltzmann_file_content_lines.append(f"  Relative Gibbs Energy (ΔG): {delta_g:.6f} Hartree ({hartree_to_kcal_mol(delta_g):.2f} kcal/mol, {hartree_to_ev(delta_g):.2f} eV)")
             boltzmann_file_content_lines.append(f"  Population: {data['population']:.2f} %")
             boltzmann_file_content_lines.append("")
 

@@ -151,6 +151,12 @@ def apply_composite_energies(
             if e_eref is not None:
                 thermal_correction = g_prev - e_prev
                 mol['composite_gibbs'] = e_eref + thermal_correction
+                # Retain the components so the final Boltzmann report can break
+                # down the composite into its DFT (previous-stage Gibbs) and
+                # CCSD(T) (eref electronic) contributions.
+                mol['composite_dft_gibbs'] = g_prev
+                mol['composite_ccsdt_elec'] = e_eref
+                mol['composite_thermal'] = thermal_correction
                 n_matched += 1
 
     return n_matched
