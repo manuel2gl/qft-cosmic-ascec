@@ -165,15 +165,26 @@ def plot_annotated_dendrogram(
     ax2.axhline(y=cut_height, color='#e74c3c', linestyle='--', linewidth=2,
                 label=rf'Applied cut $\tau$={cut_height:.2f} ($n_c$={n_above_cut + 1})')
 
+    # Two redundancy guards so no legend entry just duplicates the applied cut at
+    # the displayed (2-decimal) precision:
+    #   * Standard τ=2.0 is dropped when the applied cut already sits at 2.0
+    #     (legacy / knee-capped) — otherwise "Applied" and "Standard" both read
+    #     "τ=2.00", the uninformative pair we want to avoid.
+    #   * Knee is dropped when it coincides with the applied cut (the common
+    #     non-capped case where the applied cut *is* the knee). It is kept, with
+    #     its raw uncapped value, precisely when detection was capped to τ=2.0 —
+    #     so the empirical line is replaced by the actual knee it was capped from.
     STANDARD_T = 2.0
-    n_standard = int(np.sum(heights_sorted > STANDARD_T)) + 1
-    ax2.plot([], [], ' ',
-             label=rf'Standard $\tau$=2.00 ($n_c$={n_standard})')
+    show_standard = round(cut_height, 2) != round(STANDARD_T, 2)
+    show_knee = (knee_threshold is not None
+                 and round(float(knee_threshold), 2) != round(cut_height, 2))
 
-    # Detected knee — legend-only entry (like Standard / Mojena); the only line
-    # drawn on the plot is the applied cut. Surfaces where automatic detection
-    # pointed, whether or not it was capped to the empirical τ=2.0 ceiling.
-    if knee_threshold is not None:
+    if show_standard:
+        n_standard = int(np.sum(heights_sorted > STANDARD_T)) + 1
+        ax2.plot([], [], ' ',
+                 label=rf'Standard $\tau$=2.00 ($n_c$={n_standard})')
+
+    if show_knee:
         _knee_k = knee_k if knee_k is not None else int(np.sum(heights_sorted > knee_threshold)) + 1
         ax2.plot([], [], ' ',
                  label=rf'Knee $\tau$={knee_threshold:.2f} ($n_c$={_knee_k})')
@@ -209,18 +220,18 @@ def plot_annotated_dendrogram(
     # Similarity-floor entries (Pearson floor for each threshold).
     trust_segments = []
     if n_eff is not None and n_eff > 0:
-        applied_is_standard = abs(cut_height - STANDARD_T) <= 1e-6
-
         def _fmt_trust_segment(label, t_val):
             pct = pearson_similarity_pct(t_val, n_eff)
             if pct is None:
                 return f"{label} \u2192 N/A"
             return f"{label} \u2192 {pct:.1f}%"
 
+        # Mirror the main-legend redundancy guards (show_standard / show_knee) so
+        # the two boxes list the same thresholds.
         trust_segments.append(_fmt_trust_segment("Applied", cut_height))
-        if not applied_is_standard:
+        if show_standard:
             trust_segments.append(_fmt_trust_segment("Standard", STANDARD_T))
-        if knee_threshold is not None:
+        if show_knee:
             trust_segments.append(_fmt_trust_segment("Knee", float(knee_threshold)))
         if mojena_threshold is not None:
             trust_segments.append(_fmt_trust_segment("Mojena", float(mojena_threshold)))
