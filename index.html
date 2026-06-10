@@ -2962,7 +2962,13 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                             <label>Method</label>
-                            <select id="smart-opt-method" onchange="updateSmartOptPreview(); updateSmartPipeline(); syncSmartToAdvanced();"></select>
+                            <div class="custom-inline-control">
+                                <select id="smart-opt-method" onchange="toggleCustomMethod('smart-opt'); updateSmartOptPreview(); updateSmartPipeline(); syncSmartToAdvanced();"></select>
+                                <div id="smart-opt-method-custom-wrap" class="custom-inline-editor">
+                                    <input type="text" id="smart-opt-method-custom" class="custom-method-input" placeholder="Custom method" oninput="updateSmartOptPreview(); updateSmartPipeline(); syncSmartToAdvanced();">
+                                    <button type="button" class="custom-inline-reset" onclick="resetCustomControl('smart-opt-method', 'smart-opt-method-custom')">▾</button>
+                                </div>
+                            </div>
                         </div>
                         <div class="form-group" style="flex:1; min-width:100px; margin-bottom:0;">
                             <label>Basis</label>
@@ -3023,7 +3029,13 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                             <label>Method</label>
-                            <select id="smart-ref-method" onchange="updateSmartRefPreview(); updateSmartPipeline(); syncSmartToAdvanced();"></select>
+                            <div class="custom-inline-control">
+                                <select id="smart-ref-method" onchange="toggleCustomMethod('smart-ref'); updateSmartRefPreview(); updateSmartPipeline(); syncSmartToAdvanced();"></select>
+                                <div id="smart-ref-method-custom-wrap" class="custom-inline-editor">
+                                    <input type="text" id="smart-ref-method-custom" class="custom-method-input" placeholder="Custom method" oninput="updateSmartRefPreview(); updateSmartPipeline(); syncSmartToAdvanced();">
+                                    <button type="button" class="custom-inline-reset" onclick="resetCustomControl('smart-ref-method', 'smart-ref-method-custom')">▾</button>
+                                </div>
+                            </div>
                         </div>
                         <div class="form-group" style="flex:1; min-width:100px; margin-bottom:0;">
                             <label>Basis</label>
@@ -3085,7 +3097,13 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             </div>
                             <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                                 <label>Method</label>
-                                <select id="smart-eref-method" onchange="updateSmartEnergyRefPreview(); updateSmartPipeline(); buildProtocolFromSettings(); updatePipelineVisual(); syncSmartToAdvanced();"></select>
+                                <div class="custom-inline-control">
+                                    <select id="smart-eref-method" onchange="toggleCustomMethod('smart-eref'); updateSmartEnergyRefPreview(); updateSmartPipeline(); buildProtocolFromSettings(); updatePipelineVisual(); syncSmartToAdvanced();"></select>
+                                    <div id="smart-eref-method-custom-wrap" class="custom-inline-editor">
+                                        <input type="text" id="smart-eref-method-custom" class="custom-method-input" placeholder="Custom method" oninput="updateSmartEnergyRefPreview(); updateSmartPipeline(); buildProtocolFromSettings(); updatePipelineVisual();">
+                                        <button type="button" class="custom-inline-reset" onclick="resetCustomControl('smart-eref-method', 'smart-eref-method-custom')">▾</button>
+                                    </div>
+                                </div>
                             </div>
                             <div class="form-group" style="flex:1; min-width:120px; margin-bottom:0;">
                                 <label>Basis</label>
@@ -3102,11 +3120,11 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             </div>
                             <div class="form-group" style="flex:0 0 85px; margin-bottom:0;">
                                 <label>nprocs</label>
-                                <input type="number" id="smart-eref-nprocs" value="2" min="1" oninput="updateSmartEnergyRefPreview(); syncSmartToAdvanced(); buildProtocolFromSettings();">
+                                <input type="number" id="smart-eref-nprocs" value="1" min="1" oninput="updateSmartEnergyRefPreview(); syncSmartToAdvanced(); buildProtocolFromSettings();">
                             </div>
                             <div class="form-group" style="flex:0 0 100px; margin-bottom:0;">
                                 <label>MaxCore (MB)</label>
-                                <input type="number" id="smart-eref-memory" value="4000" min="0" step="500" oninput="updateSmartEnergyRefPreview(); syncSmartToAdvanced(); buildProtocolFromSettings();">
+                                <input type="number" id="smart-eref-memory" value="50000" min="0" step="500" oninput="updateSmartEnergyRefPreview(); syncSmartToAdvanced(); buildProtocolFromSettings();">
                             </div>
                             <div class="form-group" style="flex:1; min-width:100px; margin-bottom:0;">
                                 <label>Job</label>
@@ -3824,11 +3842,11 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <div class="form-row-4">
                             <div class="form-group">
                                 <label>nprocs</label>
-                                <input type="number" id="adv-eref-nprocs" value="2" min="1" oninput="updateAdvEnergyRefPreview(); updateAllPreviews();">
+                                <input type="number" id="adv-eref-nprocs" value="1" min="1" oninput="updateAdvEnergyRefPreview(); updateAllPreviews();">
                             </div>
                             <div class="form-group">
                                 <label>MaxCore (MB)</label>
-                                <input type="number" id="adv-eref-memory" value="4000" min="0" step="500" oninput="updateAdvEnergyRefPreview(); updateAllPreviews();">
+                                <input type="number" id="adv-eref-memory" value="50000" min="0" step="500" oninput="updateAdvEnergyRefPreview(); updateAllPreviews();">
                             </div>
                             <div class="form-group">
                                 <label>Job Type</label>
@@ -7653,17 +7671,19 @@ H  -0.757000  0.586000  0.000000"></textarea>
             const theory = document.getElementById('smart-opt-theory').value;
             const methodSelect = document.getElementById('smart-opt-method');
             const basisSelect = document.getElementById('smart-opt-basis');
-            const methods = methodsByTheory[theory] || methodsByTheory.semiempirical;
+            const methods = (methodsByTheory[theory] || methodsByTheory.semiempirical).slice();
+            methods.push('Other');
 
             const defaultMethod = theory === 'dft' ? 'B3LYP' : methods[0];
             methodSelect.innerHTML = methods.map((m) =>
-                `<option value="${m}" ${m === defaultMethod ? 'selected' : ''}>${m}</option>`
+                `<option value="${m}" ${m === defaultMethod ? 'selected' : ''}>${m === 'Other' ? 'Other...' : m}</option>`
             ).join('');
 
             populateBasisSelect('smart-opt-basis', theory);
             if (basisSelect) basisSelect.value = theory === 'dft' ? '6-31G*' : '';
+            toggleCustomMethod('smart-opt');
             toggleCustomInput('smart-opt-basis', 'smart-opt-basis-custom');
-            
+
             updateSmartOptPreview();
             updateSmartPipeline();
             syncSmartToAdvanced();
@@ -7674,17 +7694,19 @@ H  -0.757000  0.586000  0.000000"></textarea>
             const theory = document.getElementById('smart-ref-theory').value;
             const methodSelect = document.getElementById('smart-ref-method');
             const basisSelect = document.getElementById('smart-ref-basis');
-            const methods = methodsByTheory[theory] || methodsByTheory.dft;
+            const methods = (methodsByTheory[theory] || methodsByTheory.dft).slice();
+            methods.push('Other');
 
             const defaultMethod = theory === 'dft' ? 'B3LYP' : methods[0];
             methodSelect.innerHTML = methods.map((m) =>
-                `<option value="${m}" ${m === defaultMethod ? 'selected' : ''}>${m}</option>`
+                `<option value="${m}" ${m === defaultMethod ? 'selected' : ''}>${m === 'Other' ? 'Other...' : m}</option>`
             ).join('');
 
             populateBasisSelect('smart-ref-basis', theory);
             if (basisSelect) basisSelect.value = theory === 'dft' ? '6-31G*' : '';
+            toggleCustomMethod('smart-ref');
             toggleCustomInput('smart-ref-basis', 'smart-ref-basis-custom');
-            
+
             updateSmartRefPreview();
             updateSmartPipeline();
             syncSmartToAdvanced();
@@ -7765,7 +7787,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
         // Update optimization preview
         function updateSmartOptPreview() {
-            const method = document.getElementById('smart-opt-method').value;
+            const method = getMethodValue('smart-opt', 'GFN2-xTB');
             const theory = document.getElementById('smart-opt-theory')?.value || 'xtb';
             const basis = getSelectOrCustomValue('smart-opt-basis', 'smart-opt-basis-custom');
             const job = document.getElementById('smart-opt-job')?.value || 'Opt NumFreq';
@@ -7795,7 +7817,7 @@ end
 
         // Update refinement preview
         function updateSmartRefPreview() {
-            const method = document.getElementById('smart-ref-method').value;
+            const method = getMethodValue('smart-ref', 'B3LYP');
                         const theory = document.getElementById('smart-ref-theory')?.value || 'dft';
                         const basis = getSelectOrCustomValue('smart-ref-basis', 'smart-ref-basis-custom');
             const job = document.getElementById('smart-ref-job')?.value || 'Opt Freq';
@@ -7915,13 +7937,15 @@ end
             const theory = document.getElementById('smart-eref-theory').value;
             const methodSelect = document.getElementById('smart-eref-method');
             const basisSelect = document.getElementById('smart-eref-basis');
-            const methods = methodsByTheory[theory] || methodsByTheory['post-hf'];
+            const methods = (methodsByTheory[theory] || methodsByTheory['post-hf']).slice();
+            methods.push('Other');
 
             const defaultMethod = theory === 'post-hf' ? 'DLPNO-CCSD(T)' : (theory === 'dft' ? 'B3LYP' : methods[0]);
             methodSelect.innerHTML = methods.map((m) =>
-                `<option value="${m}" ${m === defaultMethod ? 'selected' : ''}>${m}</option>`
+                `<option value="${m}" ${m === defaultMethod ? 'selected' : ''}>${m === 'Other' ? 'Other...' : m}</option>`
             ).join('');
 
+            toggleCustomMethod('smart-eref');
             populateBasisSelect('smart-eref-basis', theory);
             if (basisSelect) {
                 if (theory === 'post-hf') basisSelect.value = 'aug-cc-pVTZ';
@@ -7940,11 +7964,11 @@ end
             const enabled = document.getElementById('smart-energy-ref-enabled')?.checked;
             if (!enabled) return;
 
-            const method = document.getElementById('smart-eref-method')?.value || 'DLPNO-CCSD(T)';
+            const method = getMethodValue('smart-eref', 'DLPNO-CCSD(T)');
             const theory = document.getElementById('smart-eref-theory')?.value || 'post-hf';
             const basis = getSelectOrCustomValue('smart-eref-basis', 'smart-eref-basis-custom');
             const jobRaw = document.getElementById('smart-eref-job')?.value || 'SP';
-            const nprocs = document.getElementById('smart-eref-nprocs')?.value || '4';
+            const nprocs = document.getElementById('smart-eref-nprocs')?.value || '1';
             const maxcore = (document.getElementById('smart-eref-memory')?.value || '').trim();
             const charge = document.getElementById('smart-charge')?.value || '0';
             const mult = document.getElementById('smart-multiplicity')?.value || '1';
@@ -7979,8 +8003,8 @@ end
         function updateSmartPipeline() {
             const annealingTheory = document.getElementById('smart-annealing-theory')?.value || 'semiempirical';
             const annealingMethod = getMethodValue('smart-annealing', 'GFN2-xTB');
-            const optMethod = document.getElementById('smart-opt-method')?.value || 'GFN2-xTB';
-            const refMethod = document.getElementById('smart-ref-method')?.value || 'B97-3c';
+            const optMethod = getMethodValue('smart-opt', 'GFN2-xTB');
+            const refMethod = getMethodValue('smart-ref', 'B97-3c');
             const sameCOSMIC = document.getElementById('smart-sim-same')?.checked !== false;
             const simThreshold = document.getElementById('smart-sim-th')?.value || 'automatic';
             const sim2RawValue = (document.getElementById('smart-sim2-th')?.value || '').trim();
@@ -8024,7 +8048,7 @@ end
 
             // Energy Refinement pipeline steps (optional)
             const erefEnabled = document.getElementById('smart-energy-ref-enabled')?.checked;
-            const erefMethod = document.getElementById('smart-eref-method')?.value || 'DLPNO-CCSD(T)';
+            const erefMethod = getMethodValue('smart-eref', 'DLPNO-CCSD(T)');
             const pipeErefArrow = document.getElementById('smart-pipe-eref-arrow');
             const pipeErefStep = document.getElementById('smart-pipe-eref-step');
             const pipeEref = document.getElementById('smart-pipe-eref');
@@ -8220,7 +8244,7 @@ end
 
             // Optimization settings
             const optTheory = document.getElementById('smart-opt-theory')?.value;
-            const optMethod = document.getElementById('smart-opt-method')?.value;
+            const optMethod = getMethodValue('smart-opt', 'GFN2-xTB');
             const optBasis = getSelectOrCustomValue('smart-opt-basis', 'smart-opt-basis-custom');
             const optMethodWithBasis = buildSmartMethodWithBasis(optMethod, optBasis, optTheory);
             const optNprocs = document.getElementById('smart-opt-nprocs')?.value;
@@ -8303,7 +8327,7 @@ end
 
             // Refinement settings
             const refTheory = document.getElementById('smart-ref-theory')?.value;
-            const refMethod = document.getElementById('smart-ref-method')?.value;
+            const refMethod = getMethodValue('smart-ref', 'B97-3c');
             const refBasis = getSelectOrCustomValue('smart-ref-basis', 'smart-ref-basis-custom');
             const refMethodWithBasis = buildSmartMethodWithBasis(refMethod, refBasis, refTheory);
             const refNprocs = document.getElementById('smart-ref-nprocs')?.value;
@@ -8424,7 +8448,7 @@ end
             }
             if (erefEnabled) {
                 const erefTheory = document.getElementById('smart-eref-theory')?.value || 'post-hf';
-                const erefMethod = document.getElementById('smart-eref-method')?.value || 'DLPNO-CCSD(T)';
+                const erefMethod = getMethodValue('smart-eref', 'DLPNO-CCSD(T)');
                 const erefBasis = getSelectOrCustomValue('smart-eref-basis', 'smart-eref-basis-custom');
                 const erefNprocs = document.getElementById('smart-eref-nprocs')?.value;
                 const erefMemory = document.getElementById('smart-eref-memory')?.value;
@@ -8816,7 +8840,9 @@ end
                 const smartErefMethod = document.getElementById('smart-eref-method');
                 if (smartErefMethod) {
                     const opts = Array.from(smartErefMethod.options).map(o => o.value);
-                    if (opts.includes(erefMethod)) smartErefMethod.value = erefMethod;
+                    if (opts.includes(erefMethod)) { smartErefMethod.value = erefMethod; }
+                    else if (erefMethod) { smartErefMethod.value = 'Other'; const c = document.getElementById('smart-eref-method-custom'); if (c) c.value = erefMethod; }
+                    toggleCustomMethod('smart-eref');
                 }
                 const smartErefBasis = document.getElementById('smart-eref-basis');
                 if (smartErefBasis) {
@@ -9101,7 +9127,7 @@ end
             const basisCustom = document.getElementById('adv-eref-basis-custom');
             const basis = (basisRaw?.value === 'Other') ? (basisCustom?.value?.trim() || '') : (basisRaw?.value || '');
             const jobRaw = document.getElementById('adv-eref-job')?.value || 'SP';
-            const nprocs = document.getElementById('adv-eref-nprocs')?.value || '4';
+            const nprocs = document.getElementById('adv-eref-nprocs')?.value || '1';
             const maxcore = (document.getElementById('adv-eref-memory')?.value || '').trim();
             const charge = document.getElementById('adv-charge')?.value || '0';
             const mult = document.getElementById('adv-multiplicity')?.value || '1';
@@ -9582,7 +9608,7 @@ end
 
             // Energy Refinement steps (synced from Smart Mode)
             const erefEnabled = document.getElementById('smart-energy-ref-enabled')?.checked;
-            const erefMethod = document.getElementById('smart-eref-method')?.value || 'DLPNO-CCSD(T)';
+            const erefMethod = getMethodValue('smart-eref', 'DLPNO-CCSD(T)');
             const ape = document.getElementById('adv-pipe-eref-arrow');
             const aps = document.getElementById('adv-pipe-eref-step');
             const apm = document.getElementById('adv-pipe-eref');
