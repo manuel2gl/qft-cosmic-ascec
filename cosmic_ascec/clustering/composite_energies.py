@@ -21,6 +21,33 @@ from typing import Any, Dict, List, MutableMapping, Sequence
 Record = MutableMapping[str, Any]
 
 
+# Clustering features that the high-level energy-refinement (eref) single point
+# does NOT produce but the previous (geometry-refinement) stage does. The eref
+# step is an electronic single point (no Opt/Freq), so it carries an improved
+# electronic energy, dipole, and frontier-orbital data, but lacks the thermal
+# (Gibbs) and vibrational features. These are geometry-invariant between the two
+# stages (the single point reuses the refined geometry verbatim), so they can be
+# carried over from the matched previous-stage output without re-running freq.
+#
+# The rule is "prefer eref, complement with the previous stage": a key is only
+# backfilled when it is missing from the eref record, so CCSD(T)'s electronic
+# features are always kept and never overwritten by the cheaper DFT values.
+_BACKFILL_FEATURE_KEYS = (
+    "gibbs_free_energy",
+    "first_vib_freq",
+    "last_vib_freq",
+    "homo_energy",
+    "homo_lumo_gap",
+    "dipole_moment",
+    "vnn_nuclear_repulsion",
+    "rotational_constants",
+    "num_hydrogen_bonds",
+    "average_hbond_distance",
+    "std_hbond_distance",
+    "average_hbond_angle",
+)
+
+
 def apply_composite_energies(
     dataset: Sequence[Record],
     prev_out_dir: str,
@@ -31,6 +58,16 @@ def apply_composite_energies(
     to get the previous-stage electronic and Gibbs energies, then computes the thermal
     correction and adds composite_gibbs to each matched molecule in dataset.
 
+    In addition to the composite Gibbs energy, this also **backfills the
+    clustering features that the eref single point cannot produce** (Gibbs,
+    vibrational frequencies, …) from the matched previous-stage output — see
+    :data:`_BACKFILL_FEATURE_KEYS`. Without this, the final post-eref clustering
+    would run on a degraded feature vector (only the electronic features survive
+    a single point), losing the frequency-derived discriminators and collapsing
+    genuinely distinct motifs. Backfilling restores the full feature set so the
+    final partition stays consistent with the geometry-refinement stage while
+    still ranking by the high-level composite energy.
+
     Args:
         dataset: list of mol dicts (already extracted from eref outputs)
         prev_out_dir: path to the previous COSMIC base directory (e.g. "COSMIC_2")
@@ -38,7 +75,9 @@ def apply_composite_energies(
     Returns:
         Number of structures that received a composite_gibbs value.
 
-    Verbatim port of cosmic-v01's ``apply_composite_energies`` (4726-4849).
+    Based on cosmic-v01's ``apply_composite_energies`` (4726-4849); the
+    feature-backfill block (eref is feature-poor, the previous DFT stage is not)
+    is a v05 addition.
     """
     from cosmic_ascec.clustering.features.extractor import (
         extract_properties_from_logfile,
@@ -103,7 +142,10 @@ def apply_composite_energies(
             elec = props.get('final_electronic_energy')
             gibbs = props.get('gibbs_free_energy')
             if elec is not None and gibbs is not None:
-                prev_data[stem] = {'elec': elec, 'gibbs': gibbs}
+                # Retain the full property dict so the feature-backfill step can
+                # recover the vibrational / thermal features the eref single
+                # point does not produce.
+                prev_data[stem] = {'elec': elec, 'gibbs': gibbs, 'props': props}
 
     if not prev_data:
         print(f"  Warning: Could not extract energies from {prev_out_dir}/ files")
@@ -138,6 +180,7 @@ def apply_composite_energies(
                 pass
 
     n_matched = 0
+    n_backfilled = 0
     for mol in dataset:
         stem = os.path.splitext(os.path.basename(mol.get('filename', '')))[0]
         # Try direct match first, then fall back to alias map
@@ -158,6 +201,27 @@ def apply_composite_energies(
                 mol['composite_ccsdt_elec'] = e_eref
                 mol['composite_thermal'] = thermal_correction
                 n_matched += 1
+
+            # Backfill the clustering features the eref single point cannot
+            # provide (Gibbs, vibrational frequencies, …) from the matched
+            # previous-stage output. Only fill keys missing from the eref
+            # record, so the high-level electronic features are kept verbatim.
+            prev_props = prev_data[lookup_stem].get('props') or {}
+            backfilled_here = []
+            for key in _BACKFILL_FEATURE_KEYS:
+                if mol.get(key) is not None:
+                    continue  # eref already provides it — keep the better value
+                prev_value = prev_props.get(key)
+                if prev_value is not None:
+                    mol[key] = prev_value
+                    backfilled_here.append(key)
+            if backfilled_here:
+                mol['_backfilled_features'] = backfilled_here
+                n_backfilled += 1
+
+    if n_backfilled:
+        print(f"  Backfilled feature-poor eref structures from {os.path.basename(prev_out_dir)}: "
+              f"{n_backfilled}/{len(dataset)} (Gibbs / vibrational features carried over)")
 
     return n_matched
 
