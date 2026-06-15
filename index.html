@@ -563,19 +563,23 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
         }
 
         .pipeline-step.annealing {
-            background: #e74c3c;
+            background: #C0392B;
         }
 
         .pipeline-step.optimization {
-            background: #27ae60;
+            background: #946D00;
         }
 
         .pipeline-step.cosmic {
-            background: #9b59b6;
+            background: #7E4FA8;
         }
 
         .pipeline-step.refinement {
-            background: #f39c12;
+            background: #2E6DA4;
+        }
+
+        .pipeline-step.energy-refinement {
+            background: #2E8455;
         }
 
         .pipeline-step.result {
@@ -2165,10 +2169,11 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             align-items: center;
         }
 
-        .pipeline-step-label.annealing { background: #e74c3c; }
-        .pipeline-step-label.optimization { background: #27ae60; }
-        .pipeline-step-label.cosmic { background: #9b59b6; }
-        .pipeline-step-label.refinement { background: #f39c12; }
+        .pipeline-step-label.annealing { background: #C0392B; }
+        .pipeline-step-label.optimization { background: #946D00; }
+        .pipeline-step-label.cosmic { background: #7E4FA8; }
+        .pipeline-step-label.refinement { background: #2E6DA4; }
+        .pipeline-step-label.energy-refinement { background: #2E8455; }
         .pipeline-step-label.result { background: var(--primary-color); }
 
         .pipeline-step-theory {
@@ -3219,8 +3224,13 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     </div>
                     <span class="pipeline-arrow-small" id="smart-pipe-eref-arrow" style="display:none;">→</span>
                     <div class="pipeline-step-compact" id="smart-pipe-eref-step" style="display:none;">
-                        <span class="pipeline-step-label refinement" style="background:#e74c3c;">Energy Refinement</span>
+                        <span class="pipeline-step-label energy-refinement">Energy Refinement</span>
                         <span class="pipeline-step-theory" id="smart-pipe-eref">DLPNO-CCSD(T)</span>
+                    </div>
+                    <span class="pipeline-arrow-small" id="smart-pipe-cosmic3-arrow" style="display:none;">→</span>
+                    <div class="pipeline-step-compact" id="smart-pipe-cosmic3-step" style="display:none;">
+                        <span class="pipeline-step-label cosmic">COSMIC 3</span>
+                        <span class="pipeline-step-theory" id="smart-pipe-sim3">th=auto</span>
                     </div>
                     <span class="pipeline-arrow-small">→</span>
                     <div class="pipeline-step-compact">
@@ -3277,8 +3287,13 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                     </div>
                     <span class="pipeline-arrow-small" id="adv-pipe-eref-arrow" style="display:none;">→</span>
                     <div class="pipeline-step-compact" id="adv-pipe-eref-step" style="display:none;">
-                        <span class="pipeline-step-label refinement" style="background:#e74c3c;">Energy Refinement</span>
+                        <span class="pipeline-step-label energy-refinement">Energy Refinement</span>
                         <span class="pipeline-step-theory" id="adv-pipe-eref">DLPNO-CCSD(T)</span>
+                    </div>
+                    <span class="pipeline-arrow-small" id="adv-pipe-sim3-arrow" style="display:none;">→</span>
+                    <div class="pipeline-step-compact" id="adv-pipe-sim3-step" style="display:none;">
+                        <span class="pipeline-step-label cosmic">COSMIC 3</span>
+                        <span class="pipeline-step-theory" id="adv-pipe-sim3">th=auto</span>
                     </div>
                     <span class="pipeline-arrow-small">→</span>
                     <div class="pipeline-step-compact">
@@ -8057,6 +8072,16 @@ end
             if (pipeErefStep) pipeErefStep.style.display = erefEnabled ? '' : 'none';
             if (pipeEref) pipeEref.textContent = erefMethod;
 
+            // COSMIC 3 — final clustering of the energy-refined set; only shown
+            // for the complete pipeline (i.e. when energy refinement is on),
+            // placed just before the Results / Final PES step.
+            const pipeCosmic3Arrow = document.getElementById('smart-pipe-cosmic3-arrow');
+            const pipeCosmic3Step = document.getElementById('smart-pipe-cosmic3-step');
+            const pipeSim3 = document.getElementById('smart-pipe-sim3');
+            if (pipeCosmic3Arrow) pipeCosmic3Arrow.style.display = erefEnabled ? '' : 'none';
+            if (pipeCosmic3Step) pipeCosmic3Step.style.display = erefEnabled ? '' : 'none';
+            if (pipeSim3) pipeSim3.textContent = `th=${sim2ThresholdDisplay}`;
+
             // Sync advanced pipeline too
             const advPipeErefArrow = document.getElementById('adv-pipe-eref-arrow');
             const advPipeErefStep = document.getElementById('adv-pipe-eref-step');
@@ -8064,6 +8089,12 @@ end
             if (advPipeErefArrow) advPipeErefArrow.style.display = erefEnabled ? '' : 'none';
             if (advPipeErefStep) advPipeErefStep.style.display = erefEnabled ? '' : 'none';
             if (advPipeEref) advPipeEref.textContent = erefMethod;
+            const advPipeCosmic3Arrow = document.getElementById('adv-pipe-sim3-arrow');
+            const advPipeCosmic3Step = document.getElementById('adv-pipe-sim3-step');
+            const advPipeSim3 = document.getElementById('adv-pipe-sim3');
+            if (advPipeCosmic3Arrow) advPipeCosmic3Arrow.style.display = erefEnabled ? '' : 'none';
+            if (advPipeCosmic3Step) advPipeCosmic3Step.style.display = erefEnabled ? '' : 'none';
+            if (advPipeSim3) advPipeSim3.textContent = `th=${sim2ThresholdDisplay}`;
 
             updateSamplingPresetUI();
 
