@@ -8150,7 +8150,7 @@ end
             const replicas = document.getElementById('smart-replicas')?.value;
             const smartPacking = getSmartPackingValue().toString();
             const smartConfEnabled = document.getElementById('smart-enable-conf-search')?.checked === true;
-            const smartConfSampling = smartConfEnabled ? '30' : '0';
+            const smartConfSampling = smartConfEnabled ? confSamplingDefault() : '0';
 
             if (annealingTheory) {
                 const advTheory = document.getElementById('adv-annealing-theory');
@@ -8563,7 +8563,7 @@ end
             const replicas = document.getElementById('adv-replicas')?.value;
             const advPacking = getAdvancedPackingValue().toString();
             const advConfEnabled = document.getElementById('adv-enable-conf-search')?.checked === true;
-            const advConfSampling = document.getElementById('conf-sampling')?.value || (advConfEnabled ? '30' : '0');
+            const advConfSampling = document.getElementById('conf-sampling')?.value || (advConfEnabled ? confSamplingDefault() : '0');
 
             if (annealingTheory) {
                 const smartAnnealingTheory = document.getElementById('smart-annealing-theory');
@@ -9396,7 +9396,7 @@ end
                 if (!enabled) {
                     sampling.value = '0';
                 } else {
-                    sampling.value = '30';
+                    sampling.value = confSamplingDefault();
                 }
                 sampling.disabled = !enabled;
             }
@@ -10265,6 +10265,43 @@ end
             renderBasicMoleculeTypesPanel();
             renderAdvancedMoleculeMenu();
             updateBasicBoxViewer();
+            applySingleFragmentConformationalDefault();
+        }
+
+        // Default conformational-sampling percentage when the search is enabled:
+        // 100% for a single fragment (rigid-body moves of one molecule do nothing, so
+        // only a conformational search is meaningful), 30% otherwise.
+        function confSamplingDefault() {
+            return (typeof molecules !== 'undefined' && molecules.length === 1) ? '100' : '30';
+        }
+
+        // Auto-manage the conformational search based on fragment count:
+        //   • entering single-fragment (count → 1): check it and set 100%.
+        //   • leaving single-fragment (1 → 0 or 1 → many): revert to default OFF.
+        //   • staying multi-fragment (e.g. 2 → 3): leave the controls untouched.
+        // Keyed on the transition in/out of the single-fragment state so a multi-fragment
+        // run the user deliberately configured is not disturbed.
+        let __prevFragmentCount = null;
+        function applySingleFragmentConformationalDefault() {
+            const count = molecules.length;
+            const wasSingle = (__prevFragmentCount === 1);
+            const isSingle = (count === 1);
+            const advToggle = document.getElementById('adv-enable-conf-search');
+            const smartToggle = document.getElementById('smart-enable-conf-search');
+            if (isSingle && !wasSingle) {
+                if (advToggle) advToggle.checked = true;
+                if (smartToggle) smartToggle.checked = true;
+                if (typeof toggleAdvancedConformationalSearch === 'function') toggleAdvancedConformationalSearch();
+                if (typeof syncAdvancedToSmart === 'function') syncAdvancedToSmart();
+                if (typeof updateAllPreviews === 'function') updateAllPreviews();
+            } else if (!isSingle && wasSingle) {
+                if (advToggle) advToggle.checked = false;
+                if (smartToggle) smartToggle.checked = false;
+                if (typeof toggleAdvancedConformationalSearch === 'function') toggleAdvancedConformationalSearch();
+                if (typeof syncAdvancedToSmart === 'function') syncAdvancedToSmart();
+                if (typeof updateAllPreviews === 'function') updateAllPreviews();
+            }
+            __prevFragmentCount = count;
         }
 
         function getCommonMoleculeName(name) {
