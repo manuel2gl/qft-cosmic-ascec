@@ -4,6 +4,23 @@ Ported from v04's `get_radius` (ascec-v04.py line 369). Rule: monatomic species
 use the Bondi/Alvarez van-der-Waals radius; everything else uses the Cordero
 covalent radius. Defaults match v04 exactly so the box-length calculator and
 overlap checker stay parity-clean.
+
+References for the radius tables (in cosmic_ascec.elements.data):
+  Covalent radii:
+    B. Cordero et al., "Covalent radii revisited," Dalton Trans. 2008,
+    2832-2838. doi:10.1039/B801115J
+  Van der Waals radii:
+    A. Bondi, J. Phys. Chem. 1964, 68(3), 441-451. doi:10.1021/j100785a001
+    S. Alvarez, Dalton Trans. 2013, 42, 8617-8636. doi:10.1039/C3DT50599E
+    (main-group extensions also match M. Mantina et al., J. Phys. Chem. A
+     2009, 113, 5806-5812. doi:10.1021/jp8111556)
+
+The fallback constants below are NOT literature values: they are generic
+placeholders for elements absent from the tables. After the covalent table
+was extended with Cordero (2008) through Cm, the covalent default (1.50 A)
+only fires for Z >= 97; the vdW default fires for Z >= 87 (Alvarez 2013
+publishes only sparse Z >= 87 vdW radii, so the table is not extended there).
+These placeholders match v04 verbatim.
 """
 
 from __future__ import annotations

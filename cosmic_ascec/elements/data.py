@@ -20,6 +20,12 @@ from typing import Final, Mapping
 
 
 _R_ATOM_RAW: dict[int, float] = {
+    # Covalent radii (Angstrom), used for polyatomic molecules in box-length
+    # and overlap checks. Source:
+    #   B. Cordero, V. Gomez, A. E. Platero-Prats, M. Reves, J. Echeverria,
+    #   E. Cremades, F. Barragan, S. Alvarez, "Covalent radii revisited,"
+    #   Dalton Trans. 2008, 2832-2838. doi:10.1039/B801115J
+    # (Carbon uses Cordero's sp2 value, 0.73 A.)
     # Period 1
     1: 0.31,   2: 0.28,
     # Period 2
@@ -47,10 +53,28 @@ _R_ATOM_RAW: dict[int, float] = {
     77: 1.41, 78: 1.36, 79: 1.36, 80: 1.32,
     81: 1.45, 82: 1.46, 83: 1.48, 84: 1.40, 85: 1.50,
     86: 1.50,
+    # Period 7 - Cordero et al. (2008) extends only to Cm (Z=96); Fr is the
+    # paper's extrapolated value. Z>=97 are absent there and fall back to the
+    # 1.50 A default in radii.get_radius.
+    87: 2.60, 88: 2.21, 89: 2.15,
+    90: 2.06, 91: 2.00, 92: 1.96, 93: 1.90, 94: 1.87,
+    95: 1.80, 96: 1.69,
 }
 
 
 _R_VDW_RAW: dict[int, float] = {
+    # Van der Waals radii (Angstrom), used for monatomic species (atoms/ions)
+    # in box-length and overlap checks. Sources:
+    #   A. Bondi, "van der Waals Volumes and Radii," J. Phys. Chem. 1964,
+    #   68(3), 441-451. doi:10.1021/j100785a001  (base set: H, C, N, O, F,
+    #   alkali/alkaline-earth, etc.)
+    #   S. Alvarez, "A cartography of the van der Waals territories,"
+    #   Dalton Trans. 2013, 42, 8617-8636. doi:10.1039/C3DT50599E
+    #   (extension to heavier/transition elements; main-group extensions
+    #   also coincide with M. Mantina et al., J. Phys. Chem. A 2009, 113,
+    #   5806-5812, doi:10.1021/jp8111556).
+    # NOTE: several transition-metal entries are a flat 2.00 A placeholder,
+    # not a measured literature value.
     # Period 1
     1: 1.20,   2: 1.40,
     # Period 2

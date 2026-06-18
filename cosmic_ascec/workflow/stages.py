@@ -352,6 +352,7 @@ overlap_scale_factor = 0.7 # Factor to make overlap check slightly more lenient 
 r_atom = {
     # Covalent radii for elements in Angstroms (for volume calculations and steric interactions)
     # Based on Cordero et al. (2008) "Covalent radii revisited" Dalton Trans. 2832-2838
+    #   doi:10.1039/B801115J  (Carbon uses the sp2 value, 0.73 A.)
     # and optimized values from previous ASCEC usage
     
     # Period 1
@@ -457,11 +458,34 @@ r_atom = {
     84: 1.40,  # Po (Polonium)
     85: 1.50,  # At (Astatine)
     86: 1.50,  # Rn (Radon)
+
+    # Period 7 - actinides etc. (Cordero et al. 2008, doi:10.1039/B801115J;
+    # table ends at Cm, Z=96. Fr is the paper's extrapolated value. Z>=97 are
+    # absent from Cordero and fall back to get_radius's 1.50 A default.)
+    87: 2.60,  # Fr (Francium) - extrapolated
+    88: 2.21,  # Ra (Radium)
+    89: 2.15,  # Ac (Actinium)
+    90: 2.06,  # Th (Thorium)
+    91: 2.00,  # Pa (Protactinium)
+    92: 1.96,  # U (Uranium)
+    93: 1.90,  # Np (Neptunium)
+    94: 1.87,  # Pu (Plutonium)
+    95: 1.80,  # Am (Americium)
+    96: 1.69,  # Cm (Curium)
 }
 
 
 # --- const r_vdw  (ascec-v04.py 274-367) ---
 r_vdw = {
+    # Van der Waals radii in Angstroms (used for monatomic species). Sources:
+    #   A. Bondi, "van der Waals Volumes and Radii," J. Phys. Chem. 1964,
+    #     68(3), 441-451. doi:10.1021/j100785a001  (base set)
+    #   S. Alvarez, "A cartography of the van der Waals territories,"
+    #     Dalton Trans. 2013, 42, 8617-8636. doi:10.1039/C3DT50599E
+    #     (heavier/transition elements; main-group extensions also match
+    #      Mantina et al., J. Phys. Chem. A 2009, 113, 5806-5812,
+    #      doi:10.1021/jp8111556).
+    # NOTE: several transition-metal entries are a flat 2.00 A placeholder.
     # Period 1
     1: 1.20,   # H
     2: 1.40,   # He
