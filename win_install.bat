@@ -110,7 +110,13 @@ Write-Host "> Installing core scientific deps..."
 & $CONDA_EXE install -n $ENV_NAME numpy scipy matplotlib scikit-learn -y
 
 Write-Host "> Installing chemistry deps from conda-forge..."
-& $CONDA_EXE install -n $ENV_NAME -c conda-forge cclib openbabel xtb -y
+# xtb is pinned to >=6.7 for the same reason as the Linux installer: left
+# unpinned, the conda-forge solve can backtrack to the ancient 6.5.0 (2022)
+# build, which crashes mid-optimization with a libgfortran I/O error and never
+# writes a "final structure:" block. cosmic then extracts zero geometries ->
+# zero motifs -> "No motifs_/umotifs_ folder found" at the end of a green run.
+# 6.7.x is statically linked and runs cleanly.
+& $CONDA_EXE install -n $ENV_NAME -c conda-forge cclib openbabel "xtb>=6.7" -y
 
 Write-Host "> Installing orca-pi parser via pip..."
 $ENV_PIP = Join-Path $ENV_SCRIPTS "pip.exe"
@@ -120,10 +126,23 @@ $ENV_PIP = Join-Path $ENV_SCRIPTS "pip.exe"
 $XTB_EXE = Join-Path $ENV_LIBBIN "xtb.exe"
 if (Test-Path $XTB_EXE) {
     Write-Host "> xtb installed at $XTB_EXE"
-    & $XTB_EXE --version 2>&1 | Select-Object -First 3 | ForEach-Object { Write-Host "    $_" }
+    $xtbOut = (& $XTB_EXE --version 2>&1) -join "`n"
+    $xtbOut -split "`n" | Select-Object -First 3 | ForEach-Object { Write-Host "    $_" }
+    # Guard against a too-old build slipping through (e.g. if the pin above was
+    # relaxed). 6.5.0 and older conda-forge builds crash with a libgfortran I/O
+    # error and produce no usable geometry, which silently breaks cosmic.
+    $m = [regex]::Match($xtbOut, 'version\s+(\d+)\.(\d+)')
+    if ($m.Success) {
+        $xtbMajor = [int]$m.Groups[1].Value
+        $xtbMinor = [int]$m.Groups[2].Value
+        if ($xtbMajor -lt 6 -or ($xtbMajor -eq 6 -and $xtbMinor -lt 6)) {
+            Write-Host "  WARNING: xtb $xtbMajor.$xtbMinor is too old and is known to crash mid-optimization." -ForegroundColor Yellow
+            Write-Host "  Reinstall a working build: conda install -n $ENV_NAME -c conda-forge 'xtb>=6.7'"
+        }
+    }
 } else {
     Write-Host "  WARNING: xtb.exe not found at $XTB_EXE." -ForegroundColor Yellow
-    Write-Host "  Try: conda install -n $ENV_NAME -c conda-forge xtb"
+    Write-Host "  Try: conda install -n $ENV_NAME -c conda-forge 'xtb>=6.7'"
 }
 
 $LAUNCHER_DIR = Join-Path $env:USERPROFILE "bin"
