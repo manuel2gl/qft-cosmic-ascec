@@ -153,7 +153,7 @@ def get_cpu_count_fast():
 
 
 # Modified to accept rmsd_threshold and output_base_dir
-def perform_clustering_and_analysis(input_source, threshold="auto", file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None, partialweights=False):
+def perform_clustering_and_analysis(input_source, threshold="auto", file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None, partialweights=False, conformer_mode=False):
     """
     Performs hierarchical clustering and comprehensive analysis on molecular structures.
     This is the main analysis function that orchestrates the entire clustering workflow.
@@ -690,6 +690,20 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
         'first_vib_freq', 'last_vib_freq',
         'num_hydrogen_bonds', 'average_hbond_distance', 'std_hbond_distance', 'average_hbond_angle'
     ]
+    # Single-fragment conformational search: the intramolecular H-bond geometry
+    # features (distance/angle) are present only for the conformers that happen to
+    # carry an H-bond and are None for those that don't. Because the dynamic vector
+    # treats "shorter than the pool max" as a reduced/critical structure, leaving
+    # these features in would discard every non-H-bonded conformer as
+    # critical_non_converged. In a one-fragment conformer search the presence or
+    # absence of an intramolecular H-bond is a real conformational difference, not a
+    # defect, so we drop the None-prone H-bond geometry features here to keep the
+    # vector length homogeneous across the pool. num_hydrogen_bonds is always a valid
+    # scalar (0 or more) so it never causes reduced status and is kept as a feature.
+    if conformer_mode:
+        _hbond_geom_features = {'average_hbond_distance', 'std_hbond_distance', 'average_hbond_angle'}
+        _all_scalar_features = [f for f in _all_scalar_features if f not in _hbond_geom_features]
+        print_step("Conformer mode: H-bond geometry features excluded from criticality gate (single-fragment conformational search)")
     _scalar_features = list(_all_scalar_features)
 
     # Compute available features per structure

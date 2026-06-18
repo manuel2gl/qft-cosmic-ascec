@@ -12283,6 +12283,25 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
     else:
         cmd = [sys.executable, cosmic_script] + other_args
     
+    # Auto-enable conformer mode for single-fragment conformational searches.
+    # When the .asc defines a single molecule (nmo == 1) and conformational sampling
+    # is active, the intramolecular H-bond present in some conformers but not others
+    # would otherwise push every non-H-bonded conformer into critical_non_converged.
+    # --conformer-mode tells cosmic not to let H-bond geometry features gate criticality.
+    if '--conformer-mode' not in other_args:
+        try:
+            _probe = SystemState()
+            read_input_file(_probe, context.input_file)
+            _single_fragment = (getattr(_probe, 'num_molecules', 0) == 1)
+            _conformational = (getattr(_probe, 'conformational_move_prob', 0.0) > 0.0)
+            if _single_fragment and _conformational:
+                cmd.append('--conformer-mode')
+                if getattr(context, 'workflow_verbose_level', 0) >= 1:
+                    print("  Single-fragment conformational search detected (nmo==1): enabling --conformer-mode")
+        except Exception as _e:
+            if getattr(context, 'workflow_verbose_level', 0) >= 1:
+                print(f"  Note: could not probe input for conformer-mode auto-detect ({_e})")
+
     # Add --cores if not already specified and user explicitly set ascec_parallel_cores in input file
     # (ascec_parallel_cores > 0 means it was explicitly set)
     has_cores_arg = any(arg.startswith('--cores') or arg.startswith('-j') for arg in other_args)
