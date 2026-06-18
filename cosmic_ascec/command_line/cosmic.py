@@ -254,14 +254,6 @@ MORE INFORMATION:
     parser.add_argument("--group-hb", action="store_true",
                         help="group structures by H-bond count before clustering (separate dendrograms per HB family)")
 
-    parser.add_argument("--conformer-mode", action="store_true",
-                        help="single-fragment conformational search: do NOT let H-bond geometry "
-                             "features (hbond distance/angle) gate criticality. In a one-fragment "
-                             "conformer search the presence/absence of an intramolecular H-bond is a "
-                             "legitimate conformational difference, not a defect, so non-H-bonded "
-                             "conformers must not be discarded as reduced-vector/critical. "
-                             "Auto-enabled by the protocol when nmo==1 and conformational sampling is active.")
-
     parser.add_argument("--partialweights", action="store_true",
                         help="apply tuned weights for semiempirical / standalone xTB output "
                              "(down-weights noisy orbital, dipole, and H-bond features). "
@@ -424,7 +416,6 @@ MORE INFORMATION:
             temperature_k=temperature_k,
             group_hb=args.group_hb,
             partialweights=args.partialweights,
-            conformer_mode=args.conformer_mode,
         )
         print(f"\n--- Finished comparing {len(compare_files)} files: {', '.join(file_names)} ---\n")
 
@@ -540,7 +531,7 @@ MORE INFORMATION:
                 display_name = "./"
             print(f"\nProcessing folder: {display_name}\n")
 
-            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir, partialweights=args.partialweights, conformer_mode=args.conformer_mode)
+            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir, partialweights=args.partialweights)
 
             print(f"\nFinished processing folder: {display_name}\n")
 
