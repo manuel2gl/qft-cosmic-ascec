@@ -20,26 +20,36 @@ $TARGET_DIR            = Join-Path $env:USERPROFILE "software\ascec04"
 $DEFAULT_MINICONDA_DIR = Join-Path $env:USERPROFILE "Miniconda3"
 $REPO_URL              = "https://github.com/manuel2gl/qft-cosmic-ascec.git"
 
+# Run a native command whose stderr is benign and return its combined output as
+# plain text WITHOUT aborting the script.
+#
+# Why this exists: many of the tools we shell out to (xtb, conda, git) print
+# progress -- and even success banners like "normal termination of xtb" -- to
+# stderr. Under $ErrorActionPreference='Stop', merging that stderr with 2>&1
+# turns the first stderr line into a *terminating* error that kills the whole
+# script. That is the bug that aborted earlier installs at the "xtb --version"
+# check, BEFORE the ascec/cosmic launchers and the PATH entry were ever written
+# (hence "'ascec' is not recognized" and the aliases not working). Capturing
+# combined output through here keeps Stop semantics for real failures while
+# tolerating chatty-but-successful native commands.
+function Invoke-Native {
+    param([scriptblock]$Action)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try   { & $Action 2>&1 | Out-String }
+    finally { $ErrorActionPreference = $prev }
+}
+
 Write-Host "> Starting ASCEC One-Click Installation (Windows)..." -ForegroundColor Cyan
 
 Write-Host "> Setting up directories at $TARGET_DIR..."
 New-Item -ItemType Directory -Path $TARGET_DIR -Force | Out-Null
 
-if (Test-Path (Join-Path $TARGET_DIR ".git")) {
-    Write-Host "> Repo exists, pulling latest updates..."
-    Push-Location $TARGET_DIR
-    git pull
-    Pop-Location
-} else {
-    Write-Host "> Cloning repository..."
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        Write-Host "  ERROR: git is not on PATH." -ForegroundColor Red
-        Write-Host "  Install Git for Windows from https://git-scm.com/download/win and re-run."
-        exit 1
-    }
-    git clone $REPO_URL $TARGET_DIR
-}
-
+# ---------------------------------------------------------------------------
+# 1. Bootstrap conda FIRST. On Windows there is no system package manager, so
+#    conda doubles as the tool that installs git for us (see step 2) -- the
+#    Windows analogue of the Linux installer's apt/dnf/yum/... git install.
+# ---------------------------------------------------------------------------
 $MINICONDA_DIR = $null
 $candidates = @(
     (Join-Path $env:USERPROFILE "Miniconda3"),
@@ -73,13 +83,52 @@ if (-not (Test-Path $CONDA_EXE)) {
     exit 1
 }
 
+# Put conda's own bin dirs on PATH for THIS process so conda-installed tools
+# (git, etc.) become callable immediately, and load the conda PowerShell hook.
+$env:Path = "$MINICONDA_DIR;$MINICONDA_DIR\Scripts;$MINICONDA_DIR\Library\bin;$env:Path"
 $condaHook = Join-Path $MINICONDA_DIR "shell\condabin\conda-hook.ps1"
-if (Test-Path $condaHook) {
-    & $condaHook
-} else {
-    $env:Path = "$MINICONDA_DIR;$MINICONDA_DIR\Scripts;$MINICONDA_DIR\Library\bin;$env:Path"
+if (Test-Path $condaHook) { & $condaHook }
+
+# ---------------------------------------------------------------------------
+# 2. Ensure git is available. The Linux installer auto-installs git through the
+#    system package manager; on Windows we install it from conda-forge so the
+#    user does NOT have to install Git for Windows by hand.
+# ---------------------------------------------------------------------------
+function Ensure-Git {
+    if (Get-Command git -ErrorAction SilentlyContinue) { return $true }
+    Write-Host "> git not found -- installing it from conda-forge..."
+    Invoke-Native { & $CONDA_EXE install -n base -c conda-forge git -y } | Write-Host
+    # git.exe lands in Library\bin; make sure it is visible to this process.
+    $env:Path = "$MINICONDA_DIR\Library\bin;$MINICONDA_DIR\Scripts;$env:Path"
+    return [bool](Get-Command git -ErrorAction SilentlyContinue)
 }
 
+# ---------------------------------------------------------------------------
+# 3. Get/refresh the source.
+# ---------------------------------------------------------------------------
+if (Test-Path (Join-Path $TARGET_DIR ".git")) {
+    Write-Host "> Repo exists, pulling latest updates..."
+    if (-not (Ensure-Git)) {
+        Write-Host "  ERROR: git is required to pull updates and could not be installed." -ForegroundColor Red
+        exit 1
+    }
+    Push-Location $TARGET_DIR
+    git pull
+    Pop-Location
+} else {
+    Write-Host "> Cloning repository..."
+    if (-not (Ensure-Git)) {
+        Write-Host "  ERROR: git is required to clone the repository and could not be"   -ForegroundColor Red
+        Write-Host "  installed automatically. Install Git for Windows from"             -ForegroundColor Red
+        Write-Host "  https://git-scm.com/download/win and re-run this installer."       -ForegroundColor Red
+        exit 1
+    }
+    git clone $REPO_URL $TARGET_DIR
+}
+
+# ---------------------------------------------------------------------------
+# 4. Conda Terms of Service + Python environment.
+# ---------------------------------------------------------------------------
 Write-Host "> Accepting conda Terms of Service..."
 & $CONDA_EXE tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main  2>$null
 & $CONDA_EXE tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r     2>$null
@@ -126,8 +175,12 @@ $ENV_PIP = Join-Path $ENV_SCRIPTS "pip.exe"
 $XTB_EXE = Join-Path $ENV_LIBBIN "xtb.exe"
 if (Test-Path $XTB_EXE) {
     Write-Host "> xtb installed at $XTB_EXE"
-    $xtbOut = (& $XTB_EXE --version 2>&1) -join "`n"
-    $xtbOut -split "`n" | Select-Object -First 3 | ForEach-Object { Write-Host "    $_" }
+    # Capture the version banner through Invoke-Native: xtb prints "normal
+    # termination of xtb" to stderr, and merging that with 2>&1 under
+    # ErrorActionPreference='Stop' would otherwise abort the whole installer
+    # right here -- before the launchers below are written.
+    $xtbOut = Invoke-Native { & $XTB_EXE --version }
+    $xtbOut -split "`n" | Select-Object -First 3 | ForEach-Object { Write-Host "    $($_.TrimEnd())" }
     # Guard against a too-old build slipping through (e.g. if the pin above was
     # relaxed). 6.5.0 and older conda-forge builds crash with a libgfortran I/O
     # error and produce no usable geometry, which silently breaks cosmic.
@@ -145,6 +198,12 @@ if (Test-Path $XTB_EXE) {
     Write-Host "  Try: conda install -n $ENV_NAME -c conda-forge 'xtb>=6.7'"
 }
 
+# ---------------------------------------------------------------------------
+# 5. Launcher scripts (the Windows analogue of the bash aliases). Each one
+#    PREPENDS the conda env's bin dirs to PATH so bare `xtb` / `obabel` resolve
+#    to THIS env's build at runtime -- this is what guarantees the correct xtb
+#    is used, regardless of any other xtb on the system PATH.
+# ---------------------------------------------------------------------------
 $LAUNCHER_DIR = Join-Path $env:USERPROFILE "bin"
 New-Item -ItemType Directory -Path $LAUNCHER_DIR -Force | Out-Null
 
