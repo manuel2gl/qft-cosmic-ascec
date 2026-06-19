@@ -104,9 +104,51 @@ if ($userPath) {
 # -----------------------------------
 # 4. Remove the source directory
 # -----------------------------------
+# Why the retry + diagnostic block: Remove-Item fails with "in use" whenever
+# something still holds an open handle inside $TARGET_DIR. The two cases that
+# bite real users are (a) a previous `ascec`/`cosmic` Python process that
+# crashed or was Ctrl-C'd from another window and still has the .py files
+# memory-mapped, and (b) a cmd/powershell shell whose working directory is
+# under $TARGET_DIR. We give the OS a couple of retries (handles release lazily
+# after a process exits) and, if it still won't budge, point the user at the
+# actual culprits instead of leaving them staring at a raw PSInvalidOperation.
 if (Test-Path $TARGET_DIR) {
     Write-Host "> Removing source directory $TARGET_DIR..."
-    Remove-Item $TARGET_DIR -Recurse -Force
+    $removed = $false
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            Remove-Item $TARGET_DIR -Recurse -Force -ErrorAction Stop
+            $removed = $true
+            break
+        } catch {
+            if ($attempt -lt 3) {
+                Write-Host "  Directory busy, retrying in 2s (attempt $attempt/3)..."
+                Start-Sleep -Seconds 2
+            } else {
+                Write-Host ""
+                Write-Host "  ERROR: Could not remove $TARGET_DIR -- a process still has files open inside it." -ForegroundColor Red
+                Write-Host "  Most common causes:" -ForegroundColor Yellow
+                Write-Host "    - A previous 'ascec' or 'cosmic' run is still alive in another window."
+                Write-Host "    - Another cmd/PowerShell window has cd'd into a subfolder of this directory."
+                Write-Host "    - File Explorer is showing this folder (or a subfolder) in an open window."
+                # Best-effort: list any python.exe processes still alive so the
+                # user can identify and close the offending window. We do NOT
+                # auto-kill -- that could clobber an unrelated long-running job
+                # the user is in the middle of (e.g. a separate xtb/orca run).
+                $pyProcs = Get-Process python, pythonw -ErrorAction SilentlyContinue
+                if ($pyProcs) {
+                    Write-Host ""
+                    Write-Host "  Running Python processes (one of these is likely holding the directory):" -ForegroundColor Yellow
+                    $pyProcs | Format-Table Id, ProcessName, Path -AutoSize | Out-Host
+                    Write-Host "  Close the corresponding window, or kill it with:  Stop-Process -Id <PID> -Force"
+                }
+                Write-Host ""
+                Write-Host "  After closing the offending process/window, re-run the uninstaller." -ForegroundColor Yellow
+                Write-Host "  Original error: $($_.Exception.Message)"
+                exit 1
+            }
+        }
+    }
 } else {
     Write-Host "> Source directory $TARGET_DIR not found - nothing to remove."
 }
