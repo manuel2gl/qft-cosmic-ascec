@@ -10027,7 +10027,10 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
         return summary_file if os.path.exists(summary_file) else None
     
     try:
-        with open(output_file, 'w') as f:
+        # encoding='utf-8' is required: the summary contains Unicode glyphs
+        # (≤, ✓, box-drawing, Spanish accents) that the default Windows code
+        # page (cp1252 on Spanish-locale installs) cannot encode.
+        with open(output_file, 'w', encoding='utf-8') as f:
             # Header
             f.write("=" * 75 + "\n")
             f.write(center_text("C O S M I C  A S C E C") + "\n")
@@ -10380,7 +10383,8 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
 
         # Only print confirmation message when the workflow is fully done (avoid noise during run)
         if not _any_in_progress:
-            print(f"✓ Protocol summary saved to {output_file}")
+            # ASCII-only: cp1252 (default Windows console) cannot encode '✓'.
+            print(f"Protocol summary saved to {output_file}")
         
     except Exception as e:
         print(f"Warning: Failed to generate protocol summary: {e}")
