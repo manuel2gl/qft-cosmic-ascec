@@ -81,7 +81,7 @@ def write_cluster_dat_file(
             return
         file_obj.write(f"        {label}: {formatter(value)}\n")
 
-    with open(output_filename, 'w', newline='\n') as f:
+    with open(output_filename, 'w', newline='\n', encoding='utf-8') as f:
         f.write("=" * 90 + "\n\n")
 
         rmsd_context_printed = False

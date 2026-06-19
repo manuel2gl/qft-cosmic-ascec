@@ -94,7 +94,7 @@ def extract_xyz_from_output(output_file):
         tuple: (natoms, coords_array, symbols_list) or (None, None, None) if failed
     """
     try:
-        with open(output_file, 'r') as f:
+        with open(output_file, 'r', encoding='utf-8', errors='ignore') as f:
             lines = f.readlines()
 
         # Detect file type

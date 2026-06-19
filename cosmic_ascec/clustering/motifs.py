@@ -127,7 +127,7 @@ def write_xyz_file(mol_data: Record, filename: str, mode: EnergyMode) -> None:
 
     symbols = [atomic_number_to_symbol(n) for n in atomnos]
 
-    with open(filename, 'w', newline='\n') as f:
+    with open(filename, 'w', newline='\n', encoding='utf-8') as f:
         f.write(f"{len(atomnos)}\n")
         f.write(f"{comment_line}\n")
         for i in range(len(atomnos)):
@@ -288,7 +288,7 @@ def create_unique_motifs_folder(
     combined_xyz_filename = f"all_{folder_prefix}_combined.xyz"
     combined_xyz_path = os.path.join(motifs_dir, combined_xyz_filename)
 
-    with open(combined_xyz_path, "w", newline='\n') as outfile:
+    with open(combined_xyz_path, "w", newline='\n', encoding='utf-8') as outfile:
         for motif_idx, (rep_data, cluster_id) in enumerate(sorted_representatives_with_ids, 1):
             atomnos = rep_data.get('final_geometry_atomnos')
             atomcoords = rep_data.get('final_geometry_coords')
@@ -497,7 +497,7 @@ def combine_xyz_files(
             )
             sorted_motif_numbers = None
 
-        with open(full_combined_xyz_path, "w", newline='\n') as outfile:
+        with open(full_combined_xyz_path, "w", newline='\n', encoding='utf-8') as outfile:
             for frame_idx, mol_data in enumerate(sorted_members_data, 1):  # Iterate over sorted data
                 atomnos = mol_data.get('final_geometry_atomnos')
                 atomcoords = mol_data.get('final_geometry_coords')

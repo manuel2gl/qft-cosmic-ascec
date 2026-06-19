@@ -113,7 +113,7 @@ def run_data_extraction(pkl_path: str, out_dir: Optional[str] = None) -> int:
     cluster_map = {}
     if os.path.isfile(summary_path):
         try:
-            with open(summary_path) as fh:
+            with open(summary_path, encoding='utf-8') as fh:
                 current = None
                 for line in fh:
                     m = re.match(r'^Cluster\s+(\d+)', line)
@@ -148,7 +148,7 @@ def run_data_extraction(pkl_path: str, out_dir: Optional[str] = None) -> int:
     header = ['filename'] + [_extract_labeled(f) for f in kept_features]
     if include_cluster:
         header.append('cluster')
-    with open(features_csv, 'w') as fh:
+    with open(features_csv, 'w', encoding='utf-8') as fh:
         fh.write(','.join(header) + '\n')
         for fname, row in zip(filenames, kept_matrix):
             fields = [fname]

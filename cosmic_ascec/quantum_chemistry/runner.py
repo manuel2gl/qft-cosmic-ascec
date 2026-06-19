@@ -88,6 +88,14 @@ def _pdeathsig_preexec() -> None:  # pragma: no cover - exercised only out-of-pr
         pass
 
 
+# Value to pass as subprocess ``preexec_fn=``. Must be ``None`` on non-POSIX:
+# Windows' subprocess rejects ANY non-None ``preexec_fn`` with
+# ``ValueError: preexec_fn is not supported on Windows platforms`` at Popen
+# construction — before the callable ever runs — so passing the function
+# directly crashes every spawn on Windows even though it is a Linux-only no-op.
+_PDEATHSIG_PREEXEC = _pdeathsig_preexec if sys.platform == "linux" else None
+
+
 # --------------------------------------------------------------------------- #
 # Preserved-file state — v04's per-run state.qm_attempt_debug bookkeeping      #
 # --------------------------------------------------------------------------- #
@@ -224,7 +232,7 @@ def calculate_energy(
                         stderr=subprocess.STDOUT,
                         text=True,
                         check=False,
-                        preexec_fn=_pdeathsig_preexec,
+                        preexec_fn=_PDEATHSIG_PREEXEC,
                     )
             else:
                 process = subprocess.run(
@@ -234,7 +242,7 @@ def calculate_energy(
                     stderr=subprocess.STDOUT,
                     text=True,
                     check=False,
-                    preexec_fn=_pdeathsig_preexec,
+                    preexec_fn=_PDEATHSIG_PREEXEC,
                 )
 
         # ---- decide whether to trust the output (v04 3267-3336) ---------- #
