@@ -434,20 +434,21 @@ def _build_single_command_parser() -> argparse.ArgumentParser:
     """v04 lines 19868-20031 — the single-command argparse spec, verbatim."""
     parser = argparse.ArgumentParser(
         description=(
-            "ASCEC - Simulated Annealing with Quantum Energy\n"
-            "Conformational sampling via Monte Carlo with quantum mechanical "
+            "ASCEC - Annealing Simulado con Energía Cuántica\n"
+            "(Simulated Annealing with Quantum Energy)\n"
+            "Configurational sampling via Monte Carlo with quantum mechanical "
             "evaluation"
         ),
         usage="ascec [OPTIONS] COMMAND [ARGUMENTS]",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 COMMANDS:
-  Run an annealing job (the COMMAND is the input file itself):
-    ascec input.in                 Run simulated annealing on input.in
-    ascec input.in rN              Build N replicate runs (e.g. r3 = 3 replicas)
-    ascec input.in rN --box10      Replicas sized for 10% effective packing
-    ascec input.in box             Box / packing analysis for the input
-    ascec box input.in             Same box analysis, box as the command
+  Run an annealing job (the COMMAND is the .asc input file itself):
+    ascec input.asc                Run simulated annealing on input.asc
+    ascec input.asc rN             Build N replicate runs (e.g. r3 = 3 replicas)
+    ascec input.asc rN --box10     Replicas sized for 10% effective packing
+    ascec input.asc box            Box / packing analysis for the input
+    ascec box input.asc            Same box analysis, box as the command
 
   Build downstream QM input decks from annealing results:
     ascec opt TEMPLATE [LAUNCHER]  Create geometry-optimization inputs
@@ -473,11 +474,11 @@ COMMANDS:
     ascec <file> protocol          Run a multi-stage protocol workflow
 
   Chaining: separate commands with a comma to run them in sequence, e.g.
-    ascec input.in r3 , sort , cosmic
+    ascec input.asc r3 , sort , cosmic
 
 EXAMPLES:
-    ascec water.in                 # anneal a single input
-    ascec water.in r5 --box15      # 5 replicas at 15% packing
+    ascec water.asc                # anneal a single input
+    ascec water.asc r5 --box15     # 5 replicas at 15% packing
     ascec opt template.inp run.sh  # optimization inputs + launcher
     ascec sort --justsum           # summary only
     ascec cosmic ./outputs --th auto
