@@ -7480,6 +7480,9 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 if (erefTheory) { erefTheory.value = 'post-hf'; updateSmartEnergyRefMethod(); }
             }
 
+            // --- Maxprint: auto-enable for rigorous/ultimate, disable for preliminary ---
+            syncMaxprintState(selectedMode !== 'preliminary');
+
             syncPartialweightsFromTheory();
 
             updateSamplingPresetUI();
