@@ -14791,13 +14791,14 @@ def execute_cosmic_analysis(*args):
     import subprocess
     import sys
     
-    # Get the directory where ascec-v04.py is located
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    cosmic_script = os.path.join(script_dir, "cosmic-v01.py")
-    
-    if not os.path.exists(cosmic_script):
-        print(f"Error: cosmic_v01.py not found in {script_dir}")
-        print("Make sure cosmic_v01.py is in the same directory as ascec-v04.py")
+    # Locate cosmic-v01.py via the shared finder: __file__ now lives three
+    # levels deep in cosmic_ascec/workflow/, so a dirname(__file__) lookup
+    # misses the repo root where cosmic-v01.py actually sits.
+    cosmic_script = find_cosmic_script()
+
+    if not cosmic_script:
+        print("Error: cosmic-v01.py not found.")
+        print("Make sure cosmic-v01.py is in the same directory as ascec-v04.py")
         return
     
     # Build command
