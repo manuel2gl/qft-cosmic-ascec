@@ -165,7 +165,7 @@ def apply_composite_energies(
         for xyz_file in glob.glob(os.path.join(latest_dir, "*.xyz")):
             xyz_basename = os.path.splitext(os.path.basename(xyz_file))[0]  # e.g. umotif_01
             try:
-                with open(xyz_file, 'r') as xf:
+                with open(xyz_file, 'r', encoding='utf-8', errors='replace') as xf:
                     lines = xf.readlines()
                     if len(lines) >= 2:
                         # Comment line format: "motif_02_opt (G = -458.216632 Hartree ...)"

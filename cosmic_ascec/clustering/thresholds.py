@@ -266,7 +266,7 @@ def parse_opt_params_from_summary(summary_path: str) -> Optional[Dict[str, Any]]
         return None
     fallback: Optional[Dict[str, Any]] = None
     try:
-        with open(summary_path) as fh:
+        with open(summary_path, encoding='utf-8') as fh:
             for line in fh:
                 m = _OPT_DETAIL_RE.search(line)
                 if m:

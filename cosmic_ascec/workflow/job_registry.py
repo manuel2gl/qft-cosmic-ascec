@@ -105,6 +105,14 @@ def _pdeathsig_preexec() -> None:
         pass
 
 
+# Value to pass as subprocess ``preexec_fn=``. Must be ``None`` on non-POSIX:
+# Windows' subprocess rejects ANY non-None ``preexec_fn`` with
+# ``ValueError: preexec_fn is not supported on Windows platforms`` at Popen
+# construction — before the callable ever runs — so passing the function
+# directly crashes every spawn on Windows even though it is a Linux-only no-op.
+_PDEATHSIG_PREEXEC = _pdeathsig_preexec if sys.platform == "linux" else None
+
+
 def _register_ascec_job(input_file: str, working_dir: str, cache_file: str,
                         log_file: str, progress_file: str) -> int:
     """Insert a new running-job entry; returns the new row ID (0 on failure)."""

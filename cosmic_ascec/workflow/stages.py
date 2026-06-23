@@ -106,7 +106,7 @@ from cosmic_ascec.workflow.job_registry import (
     _atomic_claim_ascec_job,
     _get_recent_jobs,
     _is_pid_alive,
-    _pdeathsig_preexec,
+    _PDEATHSIG_PREEXEC,
     _register_ascec_job,
     _remove_progress_artifacts,
     _update_ascec_job,
@@ -7888,7 +7888,7 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     env=env,
-                    preexec_fn=_pdeathsig_preexec,
+                    preexec_fn=_PDEATHSIG_PREEXEC,
                 )
                 while proc.poll() is None:
                     try:
@@ -7911,7 +7911,7 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     env=env,
-                    preexec_fn=_pdeathsig_preexec,
+                    preexec_fn=_PDEATHSIG_PREEXEC,
                 )
                 returncode = proc.returncode
 
@@ -9369,6 +9369,75 @@ def check_qm_output_completed(qm_program: str, output_path: str) -> bool:
     except Exception:
         return False
 
+
+def _parse_launcher_env(launcher_content: str) -> Dict[str, str]:
+    """Extract literal ``export KEY=VALUE`` assignments from a launcher header.
+
+    Windows-only helper: the POSIX launcher script cannot be executed there
+    (no usable ``bash``), so the QM job is run directly and the launcher's
+    plain environment exports (``OMP_NUM_THREADS``, ``ASCEC_XTB_RUNTIME``, …)
+    must be applied to the subprocess env in-process instead. Lines containing
+    a shell substitution (``$PATH`` etc.) are skipped — they are POSIX path
+    manipulations that have no meaning on Windows. Never called on POSIX, so
+    the bash launcher path stays byte-for-byte unchanged.
+    """
+    env_overrides: Dict[str, str] = {}
+    header = launcher_content.split('###')[0] if launcher_content else ''
+    for line in header.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith('export '):
+            continue
+        assignment = stripped[len('export '):].strip()
+        key, sep, value = assignment.partition('=')
+        if not sep:
+            continue
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if not key or '$' in value:
+            continue
+        env_overrides[key] = value
+    return env_overrides
+
+
+def _run_qm_job_direct(qm_program: str, calc_working_dir: str,
+                       input_file_relative: str, output_file_relative: str,
+                       script_basename: str, launcher_content: str,
+                       xtb_options: str, orca_exe: str) -> None:
+    """Run a single QM optimization job directly, without a bash launcher.
+
+    Windows path for :func:`_run_single_qm_job`. On Windows ``bash`` is either
+    absent or maps to WSL (which cannot exec the native Windows xtb/ORCA
+    binaries), so ``subprocess.run(['bash', script.sh])`` raises
+    ``FileNotFoundError`` and every optimization job fails. This rebuilds the
+    exact QM command the launcher script would have run and invokes it
+    directly, with the launcher's environment exports applied. POSIX never
+    takes this branch, so Linux behaviour is unchanged.
+    """
+    env = {**os.environ, **_parse_launcher_env(launcher_content)}
+    output_path = os.path.join(calc_working_dir, output_file_relative)
+
+    if qm_program == 'xtb':
+        env.setdefault('ASCEC_XTB_RUNTIME', '1')
+        cmd = ['xtb', input_file_relative, *shlex.split(xtb_options or ''),
+               '--namespace', script_basename]
+    elif qm_program == 'orca':
+        cmd = [orca_exe or 'orca', input_file_relative]
+    elif qm_program == 'gaussian':
+        gauss_root = os.environ.get('GAUSS_ROOT', '')
+        g16 = os.path.join(gauss_root, 'g16') if gauss_root else 'g16'
+        # Gaussian writes its own .log; no stdout redirect (mirrors the launcher).
+        subprocess.run([g16, input_file_relative], cwd=calc_working_dir,
+                       env=env, preexec_fn=_PDEATHSIG_PREEXEC)
+        return
+    else:
+        return
+
+    with open(output_path, 'wb') as out_fh:
+        subprocess.run(cmd, cwd=calc_working_dir, stdout=out_fh,
+                       stderr=subprocess.STDOUT, env=env,
+                       preexec_fn=_PDEATHSIG_PREEXEC)
+
+
 def _run_single_qm_job(job_info: Dict[str, Any]) -> Dict[str, Any]:
     """
     Run a single QM calculation job with launch failure retry logic.
@@ -9455,13 +9524,24 @@ def _run_single_qm_job(job_info: Dict[str, Any]) -> Dict[str, Any]:
         script_name = os.path.basename(temp_script)
 
         start_time = time.time()
-        subprocess.run(
-            ['bash', script_name],
-            cwd=calc_working_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            preexec_fn=_pdeathsig_preexec,
-        )
+        if sys.platform == 'win32':
+            # Windows has no usable POSIX bash for the launcher script (it is
+            # absent, or maps to WSL which cannot exec the native Windows QM
+            # binaries), so run the QM program directly. POSIX keeps the bash
+            # launcher path below unchanged.
+            _run_qm_job_direct(
+                qm_program, calc_working_dir, input_file_relative,
+                output_file_relative, script_basename, launcher_content,
+                xtb_options, orca_exe,
+            )
+        else:
+            subprocess.run(
+                ['bash', script_name],
+                cwd=calc_working_dir,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                preexec_fn=_PDEATHSIG_PREEXEC,
+            )
         elapsed_time = time.time() - start_time
 
         if elapsed_time > launch_failure_threshold:
@@ -10027,7 +10107,10 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
         return summary_file if os.path.exists(summary_file) else None
     
     try:
-        with open(output_file, 'w') as f:
+        # encoding='utf-8' is required: the summary contains Unicode glyphs
+        # (≤, ✓, box-drawing, Spanish accents) that the default Windows code
+        # page (cp1252 on Spanish-locale installs) cannot encode.
+        with open(output_file, 'w', encoding='utf-8') as f:
             # Header
             f.write("=" * 75 + "\n")
             f.write(center_text("C O S M I C  A S C E C") + "\n")
@@ -10380,7 +10463,8 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
 
         # Only print confirmation message when the workflow is fully done (avoid noise during run)
         if not _any_in_progress:
-            print(f"✓ Protocol summary saved to {output_file}")
+            # ASCII-only: cp1252 (default Windows console) cannot encode '✓'.
+            print(f"Protocol summary saved to {output_file}")
         
     except Exception as e:
         print(f"Warning: Failed to generate protocol summary: {e}")
@@ -11013,12 +11097,25 @@ def _run_xtb_rescue_hessian(xyz_file: str, rescue_method: str, working_dir: str,
 
     # Run calculation
     try:
-        result = subprocess.run(
-            ['bash', temp_script],
-            cwd=working_dir,
-            capture_output=True,
-            text=True
-        )
+        if sys.platform == 'win32':
+            # No usable POSIX bash on Windows — run xtb directly, redirecting
+            # to the rescue .out exactly as the launcher script would. POSIX
+            # keeps the bash path unchanged.
+            with open(rescue_out_path, 'wb') as _out_fh:
+                result = subprocess.run(
+                    shlex.split(xtb_cmd),
+                    cwd=working_dir,
+                    stdout=_out_fh,
+                    stderr=subprocess.STDOUT,
+                    preexec_fn=_PDEATHSIG_PREEXEC,
+                )
+        else:
+            result = subprocess.run(
+                ['bash', temp_script],
+                cwd=working_dir,
+                capture_output=True,
+                text=True
+            )
     except Exception as e:
         _rescue_log(f"  ✗ xTB rescue Hessian calculation error: {e}")
         if os.path.exists(temp_script):
@@ -11194,12 +11291,29 @@ def run_rescue_hessian_calculation(xyz_file: str, rescue_method: str, launcher_p
     
     # Run calculation with timeout
     try:
-        result = subprocess.run(
-            ['bash', temp_script],
-            cwd=working_dir,
-            capture_output=True,
-            text=True
-        )
+        if sys.platform == 'win32':
+            # No usable POSIX bash on Windows — resolve the ORCA executable from
+            # the launcher's *_ROOT export and run it directly, redirecting to
+            # the rescue .out as the launcher script would. POSIX unchanged.
+            _env = {**os.environ, **_parse_launcher_env(env_setup)}
+            _root = _env.get(orca_root_var) if orca_root_var else None
+            _orca_exe = os.path.join(_root, 'orca') if _root else 'orca'
+            with open(rescue_out_path, 'wb') as _out_fh:
+                result = subprocess.run(
+                    [_orca_exe, os.path.basename(rescue_inp_path)],
+                    cwd=working_dir,
+                    stdout=_out_fh,
+                    stderr=subprocess.STDOUT,
+                    env=_env,
+                    preexec_fn=_PDEATHSIG_PREEXEC,
+                )
+        else:
+            result = subprocess.run(
+                ['bash', temp_script],
+                cwd=working_dir,
+                capture_output=True,
+                text=True
+            )
     except Exception as e:
         _rescue_log(f"  ✗ Rescue Hessian calculation error: {e}")
         if os.path.exists(temp_script):
@@ -12333,7 +12447,7 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
                                bufsize=1,
                                cwd=cosmic_base,
                                universal_newlines=True,
-                               preexec_fn=_pdeathsig_preexec)
+                               preexec_fn=_PDEATHSIG_PREEXEC)
 
         # Fallback auto-selection for interactive mode only.
         if use_stdin and proc.stdin:

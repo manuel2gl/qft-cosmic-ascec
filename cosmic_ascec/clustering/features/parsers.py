@@ -459,7 +459,7 @@ def extract_properties_with_cclib(logfile_path):
     }
 
     try:
-        with open(logfile_path, 'r') as f_log:
+        with open(logfile_path, 'r', encoding='utf-8', errors='ignore') as f_log:
             lines = f_log.readlines()
 
         # Determine file type based on extension

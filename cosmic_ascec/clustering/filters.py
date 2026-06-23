@@ -250,7 +250,7 @@ def filter_imaginary_freq_structures(
             summary_lines.append("=" * 75)
 
         summary_file = os.path.join(skipped_dir, "skipped_summary.txt")
-        with open(summary_file, 'w', newline='\n') as f:
+        with open(summary_file, 'w', newline='\n', encoding='utf-8') as f:
             f.write("\n".join(summary_lines))
 
         if input_source:
@@ -290,7 +290,7 @@ def filter_imaginary_freq_structures(
                         # Save individual XYZ file
                         basename = os.path.splitext(m['filename'])[0]
                         xyz_file = os.path.join(clustered_dir, f"{basename}.xyz")
-                        with open(xyz_file, 'w') as f:
+                        with open(xyz_file, 'w', encoding='utf-8') as f:
                             f.write(f"{natoms}\n")
                             f.write(f"{basename} - clustered with minima\n")
                             for symbol, coord in zip(symbols, coords):
@@ -312,7 +312,7 @@ def filter_imaginary_freq_structures(
                         # Save individual XYZ file
                         basename = os.path.splitext(m['filename'])[0]
                         xyz_file = os.path.join(need_recalc_dir, f"{basename}.xyz")
-                        with open(xyz_file, 'w') as f:
+                        with open(xyz_file, 'w', encoding='utf-8') as f:
                             f.write(f"{natoms}\n")
                             f.write(f"{basename} - needs recalculation\n")
                             for symbol, coord in zip(symbols, coords):
@@ -330,7 +330,7 @@ def filter_imaginary_freq_structures(
             if xyz_data_list:
                 if len(xyz_data_list) >= 2:
                     combined_xyz = os.path.join(need_recalc_dir, "combined_need_recalc.xyz")
-                    with open(combined_xyz, 'w') as f:
+                    with open(combined_xyz, 'w', encoding='utf-8') as f:
                         for data in xyz_data_list:
                             f.write(f"{data['natoms']}\n")
                             f.write(f"{data['basename']} - needs recalculation\n")
@@ -493,7 +493,7 @@ def save_non_converged_critical_structures(
                 basename = os.path.splitext(filename)[0]
                 xyz_file = os.path.join(critical_dir, f"{basename}.xyz")
                 try:
-                    with open(xyz_file, 'w') as f:
+                    with open(xyz_file, 'w', encoding='utf-8') as f:
                         f.write(f"{natoms}\n")
                         f.write(f"{basename} - critical non-converged\n")
                         for symbol, coord in zip(symbols, coords):
@@ -504,7 +504,7 @@ def save_non_converged_critical_structures(
     # Write a compact summary file for auditability.
     summary_path = os.path.join(critical_dir, "non_converged_summary.txt")
     try:
-        with open(summary_path, 'w') as f:
+        with open(summary_path, 'w', encoding='utf-8') as f:
             f.write("Critical Non-converged Structures\n")
             f.write("=" * 60 + "\n\n")
             f.write(f"Total structures: {len(non_converged_structures)}\n")

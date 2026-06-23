@@ -309,7 +309,7 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
         if update_cache_file and os.path.exists(update_cache_file):
             # Read list of files to update
-            with open(update_cache_file, 'r') as f:
+            with open(update_cache_file, 'r', encoding='utf-8') as f:
                 basenames_to_update = {line.strip() for line in f if line.strip()}
 
             # Determine file extension (check if .out or .log exists for first basename)
@@ -1624,13 +1624,13 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
     # Write separate files
     summary_file = os.path.join(output_base_dir, "clustering_summary.txt")
-    with open(summary_file, "w", newline='\n') as f:
+    with open(summary_file, "w", newline='\n', encoding='utf-8') as f:
         f.write("\n".join(summary_file_content_lines))
 
     # Write Boltzmann distribution file only if we have the analysis data
     if boltzmann_file_content_lines:
         boltzmann_file = os.path.join(output_base_dir, "boltzmann_distribution.txt")
-        with open(boltzmann_file, "w", newline='\n') as f:
+        with open(boltzmann_file, "w", newline='\n', encoding='utf-8') as f:
             f.write("\n".join(boltzmann_file_content_lines))
         print_step(f"Boltzmann distribution saved to '{os.path.basename(boltzmann_file)}'")
 
