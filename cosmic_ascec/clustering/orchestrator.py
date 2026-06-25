@@ -57,7 +57,9 @@ from cosmic_ascec.clustering.features.feature_spec import FEATURE_MAPPING
 from cosmic_ascec.clustering.filters import (
     filter_imaginary_freq_structures,
     filter_non_converged_structures,
+    filter_redundant_reduced_structures,
     save_non_converged_critical_structures,
+    save_redundant_reduced_structures,
 )
 from cosmic_ascec.clustering.matching import match_reduced_to_clusters
 from cosmic_ascec.clustering.motifs import (
@@ -657,7 +659,6 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     summary_file_content_lines.append(f"Total configurations processed: {len(clean_data_for_clustering)}")
     summary_file_content_lines.append(f"Total files skipped: <TOTAL_SKIPPED_PLACEHOLDER>")
     summary_file_content_lines.append(f"Critical skipped files: <IMAG_NEED_RECALC_PLACEHOLDER>")
-    summary_file_content_lines.append(f"Reduced matched to full (redundant, no own energy): <REDUCED_MATCHED_PLACEHOLDER>")
     summary_file_content_lines.append(f"Total number of final clusters: <TOTAL_CLUSTERS_PLACEHOLDER>")
     if rmsd_threshold is not None:
         summary_file_content_lines.append(f"Total RMSD moved configurations: <TOTAL_RMSD_OUTLIERS_PLACEHOLDER>")
@@ -1090,6 +1091,8 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                     _total_matched = sum(len(v) for v in _matched_reduced.values())
                     print(f"  Reduced-vector matching: {_total_matched} matched, {len(_unmatched_reduced)} unmatched (critical)")
                     for _matched_mols in _matched_reduced.values():
+                        for _m in _matched_mols:
+                            _m['_reduced_matched'] = True
                         all_reduced_matched.extend(_matched_mols)
                 if _unmatched_reduced:
                     all_reduced_unmatched.extend(_unmatched_reduced)
@@ -1204,6 +1207,18 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
         current_hbond_group_clusters_for_final_output, hbond_non_converged = filter_non_converged_structures(
             current_hbond_group_clusters_for_final_output, dataset_has_freq=_dataset_has_freq
         )
+
+        # Remove reduced-vector structures that matched a full-feature cluster.
+        # They carry no own energy (e.g. a non-converged opt: geometry but no
+        # freq/thermo) and are redundant with the converged representative already
+        # in their cluster, so — exactly like an imaginary-frequency structure that
+        # clustered with a true minimum — they are dropped here and counted as
+        # skipped (redundant, not critical). Comparison mode keeps every requested
+        # structure, so it is exempt.
+        if not is_compare_mode:
+            current_hbond_group_clusters_for_final_output, _ = filter_redundant_reduced_structures(
+                current_hbond_group_clusters_for_final_output
+            )
 
         # Track and accumulate skipped structures
         total_imag_clustered_with_normal += len(hbond_skipped_info.get('clustered_with_normal', []))
@@ -1326,7 +1341,27 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             total_processed=len(clean_data_for_clustering)
         )
 
-    total_skipped_all = len(skipped_files) + total_imag_clustered_with_normal + total_imag_need_recalc + total_non_converged_critical
+    # Reduced-vector structures that matched a full-feature cluster have no own
+    # energy and are redundant with the converged representative already in their
+    # cluster. They are counted as skipped (not critical), mirroring imaginary-
+    # frequency structures that clustered with a true minimum. The unmatched
+    # reduced structures are already inside total_non_converged_critical.
+    # Comparison mode keeps every requested structure, so it neither strips nor
+    # counts them as skipped.
+    redundant_reduced = [] if is_compare_mode else list(all_reduced_matched)
+
+    # Persist redundant reduced-vector structures for traceability.
+    if redundant_reduced:
+        save_redundant_reduced_structures(
+            redundant_reduced,
+            output_base_dir,
+            input_source,
+            total_processed=len(clean_data_for_clustering)
+        )
+
+    total_skipped_all = (len(skipped_files) + total_imag_clustered_with_normal
+                         + total_imag_need_recalc + total_non_converged_critical
+                         + len(redundant_reduced))
     if total_files_attempted > 0:
         total_skipped_percentage = (total_skipped_all / total_files_attempted) * 100
         critical_total = total_imag_need_recalc + total_non_converged_critical
@@ -1350,14 +1385,6 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
         reduced_unmatched_str = f"{len(reduced_unmatched_critical)} ({reduced_unmatched_percentage:.1f}%)"
     else:
         reduced_unmatched_str = str(len(reduced_unmatched_critical))
-
-    # Reduced-vector structures that matched a full-feature cluster: redundant with a
-    # true minimum, so not skipped and not critical. Reported for visibility only.
-    if total_files_attempted > 0:
-        reduced_matched_percentage = (len(all_reduced_matched) / total_files_attempted) * 100
-        reduced_matched_str = f"{len(all_reduced_matched)} ({reduced_matched_percentage:.1f}%)"
-    else:
-        reduced_matched_str = str(len(all_reduced_matched))
 
     _method_label = {"knee": "knee detection",
                      "knee-capped": "knee detection, capped to empirical 2.0"}
@@ -1406,8 +1433,6 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             summary_file_content_lines[i] = line.replace("<TOTAL_RMSD_OUTLIERS_PLACEHOLDER>", str(total_rmsd_outliers_first_pass))
         if "<TOTAL_SKIPPED_PLACEHOLDER>" in line:
             summary_file_content_lines[i] = line.replace("<TOTAL_SKIPPED_PLACEHOLDER>", total_skipped_str)
-        if "<REDUCED_MATCHED_PLACEHOLDER>" in line:
-            summary_file_content_lines[i] = line.replace("<REDUCED_MATCHED_PLACEHOLDER>", reduced_matched_str)
         if "<IMAG_NEED_RECALC_PLACEHOLDER>" in line:
             summary_file_content_lines[i] = line.replace("<IMAG_NEED_RECALC_PLACEHOLDER>", critical_skipped_str)
 

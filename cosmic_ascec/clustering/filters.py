@@ -521,8 +521,131 @@ def save_non_converged_critical_structures(
     print_step(f"Critical non-converged structures: {len(non_converged_structures)} (saved to skipped_structures/critical_non_converged)")
 
 
+def filter_redundant_reduced_structures(
+    clusters_list: Sequence[Cluster],
+) -> Tuple[List[Cluster], List[Record]]:
+    """Remove reduced-vector structures that matched a full-feature cluster.
+
+    These structures carry no own energy (e.g. a non-converged optimization that
+    produced a geometry but no frequencies/thermochemistry, so it has no Gibbs
+    energy). Because they matched an existing full-feature cluster they are
+    redundant with the converged representative already present there — the COSMIC
+    analogue of an imaginary-frequency structure that clustered with a true
+    minimum. They are dropped here and reported as *skipped* (redundant, not
+    critical), never as representatives.
+
+    The unmatched reduced structures are already removed upstream by
+    :func:`filter_non_converged_structures` (they are critical, not redundant).
+
+    Returns ``(filtered_clusters, redundant_removed)``.
+    """
+    filtered_clusters: List[Cluster] = []
+    redundant_removed: List[Record] = []
+
+    for cluster in clusters_list:
+        if not cluster:
+            continue
+        kept = [m for m in cluster if not m.get('_reduced_matched', False)]
+        dropped = [m for m in cluster if m.get('_reduced_matched', False)]
+        redundant_removed.extend(dropped)
+        # A matched-reduced structure always shares its cluster with the
+        # full-feature representative it matched, so `kept` is never empty.
+        if kept:
+            filtered_clusters.append(kept)
+
+    return filtered_clusters, redundant_removed
+
+
+def save_redundant_reduced_structures(
+    redundant_structures: Sequence[Record],
+    output_base_dir: str,
+    input_source: Any = None,
+    total_processed: Optional[int] = None,
+) -> None:
+    """Copy redundant reduced-vector structures (no own energy, matched to a
+    converged cluster) into ``skipped_structures/redundant_no_energy/`` for
+    traceability, alongside a compact listing. Mirrors the way imaginary
+    structures clustered with a true minimum are preserved under
+    ``clustered_with_minima/``.
+    """
+    if not redundant_structures:
+        return
+
+    skipped_dir = os.path.join(output_base_dir, "skipped_structures")
+    redundant_dir = os.path.join(skipped_dir, "redundant_no_energy")
+    os.makedirs(redundant_dir, exist_ok=True)
+
+    # Build filename->source path map from input source.
+    available_files: Dict[str, str] = {}
+    try:
+        if isinstance(input_source, list):
+            available_files = {os.path.basename(f): f for f in input_source}
+        elif input_source:
+            source_root = str(input_source)
+            root_candidates = glob.glob(os.path.join(source_root, "*.out")) + glob.glob(os.path.join(source_root, "*.log"))
+            for p in root_candidates:
+                available_files[os.path.basename(p)] = p
+            for item in os.listdir(source_root):
+                item_path = os.path.join(source_root, item)
+                if os.path.isdir(item_path):
+                    sub_candidates = glob.glob(os.path.join(item_path, "*.out")) + glob.glob(os.path.join(item_path, "*.log"))
+                    for p in sub_candidates:
+                        available_files[os.path.basename(p)] = p
+    except Exception:
+        pass
+
+    for m in redundant_structures:
+        filename = m.get('filename')
+        if not filename:
+            continue
+        source_file = available_files.get(filename)
+        if source_file and os.path.exists(source_file):
+            try:
+                shutil.copy2(source_file, os.path.join(redundant_dir, filename))
+            except Exception:
+                pass
+            natoms, coords, symbols = extract_xyz_from_output(source_file)
+            if natoms is not None and coords is not None and symbols is not None:
+                basename = os.path.splitext(filename)[0]
+                xyz_file = os.path.join(redundant_dir, f"{basename}.xyz")
+                try:
+                    with open(xyz_file, 'w', encoding='utf-8') as f:
+                        f.write(f"{natoms}\n")
+                        f.write(f"{basename} - redundant (no own energy, clustered with a converged structure)\n")
+                        for symbol, coord in zip(symbols, coords):
+                            f.write(f"{symbol:2s}  {coord[0]:15.8f}  {coord[1]:15.8f}  {coord[2]:15.8f}\n")
+                except Exception:
+                    pass
+
+    summary_path = os.path.join(redundant_dir, "redundant_no_energy_summary.txt")
+    try:
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            f.write("Redundant Reduced-vector Structures (no own energy)\n")
+            f.write("=" * 60 + "\n\n")
+            f.write("These structures have no own energy (e.g. a non-converged\n")
+            f.write("optimization: a geometry but no frequencies/thermochemistry).\n")
+            f.write("Each matched a full-feature cluster, so it is redundant with the\n")
+            f.write("converged representative already in that cluster and is counted as\n")
+            f.write("skipped (not critical, safe to ignore).\n\n")
+            f.write(f"Total structures: {len(redundant_structures)}\n")
+            if total_processed is not None and total_processed > 0:
+                pct = (len(redundant_structures) / total_processed) * 100.0
+                f.write(f"Impact on dataset: {len(redundant_structures)}/{total_processed} ({pct:.1f}%)\n")
+            f.write("\nFiles:\n")
+            for m in redundant_structures:
+                g = m.get('gibbs_free_energy')
+                rep = m.get('_pearson_rep_filename', 'N/A')
+                f.write(f"  - {m.get('filename', 'UNKNOWN')} (Gibbs: {'N/A' if g is None else f'{g:.6f}'}, matched: {rep})\n")
+    except Exception:
+        pass
+
+    print_step(f"Redundant reduced-vector structures: {len(redundant_structures)} (saved to skipped_structures/redundant_no_energy)")
+
+
 __all__ = [
     "filter_imaginary_freq_structures",
     "filter_non_converged_structures",
     "save_non_converged_critical_structures",
+    "filter_redundant_reduced_structures",
+    "save_redundant_reduced_structures",
 ]
