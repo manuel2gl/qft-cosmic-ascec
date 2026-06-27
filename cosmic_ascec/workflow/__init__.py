@@ -41,6 +41,7 @@ from cosmic_ascec.workflow.job_registry import (
     _pdeathsig_preexec,
     _register_ascec_job,
     _remove_progress_artifacts,
+    _set_job_holding,
     _update_ascec_job,
 )
 from cosmic_ascec.workflow.protocol import (
@@ -152,6 +153,7 @@ __all__ = [
     "_pdeathsig_preexec",
     "_register_ascec_job",
     "_update_ascec_job",
+    "_set_job_holding",
     "_remove_progress_artifacts",
     "_adopt_ascec_job",
     "_atomic_claim_ascec_job",

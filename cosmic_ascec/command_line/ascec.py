@@ -466,6 +466,16 @@ COMMANDS:
        --scaled                      scaled-energy variant
     ascec merge [result]           Merge launcher outputs (or merged results)
 
+  Queue a run behind another (workflow/protocol runs only — the ones that
+  appear in 'ascec status'):
+    ascec input.asc after PID         Hold until job PID finishes, then start
+    ascec input.asc , r3 after PID    Same, with an explicit r3 stage
+       (PID is taken from 'ascec status'. Launched from a terminal the queued
+        run auto-backgrounds — your prompt returns immediately and output goes
+        to <input>_queue.log. It shows as HOLDING in 'ascec status' until PID
+        exits, then starts automatically. Cancel it there with K, or Ctrl+C if
+        you ran it in the foreground.)
+
   Housekeeping:
     ascec status                   Show status of the current run
     ascec launcher                 Merge launcher scripts in this folder
@@ -958,6 +968,106 @@ def _dispatch_comma_workflow(argv: list[str]) -> int:
     return result
 
 
+def _extract_after_pid(argv: list[str]) -> tuple[int | None, list[str]]:
+    """Pull a queue-wait target PID out of ``argv``.
+
+    Recognised forms (anywhere after the program name):
+
+        ascec input.asc r3 after 12345
+        ascec input.asc r3 --after 12345
+        ascec input.asc r3 --after=12345
+
+    The PID is the one shown in ``ascec status`` for the run to wait on.
+    Returns ``(pid_or_None, argv_without_the_tokens)``; the bare ``after``
+    keyword is only consumed when immediately followed by a numeric PID so it
+    cannot swallow an unrelated argument.
+    """
+    pid: int | None = None
+    out: list[str] = []
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        low = tok.lower()
+        if low in ("after", "--after") and i + 1 < len(argv) and argv[i + 1].isdigit():
+            pid = int(argv[i + 1])
+            i += 2
+            continue
+        if low.startswith("--after=") and tok.split("=", 1)[1].isdigit():
+            pid = int(tok.split("=", 1)[1])
+            i += 1
+            continue
+        out.append(tok)
+        i += 1
+    return pid, out
+
+
+def _spawn_detached_after_run(orig_argv: list[str], after_pid: int) -> int:
+    """Re-launch this exact command as a detached background process.
+
+    Used so a queued run (``ascec input.asc after <PID>``) holds in the
+    background without tying up the terminal — the user gets their prompt back
+    immediately and the child blocks until ``after_pid`` exits, then runs.
+
+    The child is launched with the *original* argv (still carrying ``after
+    <PID>``) plus ``ASCEC_AFTER_DETACHED=1`` so it does not detach again; its
+    stdin is ``/dev/null`` (so the Ctrl+D detach watcher never starts) and its
+    console output is redirected to ``<input>_queue.log`` in the cwd. Returns
+    the child PID, or 0 if the spawn failed (caller then runs in foreground).
+    """
+    import subprocess
+
+    try:
+        entry = os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else ""
+        if entry and os.path.isfile(entry):
+            cmd = [sys.executable, entry] + orig_argv[1:]
+        else:
+            cmd = [sys.executable, "-m", "cosmic_ascec.command_line.ascec"] + orig_argv[1:]
+
+        # Name the log after the input file when we can spot it (first bare,
+        # non-keyword token); fall back to a generic name otherwise.
+        input_token = ""
+        for tok in orig_argv[1:]:
+            low = tok.lower()
+            if tok.startswith("-") or low in ("after", "then", ",", "protocol"):
+                continue
+            input_token = tok
+            break
+        stem = os.path.splitext(os.path.basename(input_token))[0] if input_token else "ascec"
+        log_path = os.path.join(os.getcwd(), f"{stem}_queue.log")
+
+        env = os.environ.copy()
+        env["ASCEC_AFTER_DETACHED"] = "1"
+
+        log_fh = open(log_path, "a", buffering=1)
+        try:
+            child = subprocess.Popen(
+                cmd,
+                cwd=os.getcwd(),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=log_fh,
+                stderr=log_fh,
+                start_new_session=True,
+                close_fds=True,
+            )
+        finally:
+            log_fh.close()
+
+        print(
+            f"\nASCEC queued in background (PID {child.pid}) — holding until "
+            f"PID {after_pid} finishes, then it starts automatically."
+        )
+        print(f"  Output: {log_path}")
+        print(f"  Track or cancel:  ascec status")
+        return int(child.pid)
+    except Exception as exc:
+        print(
+            f"ascec: could not background queued run ({exc}); running in foreground.",
+            file=sys.stderr,
+        )
+        return 0
+
+
 def main_ascec_integrated(argv=None) -> int:
     """v04 ``main_ascec_integrated`` (lines 19255-20982) — verbatim dispatcher.
 
@@ -971,11 +1081,36 @@ def main_ascec_integrated(argv=None) -> int:
     else:
         argv = ["ascec"] + list(argv)
 
+    # Preserve the user's original argv (with ``after <PID>`` intact) so a
+    # queued run can relaunch itself detached below.
+    _orig_argv = list(argv)
+
     # Strip --maxprint from argv (v04 lines 19262-19265). Stash the flag on the
     # stages module global the orchestrator reads via ``globals().get(...)``.
     if "--maxprint" in argv:
         _stages_module._ascec_maxprint_requested = True
     argv = [a for a in argv if a != "--maxprint"]
+
+    # Queue support: ``... after <PID>`` / ``--after <PID>`` makes a workflow
+    # run hold until that PID exits (see execute_workflow_stages). Strip the
+    # tokens here — before separator detection and argparse — and stash the
+    # target on the stages module the orchestrator reads via globals().get().
+    _after_pid, argv = _extract_after_pid(argv)
+    _stages_module._ascec_after_pid = _after_pid
+
+    # Auto-background a queued run so the terminal returns immediately (no ``&``
+    # needed). Only when launched interactively (stdout is a TTY) and not
+    # already the detached child — scripts / pipes / the child itself run inline
+    # so schedulers and redirects behave predictably.
+    if (
+        _after_pid
+        and os.environ.get("ASCEC_AFTER_DETACHED") != "1"
+        and sys.stdout.isatty()
+    ):
+        if _spawn_detached_after_run(_orig_argv, int(_after_pid)):
+            return 0
+        # Spawn failed → fall through and hold in the foreground instead.
+
     sys.argv = argv
 
     # v04 lines 19267-19270 — version banner.

@@ -38,13 +38,21 @@ __all__ = [
     "_pdeathsig_preexec",
     "_register_ascec_job",
     "_update_ascec_job",
+    "_set_job_holding",
     "_remove_progress_artifacts",
     "_adopt_ascec_job",
     "_atomic_claim_ascec_job",
     "_kill_orphaned_job_processes",
     "_cleanup_stale_jobs",
     "_get_recent_jobs",
+    "_LIVE_STATUSES",
 ]
+
+# Statuses that represent a job which is still "live" — it occupies a slot and
+# is shown in the top (active) section of ``ascec status`` rather than history.
+# ``holding`` is a queued run blocking behind another job's PID (see
+# ``_set_job_holding`` and the wait loop in ``execute_workflow_stages``).
+_LIVE_STATUSES = ("running", "holding")
 
 
 def _ascec_state_dir() -> Path:
@@ -71,6 +79,15 @@ def _init_ascec_db(conn) -> None:
         started_at    TEXT,
         updated_at    TEXT
     )""")
+    # Idempotent migration: ``after_pid`` records the PID a queued ('holding')
+    # job is waiting on, so ``ascec status`` can show what it blocks behind.
+    # DBs created before the queue feature lack the column.
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()]
+        if "after_pid" not in cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN after_pid INTEGER DEFAULT 0")
+    except Exception:
+        pass
     conn.commit()
 
 
@@ -151,6 +168,30 @@ def _update_ascec_job(job_id: int, status: str) -> None:
         pass
 
 
+def _set_job_holding(job_id: int, after_pid: int) -> None:
+    """Mark a job as queued ('holding') behind another running job's PID.
+
+    The wait loop in ``execute_workflow_stages`` calls this on the placeholder
+    row claimed by ``_atomic_claim_ascec_job`` before blocking, so the job
+    appears under the live section of ``ascec status`` as HOLDING until
+    ``after_pid`` exits, at which point the normal ``_adopt_ascec_job`` flow
+    flips it back to 'running'.
+    """
+    if not job_id:
+        return
+    try:
+        conn = _sqlite3.connect(str(_ascec_db_path()))
+        _init_ascec_db(conn)
+        conn.execute(
+            "UPDATE jobs SET status='holding', after_pid=?, updated_at=? WHERE id=?",
+            (int(after_pid), time.strftime('%Y-%m-%d %H:%M:%S'), job_id),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def _remove_progress_artifacts(progress_file: str) -> None:
     """Best-effort removal of progress JSON and temp file."""
     if not progress_file:
@@ -214,7 +255,7 @@ def _atomic_claim_ascec_job(input_file: str, working_dir: str) -> Tuple[int, Opt
             _cleanup_stale_jobs(conn)
             row = conn.execute(
                 "SELECT id, pid, started_at FROM jobs "
-                "WHERE status='running' AND input_file=? "
+                "WHERE status IN ('running','holding') AND input_file=? "
                 "ORDER BY id ASC LIMIT 1",
                 (abs_input,),
             ).fetchone()
@@ -335,7 +376,8 @@ def _kill_orphaned_job_processes(working_dir: str, input_file: str) -> None:
 def _cleanup_stale_jobs(conn) -> None:
     """Mark 'running' jobs whose PID no longer exists as 'crashed' and kill orphaned children."""
     rows = conn.execute(
-        "SELECT id, pid, progress_file, working_dir, input_file FROM jobs WHERE status='running'"
+        "SELECT id, pid, progress_file, working_dir, input_file FROM jobs "
+        "WHERE status IN ('running','holding')"
     ).fetchall()
     now = time.strftime('%Y-%m-%d %H:%M:%S')
     for job_id, pid, progress_file, working_dir, input_file in rows:
@@ -358,22 +400,23 @@ def _get_recent_jobs() -> list:
 
         running_rows = conn.execute(
             "SELECT id,pid,input_file,working_dir,log_file,progress_file,"
-            "status,started_at,updated_at FROM jobs "
-            "WHERE status='running' ORDER BY id ASC"
+            "status,started_at,updated_at,after_pid FROM jobs "
+            "WHERE status IN ('running','holding') ORDER BY id ASC"
         ).fetchall()
 
         # Keep a bounded history list for readability.
         history_rows = conn.execute(
             "SELECT id,pid,input_file,working_dir,log_file,progress_file,"
-            "status,started_at,updated_at FROM jobs "
-            "WHERE status!='running' AND updated_at >= ? ORDER BY id DESC LIMIT 10",
+            "status,started_at,updated_at,after_pid FROM jobs "
+            "WHERE status NOT IN ('running','holding') AND updated_at >= ? "
+            "ORDER BY id DESC LIMIT 10",
             (cutoff,)
         ).fetchall()
 
         rows = running_rows + history_rows
         conn.close()
         cols = ['id', 'pid', 'input_file', 'working_dir', 'log_file',
-                'progress_file', 'status', 'started_at', 'updated_at']
+                'progress_file', 'status', 'started_at', 'updated_at', 'after_pid']
         return [dict(zip(cols, r)) for r in rows]
     except Exception:
         return []

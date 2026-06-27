@@ -109,6 +109,7 @@ from cosmic_ascec.workflow.job_registry import (
     _PDEATHSIG_PREEXEC,
     _register_ascec_job,
     _remove_progress_artifacts,
+    _set_job_holding,
     _update_ascec_job,
 )
 from cosmic_ascec.workflow.protocol_cache import (
@@ -153,6 +154,10 @@ except ImportError:
 # 19262-19265). ``execute_workflow_stages`` reads it via ``globals().get(...)``;
 # the v05 CLI (R7) sets ``stages._ascec_maxprint_requested`` the same way.
 _ascec_maxprint_requested = False
+
+# Queue target: when set (by the CLI from ``... after <PID>``), a workflow run
+# holds in ``execute_workflow_stages`` until this PID exits before launching.
+_ascec_after_pid = None
 
 __all__ = [
     # tiny generic helpers (verbatim)
@@ -4972,6 +4977,34 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             except Exception:
                 pass
             return 1
+
+    # ── Queue / hold-until-PID-exits ────────────────────────────────────────
+    # ``ascec <input> r3 after <PID>`` (set by the CLI as
+    # ``_ascec_after_pid``): block here until the target run finishes, then
+    # fall through to the normal launch. The placeholder row claimed above is
+    # flipped to 'holding' so the wait is visible in ``ascec status``; the
+    # later ``_adopt_ascec_job`` call flips it back to 'running'.
+    _after_pid = globals().get('_ascec_after_pid', None)
+    if _after_pid and os.environ.get("ASCEC_DETACHED_CHILD") != "1":
+        try:
+            _after_pid = int(_after_pid)
+        except (TypeError, ValueError):
+            _after_pid = 0
+        if _after_pid > 0 and _after_pid != os.getpid() and _is_pid_alive(_after_pid):
+            _set_job_holding(_early_claimed_job_id, _after_pid)
+            print(
+                f"\nHolding: waiting for PID {_after_pid} to finish before starting "
+                f"'{input_file}'.\n  Run 'ascec status' to view (HOLDING) or cancel it.",
+                flush=True,
+            )
+            try:
+                while _is_pid_alive(_after_pid):
+                    time.sleep(5)
+            except KeyboardInterrupt:
+                _update_ascec_job(_early_claimed_job_id, 'killed')
+                print("\nHold cancelled.", flush=True)
+                return 130
+            print(f"\nPID {_after_pid} finished — starting '{input_file}'.", flush=True)
 
     # If launched in the background from the shell, immediately re-exec as a
     # detached child so the shell job does not get stopped by terminal I/O.
@@ -15169,8 +15202,9 @@ def show_ascec_status() -> None:
         Running jobs are listed first, then history. UI IDs are reassigned from 1.
         Original database row ID is preserved in 'db_id'.
         """
-        running = [j for j in raw_jobs if j.get('status') == 'running']
-        done = [j for j in raw_jobs if j.get('status') != 'running']
+        _live = ('running', 'holding')
+        running = [j for j in raw_jobs if j.get('status') in _live]
+        done = [j for j in raw_jobs if j.get('status') not in _live]
         running.sort(key=lambda j: j.get('id', 0))
         # Show history newest-first.
         done.sort(key=lambda j: j.get('id', 0), reverse=True)
@@ -15231,8 +15265,9 @@ def show_ascec_status() -> None:
         print(f"{'─'*sep_w}")
         print(f"  ASCEC STATUS  ({now_str})")
         print(f"{'─'*sep_w}")
-        running = [j for j in jobs if j['status'] == 'running']
-        done = [j for j in jobs if j['status'] != 'running']
+        _live = ('running', 'holding')
+        running = [j for j in jobs if j['status'] in _live]
+        done = [j for j in jobs if j['status'] not in _live]
         if running:
             print(f"\n  Running:")
             print(f"    {'ID':>3}  {'PID':>7}  {'INPUT FILE':<{run_input_w}}  STARTED")
@@ -15240,6 +15275,10 @@ def show_ascec_status() -> None:
             for j in running:
                 fname = os.path.basename(j['input_file'])
                 print(f"    {j['id']:>3}  {j['pid']:>7}  {_fit(fname, run_input_w):<{run_input_w}}  {j['started_at']}")
+                if j['status'] == 'holding':
+                    _wait_pid = j.get('after_pid') or 0
+                    _wait_txt = f" PID {_wait_pid}" if _wait_pid else ""
+                    print(f"         ⏸  HOLDING — waiting for{_wait_txt} to finish")
                 if show_paths:
                     run_realpath = _resolve_run_realpath(j)
                     print(f"         path: {run_realpath}")
@@ -15525,12 +15564,18 @@ def show_ascec_status() -> None:
             time.sleep(1)
             continue
         if action == 'V':
-            if job['status'] == 'running':
+            if job['status'] == 'holding':
+                _wait_pid = job.get('after_pid') or 0
+                print(f"  Job {job['id']} is HOLDING"
+                      + (f" — waiting for PID {_wait_pid} to finish." if _wait_pid else "."))
+                print("  It will start automatically once the other run ends. [K] to cancel.")
+                time.sleep(2)
+            elif job['status'] == 'running':
                 _attach_view(job)
             else:
                 _view_completed(job)
         elif action == 'K':
-            if job['status'] == 'running' and _is_pid_alive(job['pid']):
+            if job['status'] in ('running', 'holding') and _is_pid_alive(job['pid']):
                 try:
                     _self_pid = os.getpid()
                     _self_pgid = os.getpgrp()
