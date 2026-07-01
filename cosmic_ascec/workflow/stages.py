@@ -6333,19 +6333,26 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         should_skip, new_idx = validate_cached_optimization_cosmic(
                             cache, stage, stage_num, stages, stage_idx, cache_file
                         )
-                        if not should_skip:
-                            stage_idx = new_idx
-                            continue
                         stage_idx = new_idx
+                        # Keep completed_stage_count in sync with the new position:
+                        # new_idx is the 0-based index of the next stage to run, so all
+                        # stages before it are done. When the validator also consumes the
+                        # cached cosmic stage (should_skip) this credits it; when it loops
+                        # back to re-run (not should_skip) it un-credits it. Without this
+                        # the next stage's live n/N progress is mislabeled as the previous
+                        # stage in the progress bar and 'ascec status'.
+                        completed_stage_count = new_idx
+                        context.completed_stage_count = completed_stage_count
+                        continue
                     # Validate cached refinement+cosmic if applicable
                     elif stage_type == 'refinement':
                         should_skip, new_idx = validate_cached_refinement_cosmic(
                             cache, stage, stage_num, stages, stage_idx, cache_file
                         )
-                        if not should_skip:
-                            stage_idx = new_idx
-                            continue
                         stage_idx = new_idx
+                        completed_stage_count = new_idx
+                        context.completed_stage_count = completed_stage_count
+                        continue
                     continue
         
         # Display name for stage (use new naming convention)
