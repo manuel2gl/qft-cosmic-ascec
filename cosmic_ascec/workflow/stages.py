@@ -15589,15 +15589,35 @@ def show_ascec_status() -> None:
                     _root_pid = int(job['pid'])
                     _tree = [p for p in _collect_descendant_pids(_root_pid) if p != _self_pid]
 
-                    # Include likely ORCA/QM workers that may have detached from parent tree.
-                    _qm_pids = [
-                        p for p in _collect_qm_related_pids(
-                            str(job.get('working_dir', '') or ''),
-                            str(job.get('input_file', '') or ''),
-                        )
-                        if p != _self_pid
-                    ]
-                    _tree = sorted(set([_root_pid] + _tree + _qm_pids))
+                    if job['status'] == 'holding':
+                        # A HOLDING job is only a waiting placeholder process; it
+                        # has no QM workers of its own yet. Any ORCA/QM processes
+                        # sharing this input_file/working_dir belong to the job it
+                        # is queued behind (``after_pid``). Discovering them here
+                        # would kill that still-running job — so skip QM discovery
+                        # and, as a safety belt, exclude the held job's PID and its
+                        # descendants from the kill set.
+                        _after_pid = int(job.get('after_pid') or 0)
+                        _protected = set()
+                        if _after_pid > 0:
+                            _protected.update(_collect_descendant_pids(_after_pid))
+                            _protected.update(_collect_qm_related_pids(
+                                str(job.get('working_dir', '') or ''),
+                                str(job.get('input_file', '') or ''),
+                            ))
+                        _kill_set = (set([_root_pid] + _tree) - _protected)
+                        _kill_set.add(_root_pid)  # never drop the placeholder itself
+                        _tree = sorted(_kill_set)
+                    else:
+                        # Include likely ORCA/QM workers that may have detached from parent tree.
+                        _qm_pids = [
+                            p for p in _collect_qm_related_pids(
+                                str(job.get('working_dir', '') or ''),
+                                str(job.get('input_file', '') or ''),
+                            )
+                            if p != _self_pid
+                        ]
+                        _tree = sorted(set([_root_pid] + _tree + _qm_pids))
 
                     # Also target process groups of discovered descendants.
                     _pgids = set()
