@@ -487,11 +487,14 @@ COMMANDS:
     ascec input.asc r3 , sort , cosmic
 
 EXAMPLES:
-    ascec water.asc                # anneal a single input
-    ascec water.asc r5 --box15     # 5 replicas at 15% packing
-    ascec opt template.inp run.sh  # optimization inputs + launcher
-    ascec sort --justsum           # summary only
-    ascec cosmic ./outputs --th auto
+    ascec water.asc                    # anneal a single input
+    ascec water.asc r5 --box15         # 5 replicas at 15% packing
+    ascec water.asc box                # box / packing analysis only
+    ascec opt template.inp run.sh      # optimization inputs + launcher
+    ascec sort --justsum               # summary only
+    ascec cosmic ./outputs --th auto   # cluster with the auto threshold
+    ascec water.asc protocol           # run the full automated protocol
+                                       #   (stages defined inside the .asc file)
 
 Run 'ascec cosmic -h' for the full COSMIC clustering option reference.
 """,

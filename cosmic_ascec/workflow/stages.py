@@ -314,6 +314,25 @@ def _cosmic_base_name(path: str) -> str:
     return path.split('/')[0] if '/' in path else path
 
 
+def _canonical_calc_key(name: str) -> str:
+    """Reduce any spelling of a calculation to a single structure identity.
+
+    Optimization/refinement scans discover the same structure under several
+    spellings depending on where and when they look — ``motif_24``,
+    ``motif_24_opt``, ``motif_24_opt.inp``, ``geometry_refinement/motif_24/…``,
+    or the redo artifact ``motif_24_opt_rescue``. Counting these as distinct
+    inflates the N/M denominator past the real number of motifs (and makes redo
+    passes grow the total). Collapsing every variant to its base structure key
+    (``motif_24``) keeps the count anchored to the actual motif set.
+    """
+    base = os.path.splitext(os.path.basename(str(name)))[0]
+    # Redo artifacts belong to their parent structure, not a new one.
+    for suffix in ('_rescue', '_redo'):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+    return base.replace('_opt', '').replace('_calc', '')
+
+
 def _xtb_thread_env_prefix() -> str:
     """Compatibility prefix used by legacy launcher branches; does not set thread count."""
     return 'ASCEC_XTB_RUNTIME=1'
@@ -9680,8 +9699,13 @@ def _run_qm_calculations_with_concurrency(
         if result['success']:
             with lock:
                 num_completed += 1
-                completed_list.append(input_file)
-                basename_only = os.path.splitext(os.path.basename(input_file))[0]
+                # Store the canonical structure key, never the raw path/extension
+                # (e.g. 'motif_24_opt.inp' -> 'motif_24'); otherwise the same
+                # structure is counted twice under two spellings and the N/M total
+                # grows past the real motif count.
+                basename_only = _canonical_calc_key(input_file)
+                if basename_only not in completed_list:
+                    completed_list.append(basename_only)
                 all_input_basenames.add(basename_only)
                 stage_key = getattr(context, 'current_stage_key', stage_key_prefix)
                 update_protocol_cache(stage_key, 'in_progress',
@@ -11872,24 +11896,27 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             else:
                 excluded_numbers = cache.get('excluded_optimizations_2', [])
             
-            # Apply exclusion filtering to completed_calcs and input_files
+            # Apply exclusion filtering, then collapse every scan spelling to one
+            # canonical structure key so a calculation discovered under both
+            # 'opt_conf_1' and 'opt_conf_1.inp' (or its redo/rescue variant) is
+            # only counted once and the total never grows across redo passes.
             completed_calcs = [f for f in completed_calcs if not match_exclusion(f, excluded_numbers)]
-            
+            completed_calcs = list(dict.fromkeys(_canonical_calc_key(f) for f in completed_calcs))
+
             # Count total inputs (including those already completed and cached)
-            # This should be the TOTAL expected calculations, not just new ones
+            # This should be the TOTAL expected calculations, not just new ones,
+            # keyed by canonical structure id.
             all_input_basenames = set()
 
-            # Add basenames from input files (pending calculations)
+            # Add keys from input files (pending calculations)
             for f in input_files:
                 if not match_exclusion(f, excluded_numbers):
                     # Handle both simple filenames and paths like "opt_conf_1/opt_conf_1.inp"
-                    basename = os.path.splitext(os.path.basename(f))[0]
-                    all_input_basenames.add(basename)
+                    all_input_basenames.add(_canonical_calc_key(f))
 
-            # Add basenames from already completed files (CRITICAL for correct count)
+            # Add keys from already completed files (CRITICAL for correct count)
             for f in completed_calcs:
-                # completed_calcs contains basenames, not full paths
-                all_input_basenames.add(f)
+                all_input_basenames.add(_canonical_calc_key(f))
 
             num_inputs = len(all_input_basenames)
 
@@ -13386,24 +13413,28 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
         
         excluded_numbers = cache.get('excluded_refinements', [])
         
-        # Apply exclusion filtering to completed_opts
+        # Apply exclusion filtering to completed_opts, then collapse every scan
+        # spelling to one canonical structure key so a motif discovered under
+        # both 'motif_24_opt' and 'motif_24_opt.inp' (or its redo/rescue variant)
+        # is only counted once.
         completed_opts = [f for f in completed_opts if not match_exclusion(f, excluded_numbers)]
-        
+        completed_opts = list(dict.fromkeys(_canonical_calc_key(f) for f in completed_opts))
+
         # Count total inputs (including those already completed and cached)
-        # This should be the TOTAL expected optimizations, not just new ones
+        # This should be the TOTAL expected optimizations, not just new ones.
+        # Keyed by canonical structure id so the denominator stays anchored to
+        # the real motif count and never grows across redo passes.
         all_input_basenames = set()
 
-        # Add basenames from input files (pending optimizations)
+        # Add keys from input files (pending optimizations)
         for f in input_files:
             if not match_exclusion(f, excluded_numbers):
                 # Handle both simple filenames and paths like "motif_01/motif_01_opt.inp"
-                basename = os.path.splitext(os.path.basename(f))[0]
-                all_input_basenames.add(basename)
+                all_input_basenames.add(_canonical_calc_key(f))
 
-        # Add basenames from already completed files (CRITICAL for correct count)
+        # Add keys from already completed files (CRITICAL for correct count)
         for f in completed_opts:
-            # completed_opts contains basenames, not full paths
-            all_input_basenames.add(f)
+            all_input_basenames.add(_canonical_calc_key(f))
 
         num_inputs = len(all_input_basenames)
 

@@ -88,125 +88,66 @@ def main(argv=None):
         usage="cosmic [OPTIONS] [FOLDER]",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""DESCRIPTION:
-  COSMIC performs topological clustering of quantum chemistry outputs
-  using a multi-dimensional physicochemical feature vector (energy, HOMO-LUMO
-  gap, dipole moment, rotational constants, vibrational frequencies, H-bond geometry).
-  Hierarchical clustering with optional RMSD refinement identifies unique
-  conformational families and filters redundant structures.
+  COSMIC clusters quantum-chemistry outputs by a physicochemical feature vector
+  (up to 15 descriptors: electronic energy, HOMO-LUMO gap, dipole, rotational
+  constants, vibrational frequencies, H-bond geometry). The vector is dynamic —
+  it uses whatever each output provides and reports motifs from the largest
+  feature pool available. Redundant structures collapse into unique conformational
+  families; each family's lowest-energy structure is the representative motif.
 
-METHODOLOGY:
-  1. Feature Extraction: Parse QM outputs (.log/.out) for scalar descriptors
-  2. Z-score Standardization: Normalize features across different units
-  3. Weighted Euclidean Distance: Calculate cosmic matrix
-  4. Hierarchical Clustering: UPGMA linkage with 2-sigma threshold on Z-standardized features
-     (Calinski-Harabasz + Silhouette score optimization)
-  5. RMSD Refinement (optional): Distinguish geometric stereoisomers
-  6. Quality Control: Flag imaginary frequencies and convergence failures
+HOW IT WORKS:
+  1. Parse QM outputs (.log/.out) into the feature vector
+  2. Z-standardize each feature (drop near-constant columns)
+  3. Build a UPGMA tree (SciPy average linkage, Euclidean distance)
+  4. Cut it at the threshold (default 'auto' = knee of the merge-height curve,
+     capped at the empirical 2.0; Mojena is plotted only as a diagnostic)
+  5. Optional RMSD pass to split geometric look-alikes within a family
+  6. Flag imaginary frequencies and convergence failures
 
-OPTIONS:
-  Manual Override (deprecated):
-    --threshold=FLOAT, --th=FLOAT Manual distance threshold (overrides statistical
-                                  consensus method). Consider removing this flag.
+KEY OPTIONS:
+  --th=auto|opt|FLOAT   Dendrogram cut (default auto). 'opt' reuses the τ from the
+                        sibling post-opt run — use it for refinement-stage cosmic
+                        so the partition stays consistent. A float overrides
+                        (2.0 = legacy 2-sigma; <1 tight; 3-4 loose).
+  --rmsd[=FLOAT]        Geometric validation in Å (default 1.0 if bare).
+  -j, --cores INT       CPU cores (default: auto-detect).
+  --partialweights      Tuned weights for semiempirical/xTB (down-weights noisy
+                        orbital/dipole/H-bond features). Added by the web GUI for
+                        preliminary runs; leave off for DFT/post-HF.
+  --weights STRING      Manual weights, e.g. '(energy=0.3)(gap=0.2)'.
+  --group-hb            Cluster separately per H-bond count (one dendrogram each).
+  -T FLOAT              Temperature (K) for Boltzmann populations (default 298.15).
+  --compare FILE...     Direct pairwise comparison of ≥2 files (no folder).
+  --reprocess-files     Ignore the descriptor cache and re-parse outputs.
+  FOLDER                Directory of QM outputs (default: current / interactive).
 
-  Geometric Validation:
-    --rmsd=FLOAT                  Enable RMSD validation in Ångström
-                                  If no value given, defaults to 1.0 Å
-                                  Recommended: 0.5-1.0 for tight geometric control
-
-  Processing Control:
-    --cores=INT, -j=INT           Number of CPU cores (default: auto-detect)
-    --reprocess-files             Ignore cache and force feature re-extraction
-    --output-dir=PATH             Output directory (default: current directory)
-
-  Advanced Features:
-    --weights=STRING              Custom feature weights in format:
-                                  '(energy=0.1)(gap=0.2)(dipole=0.15)'
-    --compare FILE [FILE ...]     Direct comparison mode (minimum 2 files)
-    -T=FLOAT, --temperature=FLOAT Temperature for Boltzmann analysis in K
-                                  (default: 298.15)
-    --group-hb                    Group structures by H-bond count before
-                                  clustering (separate dendrograms per family)
-
-  Output:
-    -v, --verbose                 Enable detailed progress output
-    -V, --version                 Display version information and exit
-
-INPUT:
-  FOLDER                          Directory containing QM output files
-                                  (.log for Gaussian, .out for ORCA)
-                                  If omitted, interactive folder selection
-
-OUTPUT FILES:
-  clustering_summary.txt          Comprehensive clustering report with statistics
-  data_cache.pkl                  Cache file for output data
-  dendrogram_images/              Hierarchical clustering dendrograms
-    └── dendrogram.png            Single dendrogram (or dendrogram_H{N}.png with --group-hb)
-  extracted_data/                 Raw data files (.dat) for each cluster
-    └── cluster_*.dat
-  extracted_clusters/             Individual cluster directories
-    ├── cluster_1/                Single-member cluster (no combined file)
-    │   ├── structure.xyz         Individual structure file
-    │   └── structure.mol         MOL format (if OpenBabel available)
-    └── cluster_2_5/              Multi-member cluster (5 members)
-        ├── structure1.xyz        Individual XYZ files for each member
-        ├── structure2.xyz
-        ├── cluster_2_5.xyz       Combined multi-frame XYZ file
-        └── cluster_2_5.mol       Combined MOL file
-  skipped_structures/             Structures with imaginary frequencies (if any)
-    ├── skipped_summary.txt       Details of skipped structures
-    ├── clustered_with_normal/    Imaginary freq. clustered with valid structures
-    └── need_recalculation/       Isolated imaginary freq. structures
+MAIN OUTPUTS:
+  clustering_summary.txt   Full report (clusters, τ source, similarity floors)
+  dendrogram_images/       Annotated dendrogram(s)
+  extracted_clusters/      One folder per family + representative motif
+  skipped_structures/      Imaginary-frequency / non-converged structures
 
 EXAMPLES:
-  Basic clustering (2-sigma threshold - recommended):
-    cosmic                          Default threshold=2.0 (moderate)
-    cosmic --rmsd=1                 Add RMSD validation at 1.0 Å
-    cosmic calculation/             Process specific folder
+  cosmic -j4                       Auto threshold, 4 cores (typical run)
+  cosmic --rmsd=1 -j4              Add 1.0 Å geometric split
+  cosmic --th=opt -j4              Refinement stage: reuse the post-opt τ
+  cosmic --th=2.0                  Force the legacy 2-sigma cut
+  cosmic --partialweights -j4      Preliminary xTB / semiempirical screening
+  cosmic --compare a.out b.out     Compare two structures directly
 
-  Manual threshold (deprecated):
-    cosmic --th=2                   Manual clustering at threshold 2.0
-    cosmic --th=1 --rmsd=0.5        Tight clustering with RMSD control
-
-  Performance optimization:
-    cosmic --th=2 -j=8              Use 8 CPU cores for parallel processing
-    cosmic --reprocess-files        Force cache refresh after updates
-
-  Direct comparison:
-    cosmic --compare s1.log s2.log s3.log  Compare specific structures
-
-  Custom analysis:
-    cosmic --th=2 --weights='(energy=0.3)(gap=0.2)'  Weighted features
-    cosmic --th=2 -T=350.0          Boltzmann analysis at 350 K
-
-WORKFLOW INTEGRATION:
-  COSMIC is typically used after ASCEC sampling and QM optimization:
-    1. ascec input.in r5        → 5 replicated annealing runs
-    2. ascec calc template.inp  → generate QM inputs
-    3. [Run ORCA/Gaussian calculations]
-    4. ascec sort               → organize results
-    5. cosmic --th=2        → identify unique conformers
-
-RECOMMENDATIONS:
-  - Start with --th=2 for initial exploration
-  - Use --rmsd=1 for systems with subtle geometric differences
-  - Adjust --th value based on desired clustering granularity
-  - Use --reprocess-files after modifying QM outputs or settings
-  - Check dendrogram.png to validate threshold selection
+TYPICAL PIPELINE (or use the automated protocol in one .asc file):
+  ascec input.asc r5 --concurrent=5   → 5 replicate annealing runs
+  ascec opt template.inp launcher.sh  → build + run optimization inputs
+  ascec sort                          → collect and rank
+  cosmic -j4                          → unique motifs
 
 SUPPORTED FORMATS:
-  - Gaussian: .log files (via cclib parser)
-  - ORCA 5.0.x: .out files (via cclib parser)
-  - ORCA 6.1+: .out files (via OPI parser)
-  Note: ORCA 6.0 is not supported; use 5.0.x or upgrade to 6.1+
+  Gaussian .log (cclib) · ORCA 5.0.x .out (cclib) · ORCA 6.1+ .out (OPI)
+  ORCA 6.0 is not supported — use 5.0.x or 6.1+.
 
 CITATION:
-  If you use COSMIC in your research, please cite:
   Manuel, G.; Sara, G.; Albeiro, R. Universidad de Antioquia (2026)
-
-MORE INFORMATION:
-    Repository:     https://github.com/manuel2gl/qft-cosmic-ascec
-  Documentation:  See user manual for theoretical background
-  Support:        Química Física Teórica - Universidad de Antioquia
+  Repository: https://github.com/manuel2gl/qft-cosmic-ascec
 """)
     # Clustering threshold: default 'auto' detects the elbow of the merge-height
     # curve per case; pass a float to override (e.g. 2.0 for legacy 2-sigma rule).
@@ -255,9 +196,10 @@ MORE INFORMATION:
                         help="group structures by H-bond count before clustering (separate dendrograms per HB family)")
 
     parser.add_argument("--partialweights", action="store_true",
-                        help="apply tuned weights for semiempirical / standalone xTB output "
+                        help="apply tuned weights for preliminary semiempirical / xTB runs "
                              "(down-weights noisy orbital, dipole, and H-bond features). "
-                             "Recommended for PM3/AM1/xTB; leave off for DFT/post-HF.")
+                             "Added by the web GUI for preliminary screening; leave off for "
+                             "refined DFT/post-HF output.")
 
     parser.add_argument("--data", type=str, default=None, metavar="PKL",
                         help="extract per-configuration feature vectors from the given "
