@@ -6158,6 +6158,16 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         filled = int(ratio * width)
         return "█" * filled + "░" * (width - filled)
 
+    def _active_redo_tag(stage_index: int) -> str:
+        """Return " (Redo n/N)" when stage_index is being re-run, else ""."""
+        if getattr(context, 'active_redo_stage_num', 0) != stage_index:
+            return ""
+        attempt = getattr(context, 'active_redo_attempt', 0)
+        if not attempt:
+            return ""
+        max_redos = getattr(context, 'active_redo_max', 0)
+        return f" (Redo {attempt}/{max_redos})" if max_redos else f" (Redo {attempt})"
+
     def render_workflow_progress(completed_stages: int, current_stage_num: int, sub_progress: str = "") -> None:
         """Render compact workflow progress with in-place updates (always visible)."""
         nonlocal progress_lines, last_progress_render
@@ -6195,7 +6205,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 stage_lines.append(line)
             elif i == current_stage_num and completed_stages < total:
                 suffix = f" {sub_progress}" if sub_progress else " ..."
-                stage_lines.append(f"[{i}/{total}] {name}{suffix}")
+                stage_lines.append(f"[{i}/{total}] {name}{suffix}{_active_redo_tag(i)}")
                 break
 
         # Smooth progress within a stage using n/N updates (annealing/optimization/refinement only).
@@ -6263,6 +6273,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 "pct": round(pct, 1),
                 "sub_progress": sub_progress,
                 "stage_lines": stage_lines,
+                "current_redo": getattr(context, 'active_redo_attempt', 0),
+                "redo_max": getattr(context, 'active_redo_max', 0),
+                "redo_stage_num": getattr(context, 'active_redo_stage_num', 0),
                 "updated": time.strftime('%Y-%m-%d %H:%M:%S'),
             }
             if _progress_stream is not None:
@@ -6531,9 +6544,12 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     for attempt in range(max_redos + 1):
                         final_attempt = attempt
                         if attempt > 0:
+                            context.active_redo_stage_num = stage_num
+                            context.active_redo_attempt = attempt
+                            context.active_redo_max = max_redos
                             _upd = getattr(context, 'update_progress', None)
                             if callable(_upd):
-                                _upd(f"Redo {attempt}/{max_redos}")
+                                _upd("")
                             _record_redo_attempt(cache_file, f"optimization_{stage_num}",
                                                  attempt, max_redos, use_cache)
                             if context.workflow_verbose_level >= 1:
@@ -6643,6 +6659,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             break
 
                     # Store redo count for terminal summary
+                    context.active_redo_stage_num = 0
+                    context.active_redo_attempt = 0
+                    context.active_redo_max = 0
                     context.last_opt_redo_count = final_attempt
 
                     # Get final cosmic results for cache
@@ -7042,9 +7061,12 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     for attempt in range(max_redos + 1):
                         final_attempt = attempt
                         if attempt > 0:
+                            context.active_redo_stage_num = stage_num
+                            context.active_redo_attempt = attempt
+                            context.active_redo_max = max_redos
                             _upd = getattr(context, 'update_progress', None)
                             if callable(_upd):
-                                _upd(f"Redo {attempt}/{max_redos}")
+                                _upd("")
                             _record_redo_attempt(cache_file, f"refinement_{stage_num}",
                                                  attempt, max_redos, use_cache)
                             if context.workflow_verbose_level >= 1:
@@ -7149,6 +7171,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             break
                     
                     # Store redo count for terminal summary
+                    context.active_redo_stage_num = 0
+                    context.active_redo_attempt = 0
+                    context.active_redo_max = 0
                     context.last_ref_redo_count = final_attempt
 
                     # Get final cosmic results for cache
@@ -7402,9 +7427,12 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     for attempt in range(max_redos + 1):
                         final_attempt = attempt
                         if attempt > 0:
+                            context.active_redo_stage_num = stage_num
+                            context.active_redo_attempt = attempt
+                            context.active_redo_max = max_redos
                             _upd = getattr(context, 'update_progress', None)
                             if callable(_upd):
-                                _upd(f"Redo {attempt}/{max_redos}")
+                                _upd("")
                             _record_redo_attempt(cache_file, f"energy_refinement_{stage_num}",
                                                  attempt, max_redos, use_cache)
                             if context.workflow_verbose_level >= 1:
@@ -7546,6 +7574,10 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             if context.workflow_verbose_level >= 1:
                                 print("⚠ Warning: Could not find clustering_summary.txt")
                             break
+
+                    context.active_redo_stage_num = 0
+                    context.active_redo_attempt = 0
+                    context.active_redo_max = 0
 
                     # Cache results for energy_refinement and cosmic stages
                     final_critical = None
@@ -7786,6 +7818,30 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
     return 0
 
+def _extract_replica_error(stderr_capture_file: str) -> Optional[str]:
+    """Pull a human-readable failure reason out of a replica's captured stderr.
+
+    A replica that aborts cleanly prints ``ascec: annealing failed: <reason>``
+    (see command_line/ascec.py); we surface ``<reason>`` so the workflow can
+    tell the user *why* it stopped instead of just "exit code 1". Falls back to
+    the last non-empty stderr line (or a trailing traceback line) when no
+    tagged message is present.
+    """
+    try:
+        with open(stderr_capture_file, 'r', errors='replace') as fh:
+            lines = [ln.strip() for ln in fh.read().splitlines() if ln.strip()]
+    except OSError:
+        return None
+    if not lines:
+        return None
+    for ln in reversed(lines):
+        marker = 'annealing failed:'
+        if marker in ln:
+            return ln.split(marker, 1)[1].strip()
+    # No tagged message — return the last stderr line (often a raised message
+    # or the final traceback line), which is still more useful than a code.
+    return lines[-1]
+
 def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int:
     """Execute replication stage (r3, r5, etc.) and run annealing simulations."""
     num_replicas = stage['num_replicas']
@@ -7879,6 +7935,7 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
         print(f"Running {num_replicas} annealing simulation(s)")
     
     failed_runs = []
+    failed_reasons: Dict[str, str] = {}
     progress_cb = getattr(context, 'update_progress', None)
     if not verbose and callable(progress_cb):
         progress_cb(f"0/{num_replicas} ...")
@@ -7929,6 +7986,9 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
         }
 
         step_progress_file = os.path.join(run_dir, '.ascec_step')
+        # Capture the child's stderr so a failed replica can report *why* it
+        # failed (e.g. "no rotatable bonds ...") instead of a bare exit code.
+        stderr_capture_file = os.path.join(run_dir, '.ascec_stderr')
 
         try:
             cmd = [sys.executable, os.path.abspath(sys.argv[0]), input_basename]
@@ -7941,37 +8001,39 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
                 env["COSMIC_ASCEC_SEED"] = _pinned_seed
 
             if on_step is not None:
-                proc = subprocess.Popen(
-                    cmd,
-                    cwd=run_dir,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=env,
-                    preexec_fn=_PDEATHSIG_PREEXEC,
-                )
-                while proc.poll() is None:
-                    try:
-                        with open(step_progress_file, 'r') as _spf:
-                            line = _spf.readline().strip()
-                        if line:
-                            on_step(line)
-                    except OSError:
-                        pass
-                    time.sleep(2.0)
-                returncode = proc.returncode
+                with open(stderr_capture_file, 'wb') as _errfh:
+                    proc = subprocess.Popen(
+                        cmd,
+                        cwd=run_dir,
+                        stdout=subprocess.DEVNULL,
+                        stderr=_errfh,
+                        env=env,
+                        preexec_fn=_PDEATHSIG_PREEXEC,
+                    )
+                    while proc.poll() is None:
+                        try:
+                            with open(step_progress_file, 'r') as _spf:
+                                line = _spf.readline().strip()
+                            if line:
+                                on_step(line)
+                        except OSError:
+                            pass
+                        time.sleep(2.0)
+                    returncode = proc.returncode
                 try:
                     os.unlink(step_progress_file)
                 except OSError:
                     pass
             else:
-                proc = subprocess.run(
-                    cmd,
-                    cwd=run_dir,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=env,
-                    preexec_fn=_PDEATHSIG_PREEXEC,
-                )
+                with open(stderr_capture_file, 'wb') as _errfh:
+                    proc = subprocess.run(
+                        cmd,
+                        cwd=run_dir,
+                        stdout=subprocess.DEVNULL,
+                        stderr=_errfh,
+                        env=env,
+                        preexec_fn=_PDEATHSIG_PREEXEC,
+                    )
                 returncode = proc.returncode
 
             output_file = os.path.join(run_dir, os.path.splitext(input_basename)[0] + '.out')
@@ -8004,15 +8066,26 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
                     result_info['success'] = True
 
             if not result_info['success']:
+                reason = _extract_replica_error(stderr_capture_file)
                 if returncode != 0:
-                    result_info['last_error'] = f"Exit code {returncode}"
+                    result_info['last_error'] = (
+                        f"{reason} (exit code {returncode})" if reason
+                        else f"Exit code {returncode}"
+                    )
                 elif not os.path.exists(output_file):
-                    result_info['last_error'] = "Output file not created"
+                    result_info['last_error'] = reason or "Output file not created"
                 else:
-                    result_info['last_error'] = "Annealing finished without normal termination marker"
+                    result_info['last_error'] = (
+                        reason or "Annealing finished without normal termination marker"
+                    )
 
         except Exception as e:
             result_info['last_error'] = str(e)
+        finally:
+            try:
+                os.unlink(stderr_capture_file)
+            except OSError:
+                pass
 
         return result_info
 
@@ -8057,6 +8130,8 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
                 elif result_info['last_error']:
                     print(f"    {result_info['last_error']}")
             failed_runs.append(run_name)
+            if result_info.get('last_error'):
+                failed_reasons[run_name] = result_info['last_error']
 
     import threading
     _replica_lock = threading.Lock()
@@ -8179,6 +8254,7 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
                         if verbose:
                             print(f"\n  {run_name}... ✗ (exception: {e})")
                         failed_runs.append(run_name)
+                        failed_reasons[run_name] = f"exception: {e}"
         finally:
             _monitor_stop.set()
             if _monitor_thread.is_alive():
@@ -8186,6 +8262,14 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
     
     if failed_runs:
         print(f"\n✗ {len(failed_runs)} simulation(s) failed")
+        # Surface the reason for each failure (unique reasons if several
+        # replicas share one) so the user sees *why*, not just the count.
+        _seen_reasons = set()
+        for _rn in failed_runs:
+            _reason = failed_reasons.get(_rn)
+            if _reason and _reason not in _seen_reasons:
+                _seen_reasons.add(_reason)
+                print(f"  Reason: {_reason}")
         return 1  # Fail the stage if any runs didn't complete
     
     # Generate annealing diagrams for each replica
@@ -15402,13 +15486,17 @@ def show_ascec_status() -> None:
                     'energy_refinement': 'energy_refinement',
                 }
                 stage_name = stage_name_map.get(stage_type, stage_type)
-                # Surface an active redo (e.g. "⟳ (Redo 1/3)") when the stage is
-                # being re-run; current_redo/redo_max are written by the redo loop.
+                # Surface an active redo (e.g. "(Redo 1/3)") when the stage is being
+                # re-run. The cache carries current_redo/redo_max only for cached
+                # runs; the progress file always does, so fall back to it.
                 _redo_n = result.get('current_redo')
+                _redo_max = result.get('redo_max')
+                if not _redo_n and int(_data.get('redo_stage_num', 0) or 0) == stage_num:
+                    _redo_n = _data.get('current_redo')
+                    _redo_max = _data.get('redo_max')
                 _redo_tag = ""
                 if _redo_n:
-                    _redo_max = result.get('redo_max')
-                    _redo_tag = f" ⟳ (Redo {_redo_n}/{_redo_max})" if _redo_max else f" ⟳ (Redo {_redo_n})"
+                    _redo_tag = f" (Redo {_redo_n}/{_redo_max})" if _redo_max else f" (Redo {_redo_n})"
                 replacement = f"[{stage_num}/{stages_total}] {stage_name} {done_i}/{total_i} ...{_redo_tag}"
 
                 prefix = f"[{stage_num}/{stages_total}] "

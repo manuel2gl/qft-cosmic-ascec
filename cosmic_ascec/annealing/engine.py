@@ -285,6 +285,20 @@ def anneal(
         max_dihedral_angle_rad=move_params.max_dihedral_angle_rad,
         logger=run_logger,
     )
+    # Conformational sampling was requested but the system has no rotatable
+    # bonds to sample (e.g. a lone ring like cyclohexane — ring bonds are not
+    # rotatable, see cosmic_ascec.geometry.bonds). Rather than silently fall
+    # back to rigid-body-only moves, stop and tell the user.
+    if move_params.conformational_move_prob > 0.0 and cache.total_rotatable_bonds == 0:
+        message = (
+            "no rotatable bonds found in any molecule, so conformational "
+            "sampling has nothing to explore (ring bonds are excluded because "
+            "rotating them would tear the ring). Set the conformational "
+            "sampling probability to 0 to run rigid-body annealing instead."
+        )
+        if run_logger is not None:
+            run_logger.error(message)
+        raise WorkflowError(message)
     if effective_prob != move_params.conformational_move_prob:
         move_params = replace(move_params, conformational_move_prob=effective_prob)
 

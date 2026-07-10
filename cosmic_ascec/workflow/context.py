@@ -86,6 +86,11 @@ class WorkflowContext:
     current_stage: Optional[Dict[str, Any]] = None  # Active workflow stage (for stage-aware helpers)
     update_progress: Optional[Callable[[str], None]] = None  # Compact workflow progress callback
     completed_stage_count: int = 0  # Number of finished workflow stages for progress rendering
+    # Live redo attempt of the stage currently executing (0 = initial run, not a redo).
+    # Read by the progress renderer so the panel and 'ascec status' can show "(Redo n/N)".
+    active_redo_stage_num: int = 0
+    active_redo_attempt: int = 0
+    active_redo_max: int = 0
     generated_template_files: List[str] = dataclasses.field(default_factory=list)  # Temp files extracted from embedded template labels
     maxprint: bool = False  # If True, keep all intermediate files (legacy behavior). Default: miniprint (clean up at end)
     _concurrent_prompted: Optional[int] = None  # Cached optimization concurrency selected interactively

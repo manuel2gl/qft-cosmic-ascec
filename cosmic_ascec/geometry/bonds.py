@@ -8,7 +8,7 @@ Two pure-function ports from v04:
   "non-terminal, non-H" filter v04 uses to pick rotatable bonds.
   ascec-v04.py lines 3620-3653.
 
-Two deliberate departures from v04, both contract-driven:
+Three deliberate departures from v04, all contract-driven:
 
 1. v04 reaches into ``state.r_atom`` for every radius lookup (a covalent-only
    table built once at startup). v04 calls :func:`get_radius` from
@@ -18,6 +18,14 @@ Two deliberate departures from v04, both contract-driven:
 2. v04's bond-length cutoff hard-codes a 1.3 tolerance and a 1.50 Å radius
    fallback inline. Both are surfaced here as module constants so the MC layer
    in Session 3 can introspect them without re-importing v04 magic numbers.
+3. **Ring bonds are excluded from the rotatable set** (:func:`_is_ring_bond`).
+   v04 has no ring perception, so a ring bond (e.g. any C–C in cyclohexane)
+   passes its "non-terminal, non-H" filter and gets rotated as a rigid
+   fragment — which tears the ring open rather than puckering it, because the
+   fragment swings around the bond axis while the ring-closure bond is left
+   behind. Rotating a ring bond can never produce a valid conformer, so we
+   drop it here. This changes behaviour *only* for cyclic molecules; acyclic
+   inputs (the case v04 handled correctly) enumerate an identical bond set.
 
 The companion ``rotate_around_bond`` (Rodrigues' formula, v04 line 3569) is
 intentionally *not* ported here — it is a Monte Carlo move, owned by
@@ -95,16 +103,57 @@ def find_connected_atoms(
     return connected
 
 
+def _is_ring_bond(
+    coords: np.ndarray,
+    atomic_numbers: Sequence[int],
+    i: int,
+    j: int,
+) -> bool:
+    """True if the ``i–j`` bond lies in a ring.
+
+    A bond is a ring bond iff its two atoms stay connected after that single
+    bond is removed — i.e. there is an alternate path from ``i`` to ``j``. We
+    walk the bond graph out of ``i`` with the direct ``i–j`` edge forbidden; if
+    the walk still reaches ``j`` by any other route, the bond closes a ring.
+
+    Rotating such a bond as a rigid fragment tears the ring instead of
+    puckering it (the ring-closure bond is left behind), so ring bonds must be
+    kept out of the rotatable set — see the module docstring, departure 3.
+    """
+    n = len(atomic_numbers)
+    visited: set[int] = {i}
+    stack: list[int] = [i]
+
+    while stack:
+        current = stack.pop()
+        for neighbor in range(n):
+            if neighbor in visited:
+                continue
+            if not _bonded(coords, atomic_numbers, current, neighbor):
+                continue
+            if current == i and neighbor == j:
+                continue  # the direct i–j bond is treated as removed
+            if neighbor == j:
+                return True  # reached j by an alternate path -> ring bond
+            visited.add(neighbor)
+            stack.append(neighbor)
+
+    return False
+
+
 def find_rotatable_bonds(
     mol_coords: np.ndarray,
     mol_atomic_numbers: Sequence[int],
 ) -> List[Tuple[int, int, List[int]]]:
     """Enumerate rotatable bonds ``(i, j, moving_atoms)`` for a single molecule.
 
-    Filter (matches ascec-v04.py lines 3620-3653):
+    Filter (matches ascec-v04.py lines 3620-3653, plus the ring exclusion of
+    departure 3 in the module docstring):
 
     * Pair must be bonded by the distance criterion.
     * Both atoms must be heavy (no H–X rotatable bonds).
+    * The bond must not close a ring (:func:`_is_ring_bond`) — rotating a ring
+      bond tears the ring rather than puckering it.
     * The fragment that would rotate must be non-empty *and* leave at least
       two atoms behind (excludes terminal bonds and the degenerate "rotate
       everything" case).
@@ -120,6 +169,8 @@ def find_rotatable_bonds(
             if not _bonded(coords, mol_atomic_numbers, i, j):
                 continue
             if z_i == 1 or z_j == 1:
+                continue
+            if _is_ring_bond(coords, mol_atomic_numbers, i, j):
                 continue
             moving_atoms = find_connected_atoms(j, i, coords, mol_atomic_numbers)
             if 0 < len(moving_atoms) < n_atoms - 2:
