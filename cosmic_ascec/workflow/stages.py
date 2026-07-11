@@ -2432,6 +2432,37 @@ def build_xtb_runtime_options(xtb_options: str, qm_nproc: Optional[int] = None,
     return opts
 
 
+# Files a QM engine drops next to a real calculation: ORCA's optimization
+# trajectory/final geometry, xtb's restart files, rescue reruns. Their names match
+# the motif_*.xyz / *.out patterns the stage scans for, but they are not
+# structures. Feeding a _trj.xyz back in makes ORCA parse a raw XYZ as an input
+# deck and abort; counting a _trj.out inflates the cosmic input population.
+_QM_BYPRODUCT_STEMS = ('_trj', '_property', '_rescue', '_engrad', '_xtbrestart', '_xtboptok')
+
+
+def is_qm_byproduct(filename: str) -> bool:
+    """True if filename is a QM engine byproduct rather than a real structure."""
+    base = os.path.basename(filename).lower()
+    if '.xtbopt.' in base or base.startswith('xtbopt'):
+        return True
+    stem = os.path.splitext(base)[0]
+    # Match the marker as the trailing stem (motif_01_opt_trj.out) and as an
+    # interior segment (motif_01_rescue.tmp.out).
+    return any(stem.endswith(marker) or f'{marker}.' in base
+               for marker in _QM_BYPRODUCT_STEMS)
+
+
+def is_stage_output_dir(dirname: str) -> bool:
+    """True for a QM stage's own output folder (geometry_optimization, geometry_refinement, ...).
+
+    Scans for candidate structures must not descend into these: on a resumed run
+    they already hold the previous pass's outputs and byproducts.
+    """
+    lower = os.path.basename(dirname.rstrip('/')).lower()
+    return lower.startswith(('geometry_optimization', 'geometry_refinement',
+                             'energy_refinement', 'geom optimization'))
+
+
 # --- def calculate_input_files  (ascec-v04.py 6142-6509) ---
 def calculate_input_files(template_file: str, launcher_template: Optional[str] = None,
                           auto_select: str = 'interactive', stage_type: str = "optimization",
@@ -2568,14 +2599,19 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
         for file in os.listdir("."):
             if file.endswith(".xyz") and "combined" in file.lower():
                 xyz_files.append(file)
-        
-        # Look for motif_*.xyz files
+
+        # Look for motif_*.xyz files. Prune the QM stage output folders: on a
+        # resumed run geometry_refinement/motif_NN/ already holds ORCA's
+        # motif_NN_opt_trj.xyz, which matches motif_*.xyz but is a byproduct.
         for root, dirs, files in os.walk("."):
+            dirs[:] = [d for d in dirs if not is_stage_output_dir(d)]
             for file in files:
+                if is_qm_byproduct(file):
+                    continue
                 if (file.startswith("motif_") and file.endswith(".xyz")) or \
                    (file.endswith(".xyz") and "combined" in file.lower() and root != "."):
                     xyz_files.append(os.path.join(root, file))
-                    
+
         if not xyz_files:
             return "No files with 'combined' in name or motif_*.xyz files found."
             
@@ -4290,8 +4326,7 @@ def collect_out_files_with_tracking(reuse_existing=False, target_cosmic_folder=N
             'xtb_summary' in os.path.basename(f).lower() or
             'gaussian_summary' in os.path.basename(f).lower() or
             'combined_results' in os.path.basename(f).lower() or
-            '_rescue.' in os.path.basename(f) or
-            os.path.splitext(os.path.basename(f))[0].endswith('_rescue') or
+            is_qm_byproduct(f) or
             '.scfhess.' in os.path.basename(f) or
             '.scfgrad.' in os.path.basename(f) or
             '.scfp.' in os.path.basename(f) or
@@ -5066,13 +5101,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             stage_name = stage_display_map.get(stage_type, str(stage_type).capitalize())
             stage_line = f"[{idx}/{total}] {stage_name} ✓"
 
-            # Append redo count to optimization/refinement stage lines when redo occurred
-            if stage_type == 'optimization':
-                _redo_n = getattr(context, 'last_opt_redo_count', 0)
-                if _redo_n and _redo_n > 0:
-                    stage_line = f"[{idx}/{total}] {stage_name} (redo: {_redo_n}) ✓"
-            elif stage_type == 'refinement':
-                _redo_n = getattr(context, 'last_ref_redo_count', 0)
+            # Append redo count to every QM stage line when redo occurred
+            _redo_attr = {
+                'optimization': 'last_opt_redo_count',
+                'refinement': 'last_ref_redo_count',
+                'energy_refinement': 'last_eref_redo_count',
+            }.get(stage_type)
+            if _redo_attr:
+                _redo_n = getattr(context, _redo_attr, 0)
                 if _redo_n and _redo_n > 0:
                     stage_line = f"[{idx}/{total}] {stage_name} (redo: {_redo_n}) ✓"
 
@@ -7575,9 +7611,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 print("⚠ Warning: Could not find clustering_summary.txt")
                             break
 
+                    # Store redo count for terminal summary
                     context.active_redo_stage_num = 0
                     context.active_redo_attempt = 0
                     context.active_redo_max = 0
+                    context.last_eref_redo_count = final_attempt
 
                     # Cache results for energy_refinement and cosmic stages
                     final_critical = None
@@ -12502,10 +12540,11 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
 
         out_dir = os.path.join(cosmic_base, selected_out)
         selected_out_name = selected_out
-        cosmic_input_count = (
-            len(glob.glob(os.path.join(out_dir, "*.out")))
-            + len(glob.glob(os.path.join(out_dir, "*.log")))
-        )
+        cosmic_input_count = len([
+            f for f in glob.glob(os.path.join(out_dir, "*.out"))
+                     + glob.glob(os.path.join(out_dir, "*.log"))
+            if not is_qm_byproduct(f)
+        ])
     
     if not out_folder_found:
         print(f"Warning: No orca_out_*, gaussian_out_*, calc_out_*, xtb_out_*, or opt_out_* folder found in {cosmic_base}/")
