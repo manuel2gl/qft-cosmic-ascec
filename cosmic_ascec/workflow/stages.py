@@ -4970,8 +4970,12 @@ def _record_redo_attempt(cache_file: str, stage_key: str, attempt: int,
     ``redo_max`` here (merged into the in-progress result) lets those views show
     e.g. ``(Redo 1/3)``. The field is naturally dropped when the stage is later
     marked completed (which replaces the result wholesale).
+
+    ``attempt`` 0 (the initial run) is recorded too, so the views can show
+    ``(Redo 0/3)`` — otherwise "no tag" is ambiguous between "not a redo yet"
+    and "redo reporting is broken". Stages without ``--redo=`` write nothing.
     """
-    if not use_cache or not cache_file or not stage_key or attempt <= 0:
+    if not use_cache or not cache_file or not stage_key or attempt < 0 or max_redos <= 0:
         return
     try:
         update_protocol_cache(
@@ -6195,14 +6199,18 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         return "█" * filled + "░" * (width - filled)
 
     def _active_redo_tag(stage_index: int) -> str:
-        """Return " (Redo n/N)" when stage_index is being re-run, else ""."""
+        """Return " (Redo n/N)" for a redo-enabled stage, else "".
+
+        Shown from attempt 0 (the initial run) so an absent tag means "this
+        stage has no --redo=", never "the counter is not working".
+        """
         if getattr(context, 'active_redo_stage_num', 0) != stage_index:
             return ""
-        attempt = getattr(context, 'active_redo_attempt', 0)
-        if not attempt:
-            return ""
         max_redos = getattr(context, 'active_redo_max', 0)
-        return f" (Redo {attempt}/{max_redos})" if max_redos else f" (Redo {attempt})"
+        if not max_redos:
+            return ""
+        attempt = getattr(context, 'active_redo_attempt', 0)
+        return f" (Redo {attempt}/{max_redos})"
 
     def render_workflow_progress(completed_stages: int, current_stage_num: int, sub_progress: str = "") -> None:
         """Render compact workflow progress with in-place updates (always visible)."""
@@ -6334,7 +6342,12 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         nonlocal last_progress_call
         completed = context.completed_stage_count
         current = min(completed + 1, len(stages))
-        call_sig = (completed, current, sub_progress)
+        # Redo state is part of the signature: a redo re-runs the same stage and
+        # replays the same n/N strings, so without it the dedupe would swallow
+        # the repaint that first surfaces "(Redo n/N)".
+        call_sig = (completed, current, sub_progress,
+                    getattr(context, 'active_redo_stage_num', 0),
+                    getattr(context, 'active_redo_attempt', 0))
         if call_sig == last_progress_call:
             return
         last_progress_call = call_sig
@@ -6579,7 +6592,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     initial_skipped_count = None
                     for attempt in range(max_redos + 1):
                         final_attempt = attempt
-                        if attempt > 0:
+                        # Publish the redo counter from attempt 0 so the panel and
+                        # 'ascec status' show "(Redo 0/N)" during the initial run.
+                        if max_redos > 0:
                             context.active_redo_stage_num = stage_num
                             context.active_redo_attempt = attempt
                             context.active_redo_max = max_redos
@@ -6588,6 +6603,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 _upd("")
                             _record_redo_attempt(cache_file, f"optimization_{stage_num}",
                                                  attempt, max_redos, use_cache)
+                        if attempt > 0:
                             if context.workflow_verbose_level >= 1:
                                 print(f"\n{'-' * 60}")
                                 print(f"Redo {attempt}/{max_redos}")
@@ -7096,7 +7112,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     initial_skipped_count = None
                     for attempt in range(max_redos + 1):
                         final_attempt = attempt
-                        if attempt > 0:
+                        # Publish the redo counter from attempt 0 so the panel and
+                        # 'ascec status' show "(Redo 0/N)" during the initial run.
+                        if max_redos > 0:
                             context.active_redo_stage_num = stage_num
                             context.active_redo_attempt = attempt
                             context.active_redo_max = max_redos
@@ -7105,6 +7123,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 _upd("")
                             _record_redo_attempt(cache_file, f"refinement_{stage_num}",
                                                  attempt, max_redos, use_cache)
+                        if attempt > 0:
                             if context.workflow_verbose_level >= 1:
                                 print(f"\n{'-' * 60}")
                                 print(f"Redo {attempt}/{max_redos}")
@@ -7462,7 +7481,9 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     initial_skipped_count = None
                     for attempt in range(max_redos + 1):
                         final_attempt = attempt
-                        if attempt > 0:
+                        # Publish the redo counter from attempt 0 so the panel and
+                        # 'ascec status' show "(Redo 0/N)" during the initial run.
+                        if max_redos > 0:
                             context.active_redo_stage_num = stage_num
                             context.active_redo_attempt = attempt
                             context.active_redo_max = max_redos
@@ -7471,6 +7492,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 _upd("")
                             _record_redo_attempt(cache_file, f"energy_refinement_{stage_num}",
                                                  attempt, max_redos, use_cache)
+                        if attempt > 0:
                             if context.workflow_verbose_level >= 1:
                                 print(f"\n{'-' * 60}")
                                 print(f"Redo {attempt}/{max_redos}")
@@ -15530,12 +15552,12 @@ def show_ascec_status() -> None:
                 # runs; the progress file always does, so fall back to it.
                 _redo_n = result.get('current_redo')
                 _redo_max = result.get('redo_max')
-                if not _redo_n and int(_data.get('redo_stage_num', 0) or 0) == stage_num:
+                if not _redo_max and int(_data.get('redo_stage_num', 0) or 0) == stage_num:
                     _redo_n = _data.get('current_redo')
                     _redo_max = _data.get('redo_max')
-                _redo_tag = ""
-                if _redo_n:
-                    _redo_tag = f" (Redo {_redo_n}/{_redo_max})" if _redo_max else f" (Redo {_redo_n})"
+                # redo_max drives the tag, not redo_n: attempt 0 must still render
+                # "(Redo 0/N)". A stage without --redo= has no redo_max and no tag.
+                _redo_tag = f" (Redo {int(_redo_n or 0)}/{_redo_max})" if _redo_max else ""
                 replacement = f"[{stage_num}/{stages_total}] {stage_name} {done_i}/{total_i} ...{_redo_tag}"
 
                 prefix = f"[{stage_num}/{stages_total}] "
@@ -15570,7 +15592,18 @@ def show_ascec_status() -> None:
             print(line)
         print("")
         if upd:
-            print(f"Attached: job {jid} ({os.path.basename(job['input_file'])})   updated: {upd}")
+            # The panel is only rewritten when a calculation finishes, so on a
+            # long QM job 'updated' can legitimately be hours old. Show the age
+            # so a stalled-looking screen is not mistaken for a stalled run.
+            _age = ""
+            try:
+                _delta = time.time() - time.mktime(time.strptime(upd, '%Y-%m-%d %H:%M:%S'))
+                if _delta >= 60:
+                    _h, _m = int(_delta // 3600), int((_delta % 3600) // 60)
+                    _age = f" ({_h}h {_m}m ago)" if _h else f" ({_m}m ago)"
+            except Exception:
+                pass
+            print(f"Attached: job {jid} ({os.path.basename(job['input_file'])})   updated: {upd}{_age}")
         else:
             print(f"Attached: job {jid} ({os.path.basename(job['input_file'])})")
         print("Ctrl+C or Ctrl+D to detach (job keeps running)")
