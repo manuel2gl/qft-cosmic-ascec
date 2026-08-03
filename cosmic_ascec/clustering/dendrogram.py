@@ -80,11 +80,18 @@ def plot_annotated_dendrogram(
     n_eff: Optional[float] = None,
     knee_threshold: Optional[float] = None,
     knee_k: Optional[int] = None,
+    ylabel: str = "UPGMA linkage distance",
+    standard_threshold: Optional[float] = 2.0,
 ) -> None:
     """
     Save two plot files:
       1. Dendrogram with horizontal cut line -> filename (e.g., dendrogram.png)
       2. Mojena diagnostic -> threshold_diagnostic.png in the same directory
+
+    *ylabel* names the merge-height axis (``--rmsd-only`` cuts the tree in Å,
+    not in scaled-feature units) and *standard_threshold* is the reference cut
+    quoted in the diagnostic legend — pass ``None`` to drop it, since the
+    empirical τ=2.0 is meaningless for a distance that is not a feature vector.
 
     Verbatim port of cosmic-v01's ``plot_annotated_dendrogram`` (4543-4723).
     """
@@ -119,7 +126,7 @@ def plot_annotated_dendrogram(
     ax1.axhline(y=cut_height, color='#e74c3c', linestyle='--', linewidth=1.5)
     ax1.set_title(f"Hierarchical Clustering Dendrogram ({title_suffix})", fontsize=16)
     ax1.set_xlabel("Configuration", fontsize=18)
-    ax1.set_ylabel("UPGMA linkage distance", fontsize=18)
+    ax1.set_ylabel(ylabel, fontsize=18)
     ax1.tick_params(axis='y', labelsize=16)
     ax1.yaxis.set_major_formatter(_mticker.FormatStrFormatter('%.1f'))
     ax1.set_ylim(bottom=0)
@@ -174,15 +181,16 @@ def plot_annotated_dendrogram(
     #     non-capped case where the applied cut *is* the knee). It is kept, with
     #     its raw uncapped value, precisely when detection was capped to τ=2.0 —
     #     so the empirical line is replaced by the actual knee it was capped from.
-    STANDARD_T = 2.0
-    show_standard = round(cut_height, 2) != round(STANDARD_T, 2)
+    STANDARD_T = standard_threshold if standard_threshold is not None else 2.0
+    show_standard = (standard_threshold is not None
+                     and round(cut_height, 2) != round(STANDARD_T, 2))
     show_knee = (knee_threshold is not None
                  and round(float(knee_threshold), 2) != round(cut_height, 2))
 
     if show_standard:
         n_standard = int(np.sum(heights_sorted > STANDARD_T)) + 1
         ax2.plot([], [], ' ',
-                 label=rf'Standard $\tau$=2.00 ($n_c$={n_standard})')
+                 label=rf'Standard $\tau$={STANDARD_T:.2f} ($n_c$={n_standard})')
 
     if show_knee:
         _knee_k = knee_k if knee_k is not None else int(np.sum(heights_sorted > knee_threshold)) + 1
@@ -195,7 +203,7 @@ def plot_annotated_dendrogram(
                  label=rf'Mojena $\tau$={mojena_threshold:.2f} ($n_c$={_moj_k})')
 
     ax2.set_xlabel("Merge Step (sorted)", fontsize=15)
-    ax2.set_ylabel("UPGMA linkage distance", fontsize=15)
+    ax2.set_ylabel(ylabel, fontsize=15)
     ax2.set_title("Threshold Diagnostic (Merge Height Distribution)", fontsize=16)
     ax2.tick_params(labelsize=13)
     ax2.yaxis.set_major_formatter(_mticker.FormatStrFormatter('%.1f'))

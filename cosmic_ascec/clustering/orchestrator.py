@@ -70,6 +70,7 @@ from cosmic_ascec.clustering.motifs import (
 )
 from cosmic_ascec.clustering.rmsd import (
     calculate_rmsd,
+    cluster_by_rmsd,
     perform_second_rmsd_clustering,
     post_process_clusters_with_rmsd,
 )
@@ -155,7 +156,7 @@ def get_cpu_count_fast():
 
 
 # Modified to accept rmsd_threshold and output_base_dir
-def perform_clustering_and_analysis(input_source, threshold="auto", file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None, partialweights=False):
+def perform_clustering_and_analysis(input_source, threshold="auto", file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None, partialweights=False, rmsd_only=False, rmsd_heavy=False):
     """
     Performs hierarchical clustering and comprehensive analysis on molecular structures.
     This is the main analysis function that orchestrates the entire clustering workflow.
@@ -232,6 +233,16 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
     if abs_tolerances is None:
         abs_tolerances = {} # Ensure abs_tolerances is a dict if not provided
+
+    # --rmsd-only: skip the physicochemical feature vector entirely and build the
+    # partition from heavy-atom RMSD alone (cut in Å). Comparison mode always
+    # forces a single output cluster, so the geometry-only partition is moot
+    # there — it still reports the RMSD context in the .dat file.
+    if rmsd_only:
+        if is_compare_mode:
+            rmsd_only = False
+        elif rmsd_threshold is None:
+            rmsd_threshold = 1.0
 
     # Ensure output_base_dir is set, default to current working directory if None
     if output_base_dir is None:
@@ -646,8 +657,15 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
     summary_file_content_lines.append("<COSMIC_THRESHOLD_PLACEHOLDER>")
 
-    if rmsd_threshold is not None:
+    if rmsd_only:
+        summary_file_content_lines.append("Clustering mode: RMSD only (geometry, no feature vector)")
+        summary_file_content_lines.append(f"RMSD clustering threshold: {rmsd_threshold:.3f} Å")
+        summary_file_content_lines.append(
+            f"RMSD atom set: {'heavy atoms only (--rmsd-heavy)' if rmsd_heavy else 'all atoms, hydrogens included'}")
+    elif rmsd_threshold is not None:
         summary_file_content_lines.append(f"RMSD validation threshold: {rmsd_threshold:.3f} Å")
+        summary_file_content_lines.append(
+            f"RMSD atom set: {'heavy atoms only (--rmsd-heavy)' if rmsd_heavy else 'all atoms, hydrogens included'}")
 
     total_files_attempted = len(clean_data_for_clustering) + len(skipped_files)
     if total_files_attempted > 0:
@@ -660,15 +678,17 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     summary_file_content_lines.append(f"Total files skipped: <TOTAL_SKIPPED_PLACEHOLDER>")
     summary_file_content_lines.append(f"Critical skipped files: <IMAG_NEED_RECALC_PLACEHOLDER>")
     summary_file_content_lines.append(f"Total number of final clusters: <TOTAL_CLUSTERS_PLACEHOLDER>")
-    if rmsd_threshold is not None:
+    if rmsd_threshold is not None and not rmsd_only:
         summary_file_content_lines.append(f"Total RMSD moved configurations: <TOTAL_RMSD_OUTLIERS_PLACEHOLDER>")
     summary_file_content_lines.append("")
     # Report the active weight profile and any non-default weights
-    if partialweights:
+    if rmsd_only:
+        summary_file_content_lines.append("Weight profile: not applicable (RMSD-only clustering)")
+    elif partialweights:
         summary_file_content_lines.append("Weight profile: semiempirical (--partialweights)")
     else:
         summary_file_content_lines.append("Weight profile: uniform (1.0)")
-    if weights:
+    if weights and not rmsd_only:
         non_default = {k: v for k, v in weights.items() if v != 1.0}
         if non_default:
             summary_file_content_lines.append(f"Feature weights (non-default): {non_default}")
@@ -746,7 +766,31 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     # Reported separately for visibility — they are neither skipped nor critical.
     all_reduced_matched = []
 
+    # --rmsd-only: the geometry-only partition is built once here and reused by
+    # the output loop below (the pairwise Kabsch matrix is O(n²) — no reason to
+    # pay for it twice), keyed by H-bond group.
+    rmsd_only_partitions = {}
+
     for hbond_count, group_data in sorted(hbond_groups.items()):
+        if rmsd_only:
+            print_step(f"RMSD-only clustering of {len(group_data)} configurations "
+                       f"at {rmsd_threshold:.3f} Å...")
+            _rmsd_clusters, _rmsd_linkage, _rmsd_linkage_members = cluster_by_rmsd(
+                group_data, rmsd_threshold, mode, heavy_only=rmsd_heavy)
+            rmsd_only_partitions[hbond_count] = (_rmsd_clusters, _rmsd_linkage,
+                                                 _rmsd_linkage_members)
+            _rmsd_off_tree = len(group_data) - len(_rmsd_linkage_members)
+            if _rmsd_off_tree > 0:
+                print(f"  {_rmsd_off_tree} structure(s) not RMSD-comparable with the main "
+                      f"block (different heavy-atom count or no geometry); clustered "
+                      f"separately and left off the dendrogram.")
+            for _rmsd_cluster in _rmsd_clusters:
+                for member_conf in _rmsd_cluster:
+                    member_conf['_parent_global_cluster_id'] = pseudo_global_cluster_id_counter
+                all_initial_property_clusters.append(_rmsd_cluster)
+                pseudo_global_cluster_id_counter += 1
+            continue
+
         if len(group_data) < 2 or not group_has_any_clustering_feature_data(group_data):
             for single_mol_data in group_data:
                 single_mol_data['_initial_cluster_label'] = hbond_count
@@ -940,7 +984,42 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
         current_hbond_group_clusters_for_final_output = []
 
-        if len(group_data) < 2 or not group_has_any_clustering_feature_data(group_data):
+        if rmsd_only:
+            # Geometry-only mode: reuse the partition already built above. No
+            # feature vector, no auto-threshold, no first/second RMSD pass —
+            # the RMSD cut IS the clustering.
+            _rmsd_clusters, _rmsd_linkage, _rmsd_linkage_members = rmsd_only_partitions[hbond_count]
+            current_hbond_group_clusters_for_final_output.extend(_rmsd_clusters)
+
+            if _rmsd_linkage is not None:
+                import re
+                _rmsd_basenames = [os.path.splitext(m['filename'])[0] for m in _rmsd_linkage_members]
+                _rmsd_conf_labels = []
+                for _fn in _rmsd_basenames:
+                    _m = re.search(r'(\d+)', _fn)
+                    _rmsd_conf_labels.append(_m.group(1) if _m else _fn)
+                # conf_### names shorten to their index; anything else (t2_10,
+                # t2_11, ...) collapses to the same digits, so keep full names.
+                if len(set(_rmsd_conf_labels)) < len(_rmsd_conf_labels):
+                    _rmsd_conf_labels = _rmsd_basenames
+
+                _hb_tag = f" (H-bonds={hbond_count})" if group_hb else ""
+                if group_hb:
+                    _rmsd_dendro_file = os.path.join(dendrogram_images_folder,
+                                                     f"dendrogram_H{hbond_count}.png")
+                else:
+                    _rmsd_dendro_file = os.path.join(dendrogram_images_folder, "dendrogram.png")
+
+                plot_annotated_dendrogram(
+                    _rmsd_linkage, len(_rmsd_clusters), rmsd_threshold,
+                    _rmsd_dendro_file,
+                    title_suffix=f"RMSD only{_hb_tag}",
+                    conf_labels=_rmsd_conf_labels,
+                    ylabel=("Heavy-atom RMSD (Å)" if rmsd_heavy else "RMSD (Å, all atoms)"),
+                    standard_threshold=None)
+                vprint(f"Dendrogram saved as '{os.path.basename(_rmsd_dendro_file)}'")
+
+        elif len(group_data) < 2 or not group_has_any_clustering_feature_data(group_data):
             vprint(f"\nSkipping detailed clustering: Less than 2 configurations or no valid numerical features left after filtering. Treating each as a single-configuration cluster.")
 
             for single_mol_data in group_data:
@@ -1117,7 +1196,8 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                          member_conf.get('final_geometry_atomnos') is not None:
                         rmsd_val = calculate_rmsd(
                             prop_rep_conf['final_geometry_atomnos'], prop_rep_conf['final_geometry_coords'],
-                            member_conf['final_geometry_atomnos'], member_conf['final_geometry_coords']
+                            member_conf['final_geometry_atomnos'], member_conf['final_geometry_coords'],
+                            heavy_only=rmsd_heavy
                         )
                     else:
                         rmsd_val = None
@@ -1163,7 +1243,8 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                     print(f"  Performing first RMSD validation...")
 
                     validated_main_clusters, individual_outliers_from_first_pass = \
-                        post_process_clusters_with_rmsd(initial_clusters_list_sorted_by_energy, rmsd_threshold, mode)
+                        post_process_clusters_with_rmsd(initial_clusters_list_sorted_by_energy, rmsd_threshold, mode,
+                                                        heavy_only=rmsd_heavy)
 
                     current_hbond_group_clusters_for_final_output.extend(validated_main_clusters)
                     total_rmsd_outliers_first_pass += len(individual_outliers_from_first_pass)
@@ -1180,10 +1261,12 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                         for parent_global_id_for_outlier_group, outlier_group in outliers_grouped_by_parent_global_cluster.items():
                             if len(outlier_group) > 1:
                                 print(f"      Re-clustering {len(outlier_group)} outliers from original Cluster {parent_global_id_for_outlier_group}...")
-                                second_level_clusters = perform_second_rmsd_clustering(outlier_group, rmsd_threshold, mode)
+                                second_level_clusters = perform_second_rmsd_clustering(outlier_group, rmsd_threshold, mode,
+                                                                                       heavy_only=rmsd_heavy)
                                 current_hbond_group_clusters_for_final_output.extend(second_level_clusters)
                             else:
-                                single_member_processed = perform_second_rmsd_clustering(outlier_group, rmsd_threshold, mode)
+                                single_member_processed = perform_second_rmsd_clustering(outlier_group, rmsd_threshold, mode,
+                                                                                          heavy_only=rmsd_heavy)
                                 current_hbond_group_clusters_for_final_output.extend(single_member_processed)
                 else:
                     for cluster in initial_clusters_list_sorted_by_energy:
@@ -1295,7 +1378,8 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                 cluster_name_prefix = f"cluster_{current_global_cluster_id}_{num_configurations_in_cluster}"
 
             write_cluster_dat_file(cluster_name_prefix, members_data, output_base_dir, rmsd_threshold,
-                                   hbond_count_for_original_cluster=hbond_count if group_hb else None, weights=weights, tolerances=abs_tolerances)
+                                   hbond_count_for_original_cluster=hbond_count if group_hb else None, weights=weights, tolerances=abs_tolerances,
+                                   rmsd_only=rmsd_only, rmsd_heavy=rmsd_heavy)
             vprint(f"Wrote combined data for Cluster '{cluster_name_prefix}' to '{cluster_name_prefix}.dat'")
 
             cluster_xyz_subfolder = os.path.join(extracted_clusters_folder, cluster_name_prefix)
@@ -1388,7 +1472,13 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
     _method_label = {"knee": "knee detection",
                      "knee-capped": "knee detection, capped to empirical 2.0"}
-    if is_compare_mode or not resolved_threshold_entries:
+    if rmsd_only:
+        # No feature-space tau exists in geometry-only mode; the cut is the RMSD
+        # itself. Deliberately not emitting the machine-readable 'details:' line
+        # so a later --th=opt stage never picks an Å value up as a feature tau.
+        _cosmic_threshold_text = (f"COSMIC threshold: RMSD = {rmsd_threshold:.3f} Å "
+                                  f"(geometry-only clustering, --rmsd-only)")
+    elif is_compare_mode or not resolved_threshold_entries:
         _cosmic_threshold_text = "COSMIC threshold: N/A"
     elif len(resolved_threshold_entries) == 1:
         _e = resolved_threshold_entries[0]
@@ -1421,7 +1511,7 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
         _cosmic_threshold_text = "\n".join(_lines)
 
     # For a manually specified numeric threshold there is no auto-detection method
-    if not is_compare_mode and not resolved_threshold_entries and isinstance(threshold, (int, float)):
+    if not is_compare_mode and not rmsd_only and not resolved_threshold_entries and isinstance(threshold, (int, float)):
         _cosmic_threshold_text = f"COSMIC threshold: tau = {threshold}"
 
     for i, line in enumerate(summary_file_content_lines):

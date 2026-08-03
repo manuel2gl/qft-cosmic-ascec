@@ -6798,6 +6798,15 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             elif arg.startswith('--rmsd='):
                                 rmsd_val = float(arg.split('=')[1])
                                 cosmic_result['rmsd_threshold'] = rmsd_val
+                            elif arg.startswith('--rmsd-only') or arg.startswith('--only-rmsd'):
+                                # `--rmsd-only[=FLOAT]`: RMSD *is* the clustering.
+                                cosmic_result['rmsd_only'] = True
+                                if '=' in arg:
+                                    cosmic_result['rmsd_threshold'] = float(arg.split('=', 1)[1])
+                                else:
+                                    cosmic_result['rmsd_threshold'] = 1.0
+                            elif arg == '--rmsd-heavy':
+                                cosmic_result['rmsd_heavy'] = True
 
                         # Add cosmic folder and motifs info if available
                         if hasattr(context, 'cosmic_folder'):
@@ -7027,7 +7036,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 cosmic_result['threshold'] = float(raw_val)
                             except ValueError:
                                 cosmic_result['threshold'] = raw_val
-                            break
+                        elif arg.startswith('--rmsd='):
+                            cosmic_result['rmsd_threshold'] = float(arg.split('=', 1)[1])
+                        elif arg.startswith('--rmsd-only') or arg.startswith('--only-rmsd'):
+                            cosmic_result['rmsd_only'] = True
+                            cosmic_result['rmsd_threshold'] = (
+                                float(arg.split('=', 1)[1]) if '=' in arg else 1.0)
+                        elif arg == '--rmsd-heavy':
+                            cosmic_result['rmsd_heavy'] = True
 
                     # Flag opt-only mode so protocol summary suppresses critical/skipped display
                     if getattr(context, 'cosmic_opt_only', False):
@@ -7313,6 +7329,15 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             elif arg.startswith('--rmsd='):
                                 rmsd_val = float(arg.split('=')[1])
                                 cosmic_result['rmsd_threshold'] = rmsd_val
+                            elif arg.startswith('--rmsd-only') or arg.startswith('--only-rmsd'):
+                                # `--rmsd-only[=FLOAT]`: RMSD *is* the clustering.
+                                cosmic_result['rmsd_only'] = True
+                                if '=' in arg:
+                                    cosmic_result['rmsd_threshold'] = float(arg.split('=', 1)[1])
+                                else:
+                                    cosmic_result['rmsd_threshold'] = 1.0
+                            elif arg == '--rmsd-heavy':
+                                cosmic_result['rmsd_heavy'] = True
                         
                         # Add cosmic folder and motifs info if available
                         if hasattr(context, 'cosmic_folder'):
@@ -7710,6 +7735,12 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                     cosmic_result['threshold'] = raw_val
                             elif arg.startswith('--rmsd='):
                                 cosmic_result['rmsd_threshold'] = float(arg.split('=')[1])
+                            elif arg.startswith('--rmsd-only') or arg.startswith('--only-rmsd'):
+                                cosmic_result['rmsd_only'] = True
+                                cosmic_result['rmsd_threshold'] = (
+                                    float(arg.split('=', 1)[1]) if '=' in arg else 1.0)
+                            elif arg == '--rmsd-heavy':
+                                cosmic_result['rmsd_heavy'] = True
 
                         if hasattr(context, 'cosmic_folder'):
                             cosmic_result['cosmic_folder'] = context.cosmic_folder
@@ -10546,7 +10577,10 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                         if 'threshold' in result:
                             f.write(f"    Threshold:        {result['threshold']}\n")
                         if 'rmsd_threshold' in result:
-                            f.write(f"    RMSD:             {result['rmsd_threshold']}\n")
+                            _rmsd_note = " A (clustering metric)" if result.get('rmsd_only') else " A (validation)"
+                            if result.get('rmsd_heavy'):
+                                _rmsd_note += ", heavy atoms only"
+                            f.write(f"    RMSD:             {result['rmsd_threshold']}{_rmsd_note}\n")
                         else:
                             f.write(f"    RMSD:             N/A\n")
                         f.write("\n")

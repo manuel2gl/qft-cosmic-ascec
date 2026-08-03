@@ -46,6 +46,8 @@ def write_cluster_dat_file(
     hbond_count_for_original_cluster: Optional[int] = None,
     weights: Optional[Mapping[str, float]] = None,
     tolerances: Optional[Mapping[str, float]] = None,
+    rmsd_only: bool = False,
+    rmsd_heavy: bool = False,
 ) -> None:
     """
     Writes combined .dat file for cluster members, including comparison and
@@ -88,8 +90,12 @@ def write_cluster_dat_file(
 
         if rmsd_threshold_value is not None and cluster_members_data and '_first_rmsd_context_listing' in cluster_members_data[0] and cluster_members_data[0]['_first_rmsd_context_listing'] is not None:
             initial_rmsd_context = cluster_members_data[0]['_first_rmsd_context_listing']
-            f.write("Initial Clustering RMSD Context (Before Refinement):\n")
-            f.write("Configurations from the original property cluster:\n")
+            if rmsd_only:
+                f.write(f"RMSD Clustering Context (cut at {rmsd_threshold_value:.3f} Å):\n")
+                f.write("Configurations in this RMSD cluster:\n")
+            else:
+                f.write("Initial Clustering RMSD Context (Before Refinement):\n")
+                f.write("Configurations from the original property cluster:\n")
             for item in initial_rmsd_context:
                 rmsd_val_str = f"({item['rmsd_to_rep']:.3f} Å)" if item['rmsd_to_rep'] is not None else "(N/A)"
                 f.write(f"    - {item['filename']} {rmsd_val_str}\n")
@@ -99,7 +105,10 @@ def write_cluster_dat_file(
             parent_global_cluster_id_for_display = cluster_members_data[0].get('_parent_global_cluster_id', 'N/A')
 
             hbond_context = f" (H-bonds {hbond_count_for_original_cluster})" if hbond_count_for_original_cluster is not None else ""
-            f.write(f"RMSD values relative to lowest energy representative of initial property group")
+            if rmsd_only:
+                f.write("RMSD values relative to lowest energy representative of this RMSD cluster")
+            else:
+                f.write(f"RMSD values relative to lowest energy representative of initial property group")
             f.write("\n\n")
             rmsd_context_printed = True
 
@@ -397,7 +406,7 @@ def write_cluster_dat_file(
 
         # RMSD comparison section (for clusters with multiple configurations)
         if num_configurations > 1:
-            f.write("RMSD Analysis (Heavy Atoms):\n")
+            f.write(f"RMSD Analysis ({'Heavy Atoms' if rmsd_heavy else 'All Atoms'}):\n")
             f.write("Pairwise RMSD values between configurations (Å):\n")
 
             # Check if all configurations have geometry data
@@ -423,7 +432,8 @@ def write_cluster_dat_file(
                                 mol_i['final_geometry_atomnos'],
                                 mol_i['final_geometry_coords'],
                                 mol_j['final_geometry_atomnos'],
-                                mol_j['final_geometry_coords']
+                                mol_j['final_geometry_coords'],
+                                heavy_only=rmsd_heavy
                             )
                             row.append(rmsd_val if rmsd_val is not None else float('nan'))
                         else:

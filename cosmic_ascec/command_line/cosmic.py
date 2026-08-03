@@ -9,6 +9,8 @@ Flag surface (full list in ``cosmic --help``):
 * ``--threshold/--th`` — cut height for the UPGMA tree; default is automatic
   (knee detection on the sorted merge-height curve).
 * ``--rmsd`` — enable geometric RMSD post-processing.
+* ``--rmsd-only`` — cluster on Cartesian RMSD alone (no feature vector).
+* ``--rmsd-heavy`` — exclude hydrogens from RMSD (default is all-atom).
 * ``--cores/-j N`` — parallel workers for feature extraction.
 * ``--reprocess-files/-r`` — invalidate any existing cache and re-parse.
 * ``--weights`` / ``--partialweights`` — per-feature weights.
@@ -46,14 +48,33 @@ from cosmic_ascec.clustering.orchestrator import (
 from cosmic_ascec.clustering.thresholds import resolve_opt_params_from_sibling_cosmic
 
 
+# Optional-value flags: `--rmsd`/`--rmsd-only` take a float, or none at all
+# (in which case this default applies). Kept here so the preprocessor and the
+# argparse `const=` stay in sync.
+_OPTIONAL_FLOAT_FLAGS = ('--rmsd', '--rmsd-only', '--only-rmsd')
+_OPTIONAL_FLOAT_DEFAULT = 1.0
+
+
+def _is_number(token):
+    try:
+        float(token)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
 def preprocess_j_argument(argv):
     """
     Preprocesses command line arguments:
     - Handle -j8 format (no space) by converting it to -j 8.
     - Extract boolean flags (--verbose, etc.) that appear after --compare
       so they are not consumed as file arguments by nargs='+'.
+    - Pin the default on a bare `--rmsd` / `--rmsd-only` that is followed by
+      the FOLDER positional, so `cosmic --rmsd-only mydir` does not fail with
+      "invalid float value: 'mydir'".
 
-    Verbatim port of cosmic-v01's ``preprocess_j_argument`` (lines 4282-4308).
+    Verbatim port of cosmic-v01's ``preprocess_j_argument`` (lines 4282-4308),
+    plus the optional-value pinning above.
     """
     # First pass: extract standalone boolean flags that could be trapped by --compare nargs='+'
     _bool_flags = {'-v', '--verbose', '-r', '--reprocess-files', '-V', '--version'}
@@ -67,9 +88,16 @@ def preprocess_j_argument(argv):
 
     # Second pass: handle -j8 → -j 8
     processed_argv = []
-    for arg in remaining:
+    for i, arg in enumerate(remaining):
         if arg.startswith('-j') and len(arg) > 2 and arg[2:].isdigit():
             processed_argv.extend(['-j', arg[2:]])
+        elif arg in _OPTIONAL_FLOAT_FLAGS:
+            nxt = remaining[i + 1] if i + 1 < len(remaining) else None
+            takes_next = nxt is not None and not nxt.startswith('-') and _is_number(nxt)
+            if takes_next:
+                processed_argv.append(arg)
+            else:
+                processed_argv.append(f"{arg}={_OPTIONAL_FLOAT_DEFAULT}")
         else:
             processed_argv.append(arg)
 
@@ -110,6 +138,10 @@ KEY OPTIONS:
                         so the partition stays consistent. A float overrides
                         (2.0 = legacy 2-sigma; <1 tight; 3-4 loose).
   --rmsd[=FLOAT]        Geometric validation in Å (default 1.0 if bare).
+  --rmsd-only[=FLOAT]   Cluster on Cartesian RMSD alone (default 1.0 Å): no
+                        feature vector, the tree is cut directly in Å.
+  --rmsd-heavy          Exclude hydrogens from RMSD. Default is all-atom RMSD,
+                        as used by CREST and ORCA GOAT (both 0.125 Å default).
   -j, --cores INT       CPU cores (default: auto-detect).
   --partialweights      Tuned weights for semiempirical/xTB (down-weights noisy
                         orbital/dipole/H-bond features). Added by the web GUI for
@@ -130,6 +162,8 @@ MAIN OUTPUTS:
 EXAMPLES:
   cosmic -j4                       Auto threshold, 4 cores (typical run)
   cosmic --rmsd=1 -j4              Add 1.0 Å geometric split
+  cosmic --rmsd-only -j4           Cluster on RMSD alone (1.0 Å cut)
+  cosmic --rmsd-only=0.125 -j4     RMSD-only at the CREST / GOAT default cut
   cosmic --th=opt -j4              Refinement stage: reuse the post-opt τ
   cosmic --th=2.0                  Force the legacy 2-sigma cut
   cosmic --partialweights -j4      Preliminary xTB / semiempirical screening
@@ -169,6 +203,15 @@ CITATION:
     # Geometric validation
     parser.add_argument("--rmsd", type=float, nargs='?', const=1.0, default=None, metavar="FLOAT",
                         help="RMSD geometric validation in Ångström (default: 1.0)")
+    parser.add_argument("--rmsd-only", "--only-rmsd", type=float, nargs='?', const=1.0,
+                        default=None, metavar="FLOAT", dest="rmsd_only",
+                        help="cluster on Cartesian RMSD alone in Ångström (default: 1.0): "
+                             "skips the physicochemical feature vector entirely, so the "
+                             "dendrogram is cut directly in Å. Ignores --threshold, --weights, "
+                             "--partialweights.")
+    parser.add_argument("--rmsd-heavy", action="store_true", dest="rmsd_heavy",
+                        help="measure RMSD over heavy atoms only (exclude hydrogens). "
+                             "Default is all-atom RMSD, matching CREST (--rmsd) and ORCA GOAT.")
 
     # Processing control
     parser.add_argument("--cores", "-j", type=int, default=None, metavar="INT",
@@ -256,6 +299,16 @@ CITATION:
 
     clustering_threshold = args.threshold
 
+    # --rmsd-only replaces the property-based clustering with a pure geometry
+    # partition; its value is the RMSD cut, so it also supplies the RMSD
+    # threshold when --rmsd was not given separately. Resolved before --th=opt
+    # so no sibling summary is parsed for a threshold that is never used.
+    rmsd_only_mode = args.rmsd_only is not None
+    if rmsd_only_mode:
+        if clustering_threshold != "auto":
+            print("WARNING: --rmsd-only ignores --threshold (the cut is the RMSD value in Å).")
+        clustering_threshold = "auto"
+
     # Resolve --th=opt by parsing the sibling post-opt cosmic's
     # clustering_summary.txt for the raw resolved τ_opt and reusing it directly,
     # so a post-refinement cosmic keeps the same partition the preliminary found.
@@ -276,6 +329,12 @@ CITATION:
                   f"d_med_opt={_fmt(_opt_params['d_med'])}, source={_opt_params['source']}")
             clustering_threshold = float(_opt_params["tau"])
     rmsd_validation_threshold = args.rmsd
+    if rmsd_only_mode:
+        rmsd_validation_threshold = args.rmsd_only
+        _atom_set = "heavy atoms only" if args.rmsd_heavy else "all atoms"
+        print(f"RMSD-only mode: clustering on Cartesian RMSD ({_atom_set}) at "
+              f"{rmsd_validation_threshold:.3f} Å (feature vector not used).")
+
     output_directory = args.output_dir
     force_reprocess_cache = args.reprocess_files
     user_weights_dict = parse_weights_argument(args.weights)
@@ -358,6 +417,8 @@ CITATION:
             temperature_k=temperature_k,
             group_hb=args.group_hb,
             partialweights=args.partialweights,
+            rmsd_only=rmsd_only_mode,
+            rmsd_heavy=args.rmsd_heavy,
         )
         print(f"\n--- Finished comparing {len(compare_files)} files: {', '.join(file_names)} ---\n")
 
@@ -473,7 +534,7 @@ CITATION:
                 display_name = "./"
             print(f"\nProcessing folder: {display_name}\n")
 
-            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir, partialweights=args.partialweights)
+            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir, partialweights=args.partialweights, rmsd_only=rmsd_only_mode, rmsd_heavy=args.rmsd_heavy)
 
             print(f"\nFinished processing folder: {display_name}\n")
 

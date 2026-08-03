@@ -3,17 +3,23 @@
 Two structures can have nearly identical physicochemical feature vectors yet
 be genuinely different geometric arrangements (stereoisomers, mirror images,
 loosely-coupled conformers). The optional RMSD pass catches that: within each
-property cluster, heavy-atom RMSD is measured between every member and the
+property cluster, Cartesian RMSD is measured between every member and the
 lowest-energy representative; members beyond the threshold are split out and
 re-clustered on a pure RMSD distance matrix.
 
+RMSD is all-atom (hydrogens included) to match CREST and ORCA GOAT, the codes
+COSMIC is benchmarked against; ``heavy_only=True`` (CLI ``--rmsd-heavy``)
+restores the heavy-atom-only measure cosmic-v01 always used.
+
 Public functions:
 
-* :func:`calculate_rmsd` — heavy-atom RMSD via Kabsch alignment.
+* :func:`calculate_rmsd` — Cartesian RMSD via Kabsch alignment.
 * :func:`post_process_clusters_with_rmsd` — first pass: detect outliers
   inside each property cluster.
 * :func:`perform_second_rmsd_clustering` — re-cluster the outliers from the
   first pass into their own groups.
+* :func:`cluster_by_rmsd` — standalone geometry-only partition used by
+  ``cosmic --rmsd-only`` (no feature vector involved at all).
 
 The clustering record dicts are mutated in place; energy selection is
 threaded explicitly via an
@@ -38,32 +44,40 @@ def calculate_rmsd(
     coords1: np.ndarray,
     atomnos2: Sequence[int],
     coords2: np.ndarray,
+    heavy_only: bool = False,
 ) -> Any:
-    """Heavy-atom RMSD between two structures via Kabsch alignment.
+    """Cartesian RMSD between two structures via Kabsch alignment.
 
-    Hydrogen atoms (Z = 1) are excluded. Returns the minimised RMSD, or
-    ``None`` when the heavy-atom counts differ or alignment fails.
+    All atoms are used by default, hydrogens included — this is the convention
+    of the codes COSMIC is benchmarked against: CREST's ``--rmsd`` is all-atom
+    (heavy-atom is the separate ``--rmsdheavy``) and ORCA's GOAT filters on the
+    RMSD of atomic positions, both at a 0.125 Å default threshold. Pass
+    *heavy_only* to drop hydrogens (Z = 1) instead.
 
-    Verbatim port of cosmic-v01's ``calculate_rmsd`` (lines 1961-2026).
+    Returns the minimised RMSD, or ``None`` when the compared atom counts
+    differ or alignment fails.
+
+    Ported from cosmic-v01's ``calculate_rmsd`` (lines 1961-2026); that version
+    was heavy-atom-only with no choice.
     """
     from scipy.spatial.transform import Rotation as R  # Import only when needed
 
-    # Filter out hydrogen atoms (atomic number 1)
-    heavy_indices1 = [i for i, z in enumerate(atomnos1) if z != 1]
-    heavy_coords1 = coords1[heavy_indices1]
+    if heavy_only:
+        indices1 = [i for i, z in enumerate(atomnos1) if z != 1]
+        indices2 = [i for i, z in enumerate(atomnos2) if z != 1]
+    else:
+        indices1 = list(range(len(atomnos1)))
+        indices2 = list(range(len(atomnos2)))
 
-    heavy_indices2 = [i for i, z in enumerate(atomnos2) if z != 1]
-    heavy_coords2 = coords2[heavy_indices2]
-
-    if len(heavy_indices1) == 0 or len(heavy_indices2) == 0:
+    if len(indices1) == 0 or len(indices2) == 0:
         return None
 
-    if len(heavy_indices1) != len(heavy_indices2):
+    if len(indices1) != len(indices2):
         return None
 
     # Ensure coordinates are numpy arrays and float64
-    coords1_filtered = np.asarray(heavy_coords1, dtype=np.float64)
-    coords2_filtered = np.asarray(heavy_coords2, dtype=np.float64)
+    coords1_filtered = np.asarray(coords1[indices1], dtype=np.float64)
+    coords2_filtered = np.asarray(coords2[indices2], dtype=np.float64)
 
     if coords1_filtered.shape[0] == 0 or coords2_filtered.shape[0] == 0:
         return None
@@ -84,7 +98,7 @@ def calculate_rmsd(
         return rmsd_value
 
     except Exception as e:
-        print(f"  ERROR during heavy atom RMSD calculation: {e}")
+        print(f"  ERROR during RMSD calculation: {e}")
         return None
 
 
@@ -92,6 +106,7 @@ def post_process_clusters_with_rmsd(
     initial_clusters: Sequence[Cluster],
     rmsd_validation_threshold: float,
     mode: EnergyMode,
+    heavy_only: bool = False,
 ) -> Tuple[List[Cluster], List[Record]]:
     """First RMSD pass — validate each property cluster against its representative.
 
@@ -162,7 +177,8 @@ def post_process_clusters_with_rmsd(
 
             rmsd_val = calculate_rmsd(
                 atomnos_rep, coords_rep,
-                atomnos_member, coords_member
+                atomnos_member, coords_member,
+                heavy_only=heavy_only
             )
 
             if rmsd_val is not None and rmsd_val <= rmsd_validation_threshold:
@@ -170,7 +186,11 @@ def post_process_clusters_with_rmsd(
                 conf_member['_rmsd_pass_origin'] = 'first_pass_validated'
                 processed_members_filenames.add(conf_member['filename'])
             else:
-                print(f"    {conf_member['filename']} (RMSD={rmsd_val:.3f} Å) is an outlier from {representative_conf['filename']} (Threshold={rmsd_validation_threshold:.3f} Å).")
+                # rmsd_val is None when the two structures are not comparable
+                # (differing heavy-atom count) — formatting it as a float there
+                # raised TypeError and aborted the whole run.
+                _rmsd_str = f"{rmsd_val:.3f}" if rmsd_val is not None else "N/A"
+                print(f"    {conf_member['filename']} (RMSD={_rmsd_str} Å) is an outlier from {representative_conf['filename']} (Threshold={rmsd_validation_threshold:.3f} Å).")
                 conf_member['_parent_global_cluster_id'] = representative_conf['_parent_global_cluster_id']
                 conf_member['_rmsd_pass_origin'] = 'second_pass_formed'
                 individual_outliers.append(conf_member)  # Collect this as an outlier
@@ -186,10 +206,11 @@ def perform_second_rmsd_clustering(
     cluster_members_to_refine: Cluster,
     rmsd_threshold: float,
     mode: EnergyMode,
+    heavy_only: bool = False,
 ) -> List[Cluster]:
     """Second RMSD pass — re-cluster first-pass outliers on an RMSD distance matrix.
 
-    A pairwise heavy-atom RMSD matrix feeds a UPGMA linkage; the tree is cut at
+    A pairwise Cartesian RMSD matrix feeds a UPGMA linkage; the tree is cut at
     *rmsd_threshold*. Each resulting sub-cluster records its representative and
     the RMSD of every member to it.
 
@@ -207,30 +228,13 @@ def perform_second_rmsd_clustering(
             m['_rmsd_pass_origin'] = 'second_pass_formed'
         return [[m] for m in cluster_members_to_refine]
 
-    num_members = len(cluster_members_to_refine)
-    rmsd_matrix = np.zeros((num_members, num_members))
+    # Outliers with no geometry at all reach this pass (the first pass routes
+    # them here), so the pairwise distances go through the guarded helper:
+    # indexing None coordinates raised TypeError, and the previous float('inf')
+    # for an incomparable pair propagated into every later merge height.
+    condensed_distances = rmsd_condensed_distances(cluster_members_to_refine, heavy_only=heavy_only)
 
-    for i in range(num_members):
-        for j in range(i + 1, num_members):
-            conf1 = cluster_members_to_refine[i]
-            conf2 = cluster_members_to_refine[j]
-
-            coords1 = conf1.get('final_geometry_coords')
-            atomnos1 = conf1.get('final_geometry_atomnos')
-            coords2 = conf2.get('final_geometry_coords')
-            atomnos2 = conf2.get('final_geometry_atomnos')
-
-            rmsd = calculate_rmsd(atomnos1, coords1, atomnos2, coords2)
-            if rmsd is None:
-                rmsd = float('inf')
-            rmsd_matrix[i, j] = rmsd_matrix[j, i] = rmsd
-
-    condensed_distances = []
-    for i in range(num_members):
-        for j in range(i + 1, num_members):
-            condensed_distances.append(rmsd_matrix[i, j])
-
-    if not condensed_distances:
+    if len(condensed_distances) == 0:
         for m in cluster_members_to_refine:
             m['_second_rmsd_sub_cluster_id'] = m.get('_initial_cluster_label')
             m['_second_rmsd_context_listing'] = [{'filename': m['filename'], 'rmsd_to_rep': 0.0}]
@@ -261,10 +265,9 @@ def perform_second_rmsd_clustering(
                 if member_conf == sub_cluster_rep:
                     rmsd_val = 0.0
                 else:
-                    rmsd_val = calculate_rmsd(
-                        sub_cluster_rep['final_geometry_atomnos'], sub_cluster_rep['final_geometry_coords'],
-                        member_conf['final_geometry_atomnos'], member_conf['final_geometry_coords']
-                    )
+                    # Guarded: a member without geometry is reported as N/A
+                    # rather than raising on None coordinates.
+                    rmsd_val = _pair_rmsd(sub_cluster_rep, member_conf, heavy_only=heavy_only)
                 sub_cluster_rmsd_listing.append({'filename': member_conf['filename'], 'rmsd_to_rep': rmsd_val})
         else:
             for member_conf in sub_cluster_members:
@@ -279,8 +282,185 @@ def perform_second_rmsd_clustering(
     return final_sub_clusters
 
 
+def _pair_rmsd(conf1: Record, conf2: Record, heavy_only: bool = False) -> Any:
+    """Cartesian RMSD between two records, or ``None`` if geometry is missing."""
+    coords1 = conf1.get('final_geometry_coords')
+    atomnos1 = conf1.get('final_geometry_atomnos')
+    coords2 = conf2.get('final_geometry_coords')
+    atomnos2 = conf2.get('final_geometry_atomnos')
+
+    if coords1 is None or atomnos1 is None or coords2 is None or atomnos2 is None:
+        return None
+
+    return calculate_rmsd(atomnos1, coords1, atomnos2, coords2, heavy_only=heavy_only)
+
+
+def rmsd_condensed_distances(members: Cluster, heavy_only: bool = False) -> np.ndarray:
+    """Condensed pairwise Cartesian RMSD vector for *members*.
+
+    Ordering matches :func:`scipy.spatial.distance.squareform`, so the result
+    can be handed straight to :func:`scipy.cluster.hierarchy.linkage`.
+
+    A pair that cannot be compared at all (Kabsch failure) gets a large
+    *finite* sentinel rather than ``inf``: it must never merge at any sensible
+    threshold, but ``inf`` in a linkage matrix poisons the merge heights of
+    every later merge. Callers are expected to have split *members* into
+    comparable blocks first (see :func:`rmsd_comparability_blocks`), so the
+    sentinel is a safety net, not the normal path.
+    """
+    n = len(members)
+    dists: List[float] = []
+    incomparable: List[int] = []
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            rmsd = _pair_rmsd(members[i], members[j], heavy_only=heavy_only)
+            if rmsd is None:
+                incomparable.append(len(dists))
+                dists.append(0.0)  # placeholder, replaced below
+            else:
+                dists.append(float(rmsd))
+
+    arr = np.asarray(dists, dtype=float)
+    if incomparable:
+        finite = np.delete(arr, incomparable)
+        sentinel = (float(np.max(finite)) * 10.0 + 1000.0) if finite.size else 1000.0
+        arr[incomparable] = sentinel
+
+    return arr
+
+
+def rmsd_comparability_blocks(members: Cluster, heavy_only: bool = False) -> List[Cluster]:
+    """Split *members* into blocks whose geometries can be RMSD-compared.
+
+    Kabsch RMSD is only defined between structures with the same number of
+    compared atoms, so that count (all atoms, or heavy atoms under
+    *heavy_only*) plus "has a geometry at all" partitions the pool into
+    independent blocks. Structures without geometry are their own block of
+    one — nothing can be measured against them.
+
+    Blocks are returned largest first, member order preserved within a block.
+    """
+    blocks: Dict[int, Cluster] = {}
+    orphans: List[Cluster] = []
+
+    for member in members:
+        coords = member.get('final_geometry_coords')
+        atomnos = member.get('final_geometry_atomnos')
+        if coords is None or atomnos is None:
+            orphans.append([member])
+            continue
+        n_compared = (sum(1 for z in atomnos if z != 1) if heavy_only
+                      else len(atomnos))
+        if n_compared == 0:
+            orphans.append([member])
+            continue
+        blocks.setdefault(n_compared, []).append(member)
+
+    ordered = sorted(blocks.values(), key=len, reverse=True)
+    return ordered + orphans
+
+
+def cluster_by_rmsd(
+    members: Cluster,
+    rmsd_threshold: float,
+    mode: EnergyMode,
+    heavy_only: bool = False,
+) -> Tuple[List[Cluster], Any, Cluster]:
+    """Partition *members* on Cartesian RMSD alone — no property features.
+
+    This is the whole clustering step for ``cosmic --rmsd-only``: a pairwise
+    Cartesian RMSD matrix feeds a UPGMA linkage that is cut at
+    *rmsd_threshold* (in Å, so the cut height is directly interpretable).
+
+    Structures that cannot be compared to each other (different atom
+    count, or no geometry) are clustered in separate blocks rather than being
+    forced into one tree with a fake huge distance — a mixed pool stays correct
+    and the dendrogram keeps a readable Å scale.
+
+    Each member is annotated exactly as the property path annotates it, so all
+    downstream reporting (``.dat`` files, motifs, Boltzmann) works unchanged:
+    ``_initial_cluster_label``, ``_rmsd_pass_origin`` and
+    ``_first_rmsd_context_listing`` (RMSD of every member to its cluster's
+    lowest-energy representative).
+
+    Returns ``(clusters, linkage_matrix, linkage_members)``, clusters sorted by
+    representative energy. The linkage is the one for the largest comparable
+    block — the tree worth plotting — and *linkage_members* is the member order
+    it was built from (leaf order for the dendrogram). Both are ``None`` / empty
+    when no block has two or more members.
+    """
+    from scipy.cluster.hierarchy import fcluster, linkage  # Import only when needed
+
+    clusters: List[Cluster] = []
+    linkage_matrix = None
+    linkage_members: Cluster = []
+    next_label = 1
+
+    for block in rmsd_comparability_blocks(members, heavy_only=heavy_only):
+        if len(block) < 2:
+            for m in block:
+                m['_initial_cluster_label'] = next_label
+            clusters.append(list(block))
+            next_label += 1
+            continue
+
+        condensed = rmsd_condensed_distances(block, heavy_only=heavy_only)
+        block_linkage = linkage(condensed, method='average')
+        block_labels = fcluster(block_linkage, t=rmsd_threshold, criterion='distance')
+
+        if linkage_matrix is None:
+            # First (largest) multi-member block — the tree worth plotting.
+            linkage_matrix = block_linkage
+            linkage_members = list(block)
+
+        grouped: Dict[int, Cluster] = {}
+        for member, label in zip(block, block_labels):
+            grouped.setdefault(int(label), []).append(member)
+
+        for label in sorted(grouped):
+            for member in grouped[label]:
+                member['_initial_cluster_label'] = next_label
+            clusters.append(grouped[label])
+            next_label += 1
+
+    for cluster in clusters:
+        _annotate_rmsd_cluster(cluster, mode, heavy_only=heavy_only)
+
+    clusters.sort(key=lambda c: (min(sorting_energy(m, mode) for m in c),
+                                 min(m['filename'] for m in c)))
+
+    return clusters, linkage_matrix, linkage_members
+
+
+def _annotate_rmsd_cluster(cluster: Cluster, mode: EnergyMode, heavy_only: bool = False) -> None:
+    """Attach the representative RMSD listing consumed by the ``.dat`` writer."""
+    if not cluster:
+        return
+
+    representative = min(cluster, key=lambda x: (sorting_energy(x, mode), x['filename']))
+
+    listing = []
+    for member in cluster:
+        if member is representative:
+            rmsd_val: Any = 0.0
+        else:
+            rmsd_val = _pair_rmsd(representative, member, heavy_only=heavy_only)
+        listing.append({'filename': member['filename'], 'rmsd_to_rep': rmsd_val})
+
+    for member in cluster:
+        member['_rmsd_pass_origin'] = 'first_pass_validated'
+        member['_first_rmsd_context_listing'] = listing
+        member['_second_rmsd_sub_cluster_id'] = None
+        member['_second_rmsd_context_listing'] = None
+        member['_second_rmsd_rep_filename'] = None
+
+
 __all__ = [
     "calculate_rmsd",
+    "cluster_by_rmsd",
     "perform_second_rmsd_clustering",
     "post_process_clusters_with_rmsd",
+    "rmsd_comparability_blocks",
+    "rmsd_condensed_distances",
 ]
