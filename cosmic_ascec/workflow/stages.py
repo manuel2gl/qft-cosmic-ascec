@@ -6498,24 +6498,16 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     if total_accepted > 0:
                         result_data['total_accepted'] = total_accepted
                     
-                    # Extract energy evaluations from annealing.out files
+                    # Extract energy evaluations from the replica .out reports
+                    # (named after the input stem, not 'annealing.out').
                     total_energy_evals = 0
                     if context.annealing_dirs:
                         for adir in context.annealing_dirs:
-                            annealing_out = os.path.join(adir, 'annealing.out')
-                            if os.path.exists(annealing_out):
-                                try:
-                                    with open(annealing_out, 'r') as f:
-                                        content = f.read()
-                                        match = re.search(r'Energy calculations:\s+(\d+)', content)
-                                        if match:
-                                            total_energy_evals += int(match.group(1))
-                                except:
-                                    pass
-                    
+                            total_energy_evals += parse_annealing_energy_evals(adir) or 0
+
                     if total_energy_evals > 0:
                         result_data['energy_evals'] = total_energy_evals
-                    
+
                     update_protocol_cache(stage_key, 'completed',
                                         result=result_data,
                                         cache_file=cache_file)
@@ -10176,7 +10168,38 @@ def plot_combined_replicas_diagram(tvse_files: List[str], output_file: str, num_
         return False
 
 
-def generate_protocol_summary(cache_file: str = "protocol_cache.pkl", 
+def parse_annealing_energy_evals(annealing_dir: str) -> Optional[int]:
+    """Sum the energy evaluations reported by a replica directory's .out files.
+
+    The annealing report is named after the replica input stem (``<stem>.out``,
+    e.g. ``w6_annealing4_1.out``), so it is discovered by globbing rather than by
+    a fixed name.  ``rless_<seed>.out`` holds the lowest-energy geometry, not a
+    run report, and is skipped.
+
+    Returns ``None`` when no .out file in the directory reports the count.
+    """
+    total_evals: Optional[int] = None
+
+    for out_file in sorted(glob.glob(os.path.join(annealing_dir, '*.out'))):
+        if os.path.basename(out_file).startswith('rless_'):
+            continue
+        try:
+            with open(out_file, 'r', errors='ignore') as fh:
+                content = fh.read()
+        except OSError:
+            continue
+
+        # "  Energy was evaluated 12345 times" (v05); "Energy calculations: N" (v04).
+        match = re.search(r'Energy was evaluated\s+(\d+)\s+times', content)
+        if not match:
+            match = re.search(r'Energy calculations:\s+(\d+)', content)
+        if match:
+            total_evals = (total_evals or 0) + int(match.group(1))
+
+    return total_evals
+
+
+def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                               output_file: str = "protocol_summary.txt"):
     """Generate comprehensive protocol summary from cache data with professional formatting."""
     cache = load_protocol_cache(cache_file)
@@ -10272,21 +10295,14 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
             pass
         return None
 
-    def _extract_energy_evals_from_annealing(annealing_dir: str) -> Optional[int]:
-        """Extract total energy evaluations from annealing.out file."""
-        annealing_out = os.path.join(annealing_dir, 'annealing.out')
-        if not os.path.exists(annealing_out):
-            return None
-        try:
-            with open(annealing_out, 'r') as f:
-                content = f.read()
-                # Look for "Energy calculations: XXXX"
-                match = re.search(r'Energy calculations:\s+(\d+)', content)
-                if match:
-                    return int(match.group(1))
-        except:
-            pass
-        return None
+    def _extract_annealing_evals(result: Dict[str, Any]) -> Optional[int]:
+        """Sum energy evaluations over an annealing stage's replica directories."""
+        total_evals: Optional[int] = None
+        for adir in result.get('annealing_dirs') or []:
+            evals = parse_annealing_energy_evals(adir)
+            if evals:
+                total_evals = (total_evals or 0) + evals
+        return total_evals
 
     def _extract_final_clusters_from_summary(summary_file: str) -> Optional[int]:
         """Extract final cluster count from clustering_summary.txt."""
@@ -10494,6 +10510,10 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                     
                     # Stage-specific details
                     if stage_type == 'Replication':  # Annealing
+                        # Energy evaluations come from the replica .out reports;
+                        # prefer the cached total, re-parse live when the cache
+                        # predates it (e.g. resumed runs).
+                        energy_evals = result.get('energy_evals') or _extract_annealing_evals(result)
                         if result.get('box_size') is not None:
                             f.write(f"    Box size:         {float(result['box_size']):.1f} Å")
                             if result.get('packing') is not None:
@@ -10503,8 +10523,8 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                             num_replicas = result['num_replicas']
                             replica_desc = "Duplicated" if num_replicas == 2 else "Triplicated" if num_replicas == 3 else f"{num_replicas}x"
                             f.write(f"    Replicas:         {num_replicas} ({replica_desc})\n")
-                        if 'energy_evals' in result:
-                            f.write(f"    Evaluations:      {result['energy_evals']} times\n")
+                        if energy_evals:
+                            f.write(f"    Evaluations:      {energy_evals} times\n")
                         if 'total_accepted' in result:
                             f.write(f"    Accepted:         {result['total_accepted']} configurations\n")
                     
