@@ -95,7 +95,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
@@ -2463,6 +2463,84 @@ def is_stage_output_dir(dirname: str) -> bool:
                              'energy_refinement', 'geom optimization'))
 
 
+# Legacy intermediate markers that predate is_qm_byproduct. Kept as a union with
+# it, not replaced: 'combined_' in particular is not a QM byproduct but must
+# never be queued as a job (combined_results.xyz is an aggregate).
+_QM_INTERMEDIATE_PATTERNS = ('.scfgrad.', '.scfp.', '.tmp.', '.densities.',
+                             '.scfhess.', '_rescue.', 'combined_')
+
+_QM_DECK_EXTS = ('.inp', '.com', '.gjf', '.xyz')
+
+
+def qm_program_from_template(template_file: Optional[str]) -> str:
+    """Map a stage template extension to its QM engine.
+
+    Mirrors the dispatch at the top of :func:`calculate_input_files` (.inp →
+    ORCA, .com/.gjf → Gaussian, .xtb → xTB, whose decks are written as .xyz).
+    """
+    lower = (template_file or '').lower()
+    if lower.endswith('.com') or lower.endswith('.gjf'):
+        return 'gaussian'
+    if lower.endswith('.xtb'):
+        return 'xtb'
+    return 'orca'
+
+
+def qm_program_from_input(input_file: str, default: str = 'orca') -> str:
+    """QM engine implied by a generated deck's own extension."""
+    lower = os.path.basename(input_file).lower()
+    if lower.endswith('.inp'):
+        return 'orca'
+    if lower.endswith(('.com', '.gjf')):
+        return 'gaussian'
+    if lower.endswith('.xyz'):
+        return 'xtb'
+    return default
+
+
+def select_qm_input_files(dirpath: str, filenames: Optional[Iterable[str]] = None) -> List[str]:
+    """Return the QM input decks in ``dirpath``, natural-sorted, as basenames.
+
+    A resumed stage re-scans its own output directory to find what still needs
+    running, so this must reject everything the engine *wrote* there. Accepting
+    a byproduct means handing it back to the engine as an input deck: ORCA gets
+    ``orca <stem>_trj.xyz`` and aborts, while xTB happily re-optimizes its own
+    output and produces ``<stem>.xtbopt.xtbopt.xyz`` — one more level on every
+    resume, plus a bogus extra entry in the stage's N/M denominator.
+
+    Beyond the byproduct filters, decks take precedence per stem
+    (``.inp`` > ``.com``/``.gjf`` > ``.xyz``): for ORCA the deck is ``<stem>.inp``
+    and ``<stem>.xyz`` is the engine-written final geometry, so the latter is
+    dropped. xTB is unaffected — its deck *is* the ``.xyz`` and no same-stem
+    ``.inp`` is ever generated for it (see calculate_input_files).
+    """
+    if filenames is None:
+        try:
+            filenames = os.listdir(dirpath)
+        except OSError:
+            return []
+
+    candidates = []
+    for name in filenames:
+        if not name.endswith(_QM_DECK_EXTS):
+            continue
+        if any(pattern in name for pattern in _QM_INTERMEDIATE_PATTERNS):
+            continue
+        if is_qm_byproduct(name):
+            continue
+        candidates.append(name)
+
+    # Deck precedence per stem: keep the best-ranked extension only.
+    best: Dict[str, Tuple[int, str]] = {}
+    for name in candidates:
+        stem, ext = os.path.splitext(name)
+        rank = _QM_DECK_EXTS.index(ext.lower()) if ext.lower() in _QM_DECK_EXTS else len(_QM_DECK_EXTS)
+        if stem not in best or rank < best[stem][0]:
+            best[stem] = (rank, name)
+
+    return sorted((name for _, name in best.values()), key=natural_sort_key)
+
+
 # --- def calculate_input_files  (ascec-v04.py 6142-6509) ---
 def calculate_input_files(template_file: str, launcher_template: Optional[str] = None,
                           auto_select: str = 'interactive', stage_type: str = "optimization",
@@ -4721,6 +4799,38 @@ def get_critical_files_list(optimization_dir_path: str) -> List[str]:
     return critical_files
 
 
+# Context fields each stage type recorded in its cache entry, as
+# {stage type: ((context attr, result key), ...)}. Used to re-adopt a skipped
+# stage's identity on resume — see _restore_cached_stage_context.
+_CACHED_STAGE_CONTEXT_FIELDS: Dict[str, Tuple[Tuple[str, str], ...]] = {
+    'optimization': (('optimization_stage_dir', 'working_dir'),
+                     ('optimization_cosmic_folder', 'cosmic_folder')),
+    'refinement': (('refinement_stage_dir', 'working_dir'),
+                   ('refinement_cosmic_folder', 'cosmic_folder')),
+    'energy_refinement': (('energy_refinement_stage_dir', 'working_dir'),
+                          ('eref_cosmic_folder', 'cosmic_folder')),
+    'cosmic': (('cosmic_dir', 'working_dir'),
+               ('cosmic_folder', 'cosmic_folder')),
+}
+
+
+def _restore_cached_stage_context(context: WorkflowContext, stage_type: str,
+                                  stage_cache: Dict[str, Any]) -> None:
+    """Re-apply a completed stage's directories to the context on resume.
+
+    Skipping a cached stage used to leave the context at its defaults, so the
+    stages that follow fell back to hardcoded names ('geometry_optimization',
+    'cosmic') and silently reused the first cycle's folders. Everything needed
+    was already persisted in the cache entry; it was simply never read back —
+    :meth:`WorkflowContext.get_stage_working_dir` had no callers at all.
+    """
+    result = stage_cache.get('result') or {}
+    for attr, key in _CACHED_STAGE_CONTEXT_FIELDS.get(stage_type, ()):
+        value = result.get(key)
+        if value:
+            setattr(context, attr, value)
+
+
 def check_workflow_pause(stage: Dict[str, Any], stage_num: int, total_stages: int,
                         cache_file: str, use_cache: bool) -> bool:
     """
@@ -6175,9 +6285,21 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             context.cosmic_args = stage.get('args', [])
             break
     
-    # Count optimization stages for proper numbering (opt, opt2)
-    optimization_stage_counter = 0
-    
+    def _optimization_ordinal(idx: int) -> int:
+        """1-based ordinal of the optimization stage at ``stages[idx]``.
+
+        Derived from position, never from a running counter: a counter that
+        only advances when a stage *executes* under-counts on resume (the
+        cached-skip branch jumps over it), while one that also advances on the
+        skip over-counts, because four paths re-enter an optimization stage
+        that was already counted — validate_cached_optimization_cosmic and its
+        refinement twin returning ``stage_idx - 1``, and the two standalone
+        cosmic threshold rewinds. The ordinal drives the cosmic base folder
+        (cosmic vs cosmic_2) and the exclusion-list key, so drift there sends a
+        resumed second cycle into the first cycle's directories.
+        """
+        return sum(1 for s in stages[:idx + 1] if s['type'] == 'optimization')
+
     # Map stage types to display names
     stage_display_map: Dict[str, str] = {
         'replication': 'annealing',
@@ -6405,6 +6527,16 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         print(f"  ✓ Skipped (completed at {stage_cache.get('timestamp', 'unknown')})")
                         print('-' * 60)
 
+                    # Re-adopt the identity this stage had when it ran. A skip
+                    # used to leave the context untouched, so a later stage in
+                    # the same process saw stage numbers and directories from a
+                    # fresh run — a resumed second optimization cycle would
+                    # write into the first cycle's geometry_optimization/ and
+                    # cosmic/ and read the wrong exclusion list.
+                    _restore_cached_stage_context(context, stage_type, stage_cache)
+                    if stage_type == 'optimization':
+                        context.optimization_stage_number = _optimization_ordinal(stage_idx)
+
                     completed_stage_count = stage_num
                     context.completed_stage_count = completed_stage_count
                     stage_idx += 1
@@ -6527,10 +6659,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 context.completed_stage_count = completed_stage_count
 
             elif stage_type == 'optimization':
-                # Increment optimization stage counter
-                optimization_stage_counter += 1
-                context.optimization_stage_number = optimization_stage_counter
-                
+                # Which optimization cycle this is (1, 2, …) — positional, so a
+                # redo or threshold rewind re-runs the same stage under the same
+                # number instead of advancing it.
+                context.optimization_stage_number = _optimization_ordinal(stage_idx)
+
                 # Check if next stage is cosmic - if so, handle optimization+cosmic with retry
                 next_is_cosmic = (stage_idx + 1 < len(stages) and 
                                      stages[stage_idx + 1]['type'] == 'cosmic')
@@ -6864,6 +6997,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
                     if result == 0 and use_cache:
                         opt_result: Dict[str, Any] = {}
+                        # Record where the stage ran so a resume can re-adopt it
+                        # (_restore_cached_stage_context); the opt+cosmic path
+                        # already stores this, the standalone path did not.
+                        if getattr(context, 'optimization_stage_dir', ''):
+                            opt_result['working_dir'] = context.optimization_stage_dir
+                            opt_result['output_dir'] = context.optimization_stage_dir
+                        if getattr(context, 'optimization_cosmic_folder', None):
+                            opt_result['cosmic_folder'] = context.optimization_cosmic_folder
                         if hasattr(context, 'optimization_completed'):
                             opt_result['completed'] = context.optimization_completed
                         if hasattr(context, 'optimization_total'):
@@ -9718,16 +9859,31 @@ def _run_single_qm_job(job_info: Dict[str, Any]) -> Dict[str, Any]:
         launch_attempt += 1
 
         # STEP 1: CLEAN OUTPUT FILES
-        # Preserve .hessian/.hess files — they are rescue Hessians placed by
-        # redo logic for xTB/ORCA to read as initial Hessian guess.
+        # Match on a stem *boundary*, never a bare prefix: before the sort step
+        # every job shares calc_working_dir, and the generated names are
+        # unpadded (opt_conf_1 … opt_conf_30), so a plain startswith() made
+        # rerunning opt_conf_1 delete opt_conf_10.out … opt_conf_19.out — the
+        # finished neighbours — on every resume and under --concurrent.
+        # Preserve .hessian/.hess files: they are rescue Hessians placed by
+        # redo logic for xTB/ORCA to read as initial Hessian guess. Preserve
+        # input decks, and .xyz only when it is *this* job's own input — an
+        # engine-written .xyz (ORCA's _trj/final geometry, xTB's .xtbopt.xyz)
+        # is stale output and must not survive into the next pass.
         for item in os.listdir(calc_working_dir):
-            if item.startswith(script_basename) and not item.endswith(('.inp', '.com', '.gjf', '.xyz', '.hessian', '.hess')):
-                item_path = os.path.join(calc_working_dir, item)
-                if os.path.isfile(item_path):
-                    try:
-                        os.remove(item_path)
-                    except:
-                        pass
+            if not (item == script_basename or
+                    item.startswith(script_basename + '.') or
+                    item.startswith(script_basename + '_')):
+                continue
+            if item.endswith(('.inp', '.com', '.gjf', '.hessian', '.hess')):
+                continue
+            if item.endswith('.xyz') and item == input_file_relative:
+                continue
+            item_path = os.path.join(calc_working_dir, item)
+            if os.path.isfile(item_path):
+                try:
+                    os.remove(item_path)
+                except:
+                    pass
 
         # STEP 2: RUN CALCULATION
         temp_script = os.path.join(calc_working_dir, f'_run_{script_basename}.sh')
@@ -11713,7 +11869,9 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
 
     # Pin optimization output to a deterministic cosmic base folder for this cycle.
     # This prevents redo/resume runs from drifting to cosmic_3, cosmic_4, etc.
-    optimization_cycle = getattr(context, 'optimization_stage_number', 1)
+    # `or 1`: the dataclass default is 0, so the getattr default never fires and
+    # an unset cycle would otherwise read as "not the first".
+    optimization_cycle = getattr(context, 'optimization_stage_number', 1) or 1
     if optimization_cycle <= 1:
         fixed_opt_cosmic_base = "cosmic"
     else:
@@ -11741,14 +11899,22 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
     
     # Get completed calculations from cache
     completed_calcs = cache.get('stages', {}).get(stage_key, {}).get('result', {}).get('completed_files', [])
-    opt_dir_exists = os.path.exists("geometry_optimization") or os.path.exists("Geom Optimization")
-    
-    # If resuming (cache exists + optimization stage was started before), reuse existing directory  
+
+    # If resuming (cache exists + optimization stage was started before), reuse existing directory
     # This works even if no runs completed yet (e.g., interrupted during first opt)
     stage_was_started = stage_key in cache.get('stages', {})
-    
-    # Determine if this is a fresh start or resume
+
+    # Determine if this is a fresh start or resume. Prefer the directory this
+    # stage actually used (restored from its cache entry on resume) over the
+    # hardcoded names — cycle 2 lives in geometry_optimization_2, and probing
+    # for "geometry_optimization" would resume it into cycle 1's folder.
     optimization_dir_path = getattr(context, 'optimization_stage_dir', None)
+    if not optimization_dir_path:
+        optimization_dir_path = context.get_stage_working_dir(stage_key) or ""
+    if optimization_dir_path:
+        opt_dir_exists = os.path.exists(optimization_dir_path)
+    else:
+        opt_dir_exists = os.path.exists("geometry_optimization") or os.path.exists("Geom Optimization")
     if opt_dir_exists and stage_was_started:
         # Use absolute path from context if available, otherwise use relative path
         if not optimization_dir_path:
@@ -11758,7 +11924,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                 optimization_dir_path = "Geom Optimization"
             else:
                 optimization_dir_path = "geometry_optimization"
-        
+
         # Check if redo structures exist (files scheduled for recalculation)
         redo_files = set()
         if hasattr(context, 'recalculated_files') and context.recalculated_files:
@@ -11969,43 +12135,27 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             if not workflow_concise:
                 print(f"\nExecuting calculations...\n")
             
-            # Helper function to filter out ORCA intermediate files and rescue inputs
-            def is_valid_input_file(filename):
-                """Check if file is a valid input file (not an ORCA intermediate or rescue file)"""
-                if not filename.endswith(('.inp', '.com', '.gjf', '.xyz')):
-                    return False
-                # Exclude ORCA intermediate files and rescue inputs (already processed)
-                excluded_patterns = ['.scfgrad.', '.scfp.', '.tmp.', '.densities.', '.scfhess.', '_rescue.', 'combined_']
-                return not any(pattern in filename for pattern in excluded_patterns)
-            
             # Get list of input files to process
             # Check if files are at root level or in subdirectories (after sort command)
-            input_files = sorted([f for f in os.listdir(optimization_dir_path) if is_valid_input_file(f)], key=natural_sort_key)
-            
+            input_files = select_qm_input_files(optimization_dir_path)
+
             if not input_files:
                 # No input files at root - check if they're in subdirectories (sorted)
                 # Look for subdirectories with input files
                 for item in os.listdir(optimization_dir_path):
                     item_path = os.path.join(optimization_dir_path, item)
                     if os.path.isdir(item_path):
-                        subdir_files = [f for f in os.listdir(item_path) if is_valid_input_file(f)]
+                        subdir_files = select_qm_input_files(item_path)
                         if subdir_files:
                             # Found input files in subdirectory - add them with relative path
                             for f in subdir_files:
                                 input_files.append(os.path.join(item, f))
                 input_files = sorted(input_files, key=natural_sort_key)
-            
-            # Determine QM program from input files (check first file)
-            if input_files:
-                first_file = os.path.basename(input_files[0])
-                if first_file.endswith('.inp'):
-                    qm_program = 'orca'
-                elif first_file.endswith(('.com', '.gjf')):
-                    qm_program = 'gaussian'
-                else:
-                    qm_program = 'xtb'
-            else:
-                qm_program = 'orca'  # Default
+
+            # Determine QM program from the template that generated these decks,
+            # not from input_files[0]: a stray file in the stage directory must
+            # never be able to switch the whole stage to the wrong engine.
+            qm_program = qm_program_from_template(template_file)
 
             # Rebuild optimization launcher using the same style as refinement launcher.
             try:
@@ -12042,9 +12192,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                 launcher_inputs: List[str] = []
                 seen_basenames = set()
                 for root, _, files in os.walk(optimization_dir_path):
-                    for file_name in files:
-                        if not is_valid_input_file(file_name):
-                            continue
+                    for file_name in select_qm_input_files(root, files):
                         if file_name not in seen_basenames:
                             seen_basenames.add(file_name)
                             launcher_inputs.append(file_name)
@@ -12088,7 +12236,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             
             # Get exclusions from cache (already loaded earlier)
             # Use appropriate key based on which optimization stage this is
-            optimization_stage_num = getattr(context, 'optimization_stage_number', 1)
+            optimization_stage_num = getattr(context, 'optimization_stage_number', 1) or 1
             if optimization_stage_num == 1:
                 excluded_numbers = cache.get('excluded_optimizations', [])
             else:
@@ -12174,14 +12322,18 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                             print(f"  Skipping: {input_file} (excluded)")
                         continue
 
+                    # Each deck names its own engine; the stage-level qm_program
+                    # is only the fallback for an unrecognised extension.
+                    job_qm_program = qm_program_from_input(input_file, default=qm_program)
+
                     basename = os.path.splitext(input_file)[0]
-                    output_file = basename + ('.out' if qm_program in ('orca', 'xtb') else '.log')
+                    output_file = basename + ('.out' if job_qm_program in ('orca', 'xtb') else '.log')
                     output_path = os.path.join(optimization_dir_path, output_file)
 
                     # Skip if output already exists AND is successfully completed
                     if os.path.exists(output_path):
                         try:
-                            is_complete = check_qm_output_completed(qm_program, output_path)
+                            is_complete = check_qm_output_completed(job_qm_program, output_path)
                             if is_complete:
                                 continue
                         except Exception:
@@ -12191,7 +12343,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                         'input_file': input_file,
                         'base_dir': optimization_dir_path,
                         'launcher_content': launcher_content,
-                        'qm_program': qm_program,
+                        'qm_program': job_qm_program,
                         'max_launch_retries': max_launch_retries,
                         'launch_failure_threshold': launch_failure_threshold,
                         'orca_exe': orca_exe,
@@ -12199,7 +12351,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                             parse_xtb_options_from_launcher(launcher_content),
                             getattr(context, 'qm_nproc', None),
                             getattr(context, 'xtb_cycles', None),
-                        ) if qm_program == 'xtb' else None,
+                        ) if job_qm_program == 'xtb' else None,
                     })
 
                 # Run calculations with concurrency
@@ -13092,8 +13244,11 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
             motifs_source_folder = calc_base
 
     if not motifs_source_folder:
-        # Cosmic folders are created at the parent level of stage directories.
-        search_root = os.path.dirname(os.getcwd())
+        # Cosmic folders sit in the project directory, alongside the stage
+        # directories — which is the cwd here (the stage's own chdir happens
+        # later). Listing the parent while globbing the names back against the
+        # cwd below only agreed when the two happened to be the same directory.
+        search_root = os.getcwd()
         existing_sims = []
         for item in os.listdir(search_root):
             item_path = os.path.join(search_root, item)
@@ -13461,23 +13616,14 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
         
         # Get list of input files to process
         # First check at root level
-        # Filter out ORCA intermediate files (.scfgrad.inp, .scfp.inp, etc.) and rescue inputs
-        def is_valid_input_file(filename):
-            """Check if file is a valid input file (not an ORCA intermediate or rescue file)"""
-            if not filename.endswith(('.inp', '.com', '.gjf', '.xyz')):
-                return False
-            # Exclude ORCA intermediate files, rescue inputs, and aggregate combined files
-            excluded_patterns = ['.scfgrad.', '.scfp.', '.tmp.', '.densities.', '.scfhess.', '_rescue.', 'combined_']
-            return not any(pattern in filename for pattern in excluded_patterns)
+        input_files = select_qm_input_files(opt_dir)
 
-        input_files = sorted([f for f in os.listdir(opt_dir) if is_valid_input_file(f)], key=natural_sort_key)
-        
         # If no files at root and sort command was used, check subdirectories
         if not input_files:
             subdirs = [d for d in os.listdir(opt_dir) if os.path.isdir(os.path.join(opt_dir, d))]
             for subdir in sorted(subdirs, key=natural_sort_key):
                 subdir_path = os.path.join(opt_dir, subdir)
-                subdir_files = [os.path.join(subdir, f) for f in os.listdir(subdir_path) if is_valid_input_file(f)]
+                subdir_files = [os.path.join(subdir, f) for f in select_qm_input_files(subdir_path)]
                 input_files.extend(sorted(subdir_files, key=natural_sort_key))
         
         # Load cache and exclusions BEFORE using them

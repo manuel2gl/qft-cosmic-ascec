@@ -537,6 +537,10 @@ Run 'ascec cosmic -h' for the full COSMIC clustering option reference.
 def _dispatch_exclude(argv: list[str]) -> int:
     """v04 lines 19277-19434 — ``ascec <file> exclude [stage] [pattern]``."""
     protocol_file = argv[1]
+    # The cache this command edits now lives next to the .asc, so move there
+    # first or the glob below can never find it.
+    if os.path.isfile(protocol_file):
+        protocol_file = _enter_input_dir(protocol_file)
     existing_caches = sorted(glob.glob("protocol_*.pkl"))
     if not existing_caches:
         print("Error: No active protocol found")
@@ -717,6 +721,98 @@ def _stage_key_num(key: str) -> int:
     return int(m.group(1)) if m else -1
 
 
+# Stage-argument tokens that name a real file on disk. Everything else in a
+# protocol (flags, thresholds, embedded template labels like ``input1``) is
+# left untouched by the path rewrite in _enter_input_dir.
+_PATH_LIKE_STAGE_ARG_EXTS = ('.inp', '.com', '.gjf', '.xtb', '.sh', '.xyz')
+
+
+def _looks_like_path_arg(token: str) -> bool:
+    return (
+        isinstance(token, str)
+        and not token.startswith('-')
+        and '=' not in token
+        and not os.path.isabs(token)
+        and token.lower().endswith(_PATH_LIKE_STAGE_ARG_EXTS)
+    )
+
+
+_launch_cwd: str = ""
+
+
+def _rewrite_path_arg(token: str) -> str:
+    """Keep a path-like token pointing at the same file it did before the chdir.
+
+    Preference order is deliberate: a file sitting next to the ``.asc`` wins,
+    because that is what a path written inside the ``.asc``'s own protocol
+    block most plausibly meant. Only if that misses do we fall back to the
+    directory the command was launched from, which is how these paths resolved
+    before the anchoring change.
+    """
+    if not _launch_cwd or not _looks_like_path_arg(token):
+        return token
+    if os.path.exists(token):
+        return token
+    legacy = os.path.join(_launch_cwd, token)
+    if os.path.exists(legacy):
+        return legacy
+    return token  # neither: leave alone so existing errors still name it
+
+
+def _rewrite_stage_arg_paths(stages: list[dict]) -> None:
+    """Apply :func:`_rewrite_path_arg` to every parsed stage's args, in place."""
+    for stage in stages:
+        args = stage.get('args')
+        if args:
+            args[:] = [_rewrite_path_arg(tok) for tok in args]
+
+
+def _enter_input_dir(input_file: str, *stage_arg_lists: list[str]) -> str:
+    """Make the ``.asc`` file's own directory the working directory.
+
+    Annealing already wrote next to its input (see ``_run_single_simulation``),
+    but every later stage resolved its paths against the *shell's* cwd:
+    ``geometry_optimization/``, ``cosmic/``, ``protocol_*.pkl``,
+    ``protocol_summary.txt`` and ``.ascec_progress.json`` all landed there. So
+    a loop like ``for f in serie1/*/…asc; do ascec "$f"; done`` ran every input
+    into one shared output tree, with the runs overwriting each other. Anchoring
+    the process to the input's directory makes each run self-contained without
+    having to thread a project root through ~15k lines of relative paths.
+
+    Rewrites ``sys.argv`` in place as well as the parsed stage args: the Ctrl+D
+    detach handoff re-launches the run from ``sys.argv[1:]`` with the *new* cwd,
+    so leaving the old relative paths there would hand the child an input file
+    it cannot find — after the parent had already transferred the job.
+
+    Returns the input file's basename, valid in the new working directory.
+    """
+    # Resolve the entry point before moving: three call sites abspath
+    # sys.argv[0] later (the replica spawn, the detach relaunch, and
+    # find_cosmic_script) and would resolve it against the wrong directory for
+    # an invocation like ``python ./ascec-v04.py``.
+    global _launch_cwd
+
+    if sys.argv and sys.argv[0]:
+        sys.argv[0] = os.path.abspath(sys.argv[0])
+
+    _launch_cwd = os.getcwd()
+    input_path = Path(input_file).resolve()
+    os.chdir(input_path.parent)
+    basename = input_path.name
+
+    for stage_args in stage_arg_lists:
+        if stage_args:
+            stage_args[:] = [_rewrite_path_arg(tok) for tok in stage_args]
+
+    for i, tok in enumerate(sys.argv[1:], start=1):
+        if tok == input_file:
+            sys.argv[i] = basename
+        else:
+            sys.argv[i] = _rewrite_path_arg(tok)
+
+    return basename
+
+
 def _dispatch_protocol(argv: list[str]) -> int:
     """v04 lines 19445-19775 — ``ascec <file> protocol [stage] [-i]``."""
     input_file = argv[1]
@@ -729,6 +825,9 @@ def _dispatch_protocol(argv: list[str]) -> int:
     if not os.path.exists(input_file):
         print(f"Error: Input file '{input_file}' not found")
         return 1
+    # Anchor to the input's directory before anything resolves a relative path —
+    # in particular the protocol_*.pkl lookup and the stage-restart rmtree below.
+    input_file = _enter_input_dir(input_file)
     protocol = extract_protocol_from_input(input_file)
     if protocol is None:
         print("Error: No protocol found in input file")
@@ -764,6 +863,7 @@ def _dispatch_protocol(argv: list[str]) -> int:
     if not stages:
         print("Error: No valid workflow stages found in protocol")
         return 1
+    _rewrite_stage_arg_paths(stages)
 
     if restart_stage:
         existing_caches = sorted(glob.glob("protocol_*.pkl"))
@@ -922,6 +1022,10 @@ def _dispatch_auto_protocol(argv: list[str]) -> int | None:
     if not stages:
         print("Error: No valid workflow stages found in embedded protocol")
         return 1
+    # Only now: every ``return None`` above hands the run back to the dispatch
+    # chain (comma workflow, argparse, replication, single run), all of which
+    # still hold the caller's relative argv. Moving earlier would break them.
+    input_file = _enter_input_dir(input_file, *(s.get('args') for s in stages))
     result = 1
     try:
         result = execute_workflow_stages(
@@ -956,6 +1060,7 @@ def _dispatch_comma_workflow(argv: list[str]) -> int:
         print("Usage: ascec input.asc , r3 , opt template.inp launcher.sh , cosmic --th=2")
         print("   or: ascec input.asc then r3 then opt template.inp launcher.sh then cosmic --th=2")
         return 1
+    input_file = _enter_input_dir(input_file, *(s.get('args') for s in stages))
     result = 1
     try:
         result = execute_workflow_stages(input_file, stages, use_cache=True)
