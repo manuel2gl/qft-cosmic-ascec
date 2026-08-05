@@ -7,7 +7,8 @@ picker is launched.
 Flag surface (full list in ``cosmic --help``):
 
 * ``--threshold/--th`` — cut height for the UPGMA tree; default is automatic
-  (knee detection on the sorted merge-height curve).
+  (knee detection on the sorted merge-height curve, capped at the empirical
+  τ=2.0); ``--th=knee`` applies the detected knee uncapped.
 * ``--rmsd`` — enable geometric RMSD post-processing.
 * ``--rmsd-only`` — cluster on Cartesian RMSD alone (no feature vector).
 * ``--rmsd-heavy`` — exclude hydrogens from RMSD (default is all-atom).
@@ -128,12 +129,16 @@ HOW IT WORKS:
   2. Z-standardize each feature (drop near-constant columns)
   3. Build a UPGMA tree (SciPy average linkage, Euclidean distance)
   4. Cut it at the threshold (default 'auto' = knee of the merge-height curve,
-     capped at the empirical 2.0; Mojena is plotted only as a diagnostic)
+     capped at the empirical 2.0 — '--th=knee' lifts that cap; Mojena is
+     plotted only as a diagnostic)
   5. Optional RMSD pass to split geometric look-alikes within a family
   6. Flag imaginary frequencies and convergence failures
 
 KEY OPTIONS:
-  --th=auto|opt|FLOAT   Dendrogram cut (default auto). 'opt' reuses the τ from the
+  --th=auto|knee|opt|FLOAT
+                        Dendrogram cut (default auto). 'knee' is auto with the
+                        empirical τ=2.0 ceiling disabled: the detected knee is
+                        applied even above 2.0. 'opt' reuses the τ from the
                         sibling post-opt run — use it for refinement-stage cosmic
                         so the partition stays consistent. A float overrides
                         (2.0 = legacy 2-sigma; <1 tight; 3-4 loose).
@@ -165,6 +170,7 @@ EXAMPLES:
   cosmic --rmsd-only -j4           Cluster on RMSD alone (1.0 Å cut)
   cosmic --rmsd-only=0.125 -j4     RMSD-only at the CREST / GOAT default cut
   cosmic --th=opt -j4              Refinement stage: reuse the post-opt τ
+  cosmic --th=knee -j4             Knee detection, uncapped (allow τ > 2.0)
   cosmic --th=2.0                  Force the legacy 2-sigma cut
   cosmic --partialweights -j4      Preliminary xTB / semiempirical screening
   cosmic --compare a.out b.out     Compare two structures directly
@@ -186,10 +192,13 @@ CITATION:
     # Clustering threshold: default 'auto' detects the elbow of the merge-height
     # curve per case; pass a float to override (e.g. 2.0 for legacy 2-sigma rule).
     parser.add_argument("--threshold", "--th", type=str, default="auto",
-                        metavar="FLOAT|auto|opt",
+                        metavar="FLOAT|auto|knee|opt",
                         help="UPGMA distance threshold for dendrogram cut. Default 'auto' "
                              "detects the elbow of the merge-height curve per case "
-                             "(recommended for atomic clusters and van der Waals systems). "
+                             "(recommended for atomic clusters and van der Waals systems); "
+                             "a knee above the empirical ceiling τ=2.0 is capped to 2.0. "
+                             "'knee' is the same detection with that ceiling disabled — the "
+                             "detected knee is applied even when it is higher than 2.0. "
                              "Pass a float to override: 2.0 for the legacy 2-sigma rule, "
                              "0.5 for tight, 3.0-4.0 for loose clustering. "
                              "'opt' reuses the raw τ resolved by the sibling post-opt cosmic "
@@ -285,6 +294,10 @@ CITATION:
     _DEPRECATED_OPT_MODES = {"opt-pearson", "opt-spread"}
     if isinstance(args.threshold, str) and args.threshold.lower() == "auto":
         args.threshold = "auto"
+    elif isinstance(args.threshold, str) and args.threshold.lower() == "knee":
+        # Like 'auto', but the empirical τ=2.0 ceiling is not applied: the
+        # detected knee is used even when it sits above it.
+        args.threshold = "knee"
     elif isinstance(args.threshold, str) and args.threshold.lower() == "opt":
         args.threshold = "opt"
     elif isinstance(args.threshold, str) and args.threshold.lower() in _DEPRECATED_OPT_MODES:
@@ -295,7 +308,7 @@ CITATION:
         try:
             args.threshold = float(args.threshold)
         except (TypeError, ValueError):
-            parser.error("--threshold must be 'auto', 'opt', or a number")
+            parser.error("--threshold must be 'auto', 'knee', 'opt', or a number")
 
     clustering_threshold = args.threshold
 

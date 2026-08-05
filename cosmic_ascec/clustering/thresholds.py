@@ -5,7 +5,9 @@ clusters requires a cut height ``τ``. Three modes are supported:
 
 * **Knee** (default, automatic) — find the elbow of the sorted merge-height
   curve, i.e. the height at which merges stop joining within-cluster
-  structures and start joining genuinely different families.
+  structures and start joining genuinely different families. In ``"auto"``
+  the detected knee is capped at the empirical ceiling τ=2.0; ``"knee"``
+  forces the raw knee through even when it lands above that ceiling.
 * **Mojena** — Mojena's upper-tail rule (mean + k · stddev) over merge heights.
 * **Explicit** — user passes a float directly.
 
@@ -32,8 +34,13 @@ from cosmic_ascec.clustering.scaling import (
     median_pairwise_distance,
 )
 
-# A user threshold is "auto", a float, or an (mode, params) tuple.
+# A user threshold is "auto", "knee", a float, or an (mode, params) tuple.
 UserThreshold = Union[str, float, Tuple[str, Mapping[str, Any]]]
+
+# Empirical ceiling on the automatic cut. A knee above this means the
+# merge-height curve never really flattens, so "auto" distrusts it and falls
+# back to 2.0; --th=knee bypasses the ceiling on purpose.
+EMPIRICAL_TAU_CEILING = 2.0
 
 
 # --------------------------------------------------------------------------- #
@@ -341,14 +348,18 @@ def resolve_clustering_threshold(
     """
     Decide the actual cut height for fcluster().
 
-    *user_threshold* may be "auto", a float, or an ``(mode, params)`` tuple
-    (``opt-pearson`` / ``opt-spread``). Returns ``(t_cut, k_resulting, source)``
-    where source is one of "user", "knee", "knee-capped", "legacy",
-    "opt-pearson", "opt-spread". "knee-capped" means the knee was detected but
-    its cut height exceeded the empirical ceiling τ=2.0, so τ=2.0 was applied
-    instead (the raw knee is still surfaced on the diagnostic plot).
+    *user_threshold* may be "auto", "knee", a float, or an ``(mode, params)``
+    tuple (``opt-pearson`` / ``opt-spread``). Returns
+    ``(t_cut, k_resulting, source)`` where source is one of "user", "knee",
+    "knee-capped", "knee-uncapped", "legacy", "opt-pearson", "opt-spread".
+    "knee-capped" means the knee was detected but its cut height exceeded the
+    empirical ceiling τ=2.0, so τ=2.0 was applied instead (the raw knee is
+    still surfaced on the diagnostic plot). "knee-uncapped" is the same
+    situation under ``"knee"``, where the user asked for the raw knee to be
+    applied regardless of the ceiling.
 
-    Verbatim port of cosmic-v01's ``resolve_clustering_threshold`` (4476-4540).
+    Port of cosmic-v01's ``resolve_clustering_threshold`` (4476-4540), plus the
+    forced-knee mode.
     """
     from scipy.cluster.hierarchy import fcluster
 
@@ -383,32 +394,52 @@ def resolve_clustering_threshold(
                       f"→ τ_ref={t:.4f}, n_c={k}")
             return t, k, "opt-spread"
 
-    if user_threshold != "auto":
+    # --th=knee: use the detected knee whatever its height, i.e. skip the
+    # empirical τ=2.0 ceiling that "auto" applies.
+    force_knee = isinstance(user_threshold, str) and user_threshold.lower() == "knee"
+
+    if not force_knee and user_threshold != "auto":
         t = float(user_threshold)
         k = len(set(fcluster(linkage_matrix, t=t, criterion='distance')))
         return t, k, "user"
 
     t, k, ok, reason, _, _ = compute_knee_threshold(linkage_matrix, verbose=verbose)
     if ok:
-        if t > 2.0:
+        if t > EMPIRICAL_TAU_CEILING:
+            if force_knee:
+                if verbose:
+                    print(f"  --th=knee: knee τ={t:.4f} exceeds the empirical "
+                          f"ceiling {EMPIRICAL_TAU_CEILING}; applying it anyway "
+                          f"(n_c={k}).")
+                return t, k, "knee-uncapped"
             # Knee landed above the empirical ceiling τ=2.0. A knee that high
             # means the merge-height curve never really flattens, so the elbow
             # is unreliable; fall back to the standard empirical cut but keep
             # "knee" provenance so the diagnostic plot still shows where the
             # detected knee was.
-            k_cap = len(set(fcluster(linkage_matrix, t=2.0, criterion='distance')))
+            k_cap = len(set(fcluster(linkage_matrix, t=EMPIRICAL_TAU_CEILING,
+                                     criterion='distance')))
             if verbose:
-                print(f"  Knee τ={t:.4f} exceeds empirical ceiling 2.0; "
-                      f"using empirical τ=2.0 (n_c={k_cap}).")
-            return 2.0, k_cap, "knee-capped"
+                print(f"  Knee τ={t:.4f} exceeds empirical ceiling "
+                      f"{EMPIRICAL_TAU_CEILING}; using empirical "
+                      f"τ={EMPIRICAL_TAU_CEILING} (n_c={k_cap}).")
+            return EMPIRICAL_TAU_CEILING, k_cap, "knee-capped"
         return t, k, "knee"
-    if verbose:
-        print(f"  Knee detection skipped ({reason}); falling back to legacy τ=2.0.")
-    k_l = len(set(fcluster(linkage_matrix, t=2.0, criterion='distance')))
-    return 2.0, k_l, "legacy"
+    if force_knee:
+        # The user explicitly asked for the knee, so say out loud (not only
+        # under -v) that no usable knee exists and 2.0 is being used instead.
+        print(f"WARNING: --th=knee requested but knee detection failed "
+              f"({reason}); falling back to legacy τ={EMPIRICAL_TAU_CEILING}.")
+    elif verbose:
+        print(f"  Knee detection skipped ({reason}); falling back to legacy "
+              f"τ={EMPIRICAL_TAU_CEILING}.")
+    k_l = len(set(fcluster(linkage_matrix, t=EMPIRICAL_TAU_CEILING,
+                           criterion='distance')))
+    return EMPIRICAL_TAU_CEILING, k_l, "legacy"
 
 
 __all__ = [
+    "EMPIRICAL_TAU_CEILING",
     "UserThreshold",
     "attach_pearson_to_rep",
     "compute_knee_threshold",

@@ -1471,7 +1471,10 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
         reduced_unmatched_str = str(len(reduced_unmatched_critical))
 
     _method_label = {"knee": "knee detection",
-                     "knee-capped": "knee detection, capped to empirical 2.0"}
+                     "knee-capped": "knee detection, capped to empirical 2.0",
+                     # No nested parens: the summary wraps this in "(...)" and
+                     # --th=opt's fallback regex reads up to the first ')'.
+                     "knee-uncapped": "knee detection, uncapped by --th=knee"}
     if rmsd_only:
         # No feature-space tau exists in geometry-only mode; the cut is the RMSD
         # itself. Deliberately not emitting the machine-readable 'details:' line
