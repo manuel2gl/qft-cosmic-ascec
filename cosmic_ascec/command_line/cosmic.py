@@ -1,8 +1,18 @@
-"""``cosmic`` console entry point — clustering on a directory of QM outputs.
+"""``cosmic`` console entry point — clustering on a directory of structures.
 
-Run ``cosmic <folder>`` to cluster the QM outputs in ``<folder>`` into
+Run ``cosmic <folder>`` to cluster the structures in ``<folder>`` into
 representative motifs. With no positional argument, an interactive folder
 picker is launched.
+
+Three input types are accepted, in this precedence order when a folder holds
+more than one: ``*.out``, ``*.log``, and ``*.xyz``. The first two are QM
+outputs. The third is plain Cartesian coordinates — the entry point for large
+systems, where a geometry exists long before a converged QM output does.
+Eight of the fifteen clustering columns follow from coordinates alone; ``--sp``
+adds four more via one xTB single point per structure. The remaining three
+(Gibbs energy, first/last vibrational frequency) need a frequency calculation.
+A ``.xyz`` file holding several frames (a concatenated ensemble, a trajectory)
+is split into one structure per record automatically.
 
 Flag surface (full list in ``cosmic --help``):
 
@@ -19,6 +29,7 @@ Flag surface (full list in ``cosmic --help``):
 * ``-T/--temperature`` — temperature for Boltzmann populations (K).
 * ``--prev-out-dir`` — sibling stage for composite-Gibbs energy lookup.
 * ``--data`` — dump the feature matrix and exit.
+* ``--sp`` / ``--charge`` / ``--uhf`` — xTB single points for XYZ input.
 
 The CLI is intentionally a thin shell over
 :func:`cosmic_ascec.clustering.perform_clustering_and_analysis` — adding a
@@ -42,6 +53,12 @@ from cosmic_ascec.clustering.features.feature_spec import (
     parse_abs_tolerance_argument,
     parse_weights_argument,
 )
+from cosmic_ascec.clustering.features.xtb_sp import SP_METHODS, resolve_sp_method
+from cosmic_ascec.clustering.features.xyz_input import (
+    XYZ_EXTENSION,
+    XYZ_GLOB,
+    is_xyz_byproduct,
+)
 from cosmic_ascec.clustering.orchestrator import (
     get_cpu_count_fast,
     perform_clustering_and_analysis,
@@ -62,6 +79,44 @@ def _is_number(token):
         return True
     except (TypeError, ValueError):
         return False
+
+
+# Input globs in precedence order. A folder that holds QM outputs is clustered
+# on those; ``*.xyz`` is the fallback, so adding the geometry-only front-end
+# cannot change how any existing run directory is interpreted.
+_INPUT_PRECEDENCE = ("*.out", "*.log", XYZ_GLOB)
+
+
+def _available_inputs(folder):
+    """Return ``{glob_pattern: [paths]}`` for the clustering inputs in *folder*.
+
+    Only two things are excluded, and both are excluded because they are not
+    single structures: xTB optimisation trajectories (``*.xtbopt.log``, and
+    ``*.xtbtraj.xyz`` / ``*_trj.xyz`` via :func:`is_xyz_byproduct`).
+
+    Optimised geometries (``*.xtbopt.xyz``) are *kept* — a folder of them is
+    the natural way to hand COSMIC the results of an optimisation stage. When
+    a folder holds both an xTB input and its own result the pair is resolved
+    later, in favour of the optimised structure.
+    """
+    found = {}
+    for pattern in _INPUT_PRECEDENCE:
+        matches = glob.glob(os.path.join(folder, pattern))
+        if pattern == "*.log":
+            matches = [f for f in matches if not f.endswith('.xtbopt.log')]
+        elif pattern == XYZ_GLOB:
+            matches = [f for f in matches if not is_xyz_byproduct(f)]
+        if matches:
+            found[pattern] = sorted(matches)
+    return found
+
+
+def _preferred_pattern(available):
+    """Pick the glob to process from an ``_available_inputs`` mapping."""
+    for pattern in _INPUT_PRECEDENCE:
+        if available.get(pattern):
+            return pattern
+    return None
 
 
 def preprocess_j_argument(argv):
@@ -117,15 +172,21 @@ def main(argv=None):
         usage="cosmic [OPTIONS] [FOLDER]",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""DESCRIPTION:
-  COSMIC clusters quantum-chemistry outputs by a physicochemical feature vector
+  COSMIC clusters molecular structures by a physicochemical feature vector
   (up to 15 descriptors: electronic energy, HOMO-LUMO gap, dipole, rotational
   constants, vibrational frequencies, H-bond geometry). The vector is dynamic —
-  it uses whatever each output provides and reports motifs from the largest
+  it uses whatever each input provides and reports motifs from the largest
   feature pool available. Redundant structures collapse into unique conformational
   families; each family's lowest-energy structure is the representative motif.
 
+  Input is a folder of .out/.log QM outputs, or of .xyz coordinate files. Plain
+  coordinates give the 8 geometry-derived descriptors (nuclear repulsion,
+  rotational constants A/B/C, and the four H-bond columns) with no QM run at
+  all — the entry point for large systems. '--sp' adds 4 more via one xTB
+  single point per structure. A multi-frame .xyz is split per frame.
+
 HOW IT WORKS:
-  1. Parse QM outputs (.log/.out) into the feature vector
+  1. Parse QM outputs (.log/.out) or coordinates (.xyz) into the feature vector
   2. Z-standardize each feature (drop near-constant columns)
   3. Build a UPGMA tree (SciPy average linkage, Euclidean distance)
   4. Cut it at the threshold (default 'auto' = knee of the merge-height curve,
@@ -153,10 +214,19 @@ KEY OPTIONS:
                         preliminary runs; leave off for DFT/post-HF.
   --weights STRING      Manual weights, e.g. '(energy=0.3)(gap=0.2)'.
   --group-hb            Cluster separately per H-bond count (one dendrogram each).
+  --sp[=METHOD]         XYZ input only: one xTB single point per structure, adding
+                        electronic energy, HOMO, HOMO-LUMO gap and dipole moment
+                        to the 8 geometry-derived descriptors (8 of 15 columns
+                        become 12). METHOD is gfn2 (default), gfn1, gfn0, or
+                        gfnff. Gibbs and the vibrational frequencies still need a
+                        frequency calculation, which a single point is not.
+  --charge INT          Total charge for the --sp single points (default 0).
+  --uhf INT             Unpaired electrons for the --sp single points (default 0).
   -T FLOAT              Temperature (K) for Boltzmann populations (default 298.15).
   --compare FILE...     Direct pairwise comparison of ≥2 files (no folder).
   --reprocess-files     Ignore the descriptor cache and re-parse outputs.
-  FOLDER                Directory of QM outputs (default: current / interactive).
+  FOLDER                Directory of .out/.log QM outputs or .xyz coordinates —
+                        or a single .xyz file (default: current / interactive).
 
 MAIN OUTPUTS:
   clustering_summary.txt   Full report (clusters, τ source, similarity floors)
@@ -173,6 +243,12 @@ EXAMPLES:
   cosmic --th=knee -j4             Knee detection, uncapped (allow τ > 2.0)
   cosmic --th=2.0                  Force the legacy 2-sigma cut
   cosmic --partialweights -j4      Preliminary xTB / semiempirical screening
+  cosmic xyz_dir -j4               Cluster plain coordinates (8 descriptors)
+  cosmic xyz_dir --sp gfn2 -j4     Add xTB GFN2 single points (8 → 12 descriptors)
+  cosmic xyz_dir --sp gfnff -j4    Same via the GFN-FF force field: far faster on
+                                   very large systems, but energy only (no HOMO,
+                                   gap or dipole — it has no electronic structure)
+  cosmic ensemble.xyz -j4          Cluster a multi-frame file (split per frame)
   cosmic --compare a.out b.out     Compare two structures directly
 
 TYPICAL PIPELINE (or use the automated protocol in one .asc file):
@@ -184,6 +260,10 @@ TYPICAL PIPELINE (or use the automated protocol in one .asc file):
 SUPPORTED FORMATS:
   Gaussian .log (cclib) · ORCA 5.0.x .out (cclib) · ORCA 6.1+ .out (OPI)
   ORCA 6.0 is not supported — use 5.0.x or 6.1+.
+  Plain .xyz coordinates, single- or multi-frame — no QM output needed. Gives the
+  8 geometry-derived descriptors; add --sp for the 4 electronic ones. Precedence
+  in a mixed folder is .out > .log > .xyz. An xTB input superseded by its own
+  .xtbopt.xyz result is dropped, so a structure is never clustered twice.
 
 CITATION:
   Manuel, G.; Sara, G.; Albeiro, R. Universidad de Antioquia (2026)
@@ -260,6 +340,22 @@ CITATION:
                              "All-NaN columns are dropped; cluster column only emitted when labels "
                              "are available. Exits after writing; skips clustering.")
 
+    parser.add_argument("--sp", type=str, nargs='?', const='', default=None,
+                        metavar="METHOD",
+                        help="run one xTB single point per structure to add electronic "
+                             "energy, HOMO, HOMO-LUMO gap and dipole moment to the "
+                             "geometry-only feature vector (8 of the 15 columns become 12). "
+                             f"METHOD is one of {', '.join(sorted(SP_METHODS))} "
+                             "(default gfn2; gfnff is the force field, fastest for very "
+                             "large systems, energy only). XYZ input only.")
+
+    parser.add_argument("--charge", type=int, default=None, metavar="N",
+                        help="total charge passed to the --sp single points (default 0).")
+
+    parser.add_argument("--uhf", type=int, default=None, metavar="N",
+                        help="number of unpaired electrons passed to the --sp single "
+                             "points (default 0).")
+
     # Hidden/advanced options
     parser.add_argument("--min-std-threshold", type=float, default=1e-6,
                         help=argparse.SUPPRESS)
@@ -270,7 +366,8 @@ CITATION:
 
     # Positional argument
     parser.add_argument('input_source', nargs='?', default=None, metavar="FOLDER",
-                        help='directory containing QM output files')
+                        help='directory containing .out/.log QM outputs or .xyz '
+                             'coordinate files (a single .xyz file is also accepted)')
 
 
     # Preprocess arguments to handle -j8 format
@@ -348,6 +445,11 @@ CITATION:
         print(f"RMSD-only mode: clustering on Cartesian RMSD ({_atom_set}) at "
               f"{rmsd_validation_threshold:.3f} Å (feature vector not used).")
 
+    try:
+        sp_method = resolve_sp_method(args.sp)
+    except ValueError as exc:
+        parser.error(str(exc))
+
     output_directory = args.output_dir
     force_reprocess_cache = args.reprocess_files
     user_weights_dict = parse_weights_argument(args.weights)
@@ -408,9 +510,11 @@ CITATION:
             print(f"Warning: Comparing files with different extensions ({', '.join(unique_extensions)}). Proceeding, but ensure they are compatible.")
 
         # Use the extension of the first file for pattern
-        file_extension_pattern_for_compare = extensions[0] if extensions[0] in ['.log', '.out'] else None
+        file_extension_pattern_for_compare = (
+            extensions[0] if extensions[0] in ['.log', '.out', XYZ_EXTENSION] else None
+        )
         if not file_extension_pattern_for_compare:
-            print("Error: Provided files do not have .log or .out extensions.")
+            print("Error: Provided files do not have .log, .out or .xyz extensions.")
             return 1
 
         file_names = [os.path.basename(f) for f in compare_files]
@@ -432,113 +536,132 @@ CITATION:
             partialweights=args.partialweights,
             rmsd_only=rmsd_only_mode,
             rmsd_heavy=args.rmsd_heavy,
+            sp_method=sp_method if file_extension_pattern_for_compare == XYZ_EXTENSION else None,
+            sp_charge=args.charge,
+            sp_uhf=args.uhf,
         )
         print(f"\n--- Finished comparing {len(compare_files)} files: {', '.join(file_names)} ---\n")
 
     else: # Normal mode (folder processing)
         if args.input_source:
-            # Non-interactive mode
-            if not os.path.isdir(args.input_source):
+            # Non-interactive mode. A bare .xyz file is accepted as well as a
+            # folder — a single ensemble or trajectory file is a natural way to
+            # hand over a large set of structures, and it is split per frame
+            # downstream.
+            if os.path.isfile(args.input_source):
+                if not args.input_source.lower().endswith(XYZ_EXTENSION):
+                    print(f"Error: '{args.input_source}' is a file; only .xyz files can be "
+                          f"given directly. Pass the containing folder instead.")
+                    return 1
+                selected_folders = [os.path.dirname(os.path.abspath(args.input_source)) or current_dir]
+                file_extension_pattern = XYZ_GLOB
+            elif not os.path.isdir(args.input_source):
                 print(f"Error: Input source '{args.input_source}' is not a directory.")
                 return 1
-
-            selected_folders = [args.input_source]
-
-            # Auto-detect file extension
-            log_files_input = [f for f in glob.glob(os.path.join(args.input_source, "*.log")) if not f.endswith('.xtbopt.log')]
-            has_log = bool(log_files_input)
-            has_out = bool(glob.glob(os.path.join(args.input_source, "*.out")))
-
-            if has_out:
-                file_extension_pattern = "*.out"
-            elif has_log:
-                file_extension_pattern = "*.log"
             else:
-                print(f"Error: No .log or .out files found in '{args.input_source}'.")
-                return 1
+                selected_folders = [args.input_source]
+
+                # Auto-detect input type: QM outputs win over coordinates, so an
+                # existing run directory is interpreted exactly as before.
+                file_extension_pattern = _preferred_pattern(_available_inputs(args.input_source))
+                if file_extension_pattern is None:
+                    print(f"Error: No .out, .log or .xyz files found in '{args.input_source}'.")
+                    return 1
 
         else:
             # Interactive mode
             all_potential_folders = [current_dir] + [d for d in glob.glob(os.path.join(current_dir, '*')) if os.path.isdir(d)]
 
-            folders_with_log_files = []
-            folders_with_out_files = []
-
+            folder_inputs = {}
             for folder in all_potential_folders:
-                # Exclude xTB trajectory files (*.xtbopt.log) — not calculation outputs
-                log_files = [f for f in glob.glob(os.path.join(folder, "*.log")) if not f.endswith('.xtbopt.log')]
-                has_log = bool(log_files)
-                has_out = bool(glob.glob(os.path.join(folder, "*.out")))
+                available = _available_inputs(folder)
+                if available:
+                    folder_inputs[folder] = available
 
-                if has_log:
-                    folders_with_log_files.append(folder)
-                if has_out:
-                    folders_with_out_files.append(folder)
-
-            all_valid_folders_to_display = sorted(list(set(folders_with_log_files + folders_with_out_files)))
+            all_valid_folders_to_display = sorted(folder_inputs)
 
             if not all_valid_folders_to_display:
-                print("No subdirectories containing .log or .out files found, or files are organized directly in the current directory.")
+                print("No subdirectories containing .out, .log or .xyz files found, or files are organized directly in the current directory.")
                 return 0
 
-            print("\nFound the following folder(s) containing quantum chemistry log/out files:\n")
-            for i, folder in enumerate(all_valid_folders_to_display):
-                display_name = os.path.basename(folder)
-                if folder == current_dir:
-                    display_name = "./"
+            def _folder_label(folder):
+                name = "./" if folder == current_dir else os.path.basename(folder)
+                types = ', '.join(
+                    pattern.lstrip('*')
+                    for pattern in _INPUT_PRECEDENCE
+                    if folder_inputs[folder].get(pattern)
+                )
+                return f"{name} (Contains: {types})"
 
-                folder_types_present = []
-                if folder in folders_with_log_files: folder_types_present.append(".log")
-                if folder in folders_with_out_files: folder_types_present.append(".out")
+            if len(all_valid_folders_to_display) == 1:
+                # Nothing to choose between — a menu with one entry is just a
+                # keystroke tax. Announce the folder and get on with it.
+                selected_folders = list(all_valid_folders_to_display)
+                print(f"\nProcessing the only folder found: {_folder_label(selected_folders[0])}")
+            else:
+                print("\nFound the following folder(s) containing structures:\n")
+                for i, folder in enumerate(all_valid_folders_to_display):
+                    print(f"  [{i+1}] {_folder_label(folder)}")
 
-                print(f"  [{i+1}] {display_name} (Contains: {', '.join(folder_types_present)})")
+                selected_folders = []
+                while True:
+                    choice = input("\nEnter the number of the folder to process, or type 'a' to process all: ").strip().lower()
 
-            selected_folders = []
-            while True:
-                choice = input("\nEnter the number of the folder to process, or type 'a' to process all: ").strip().lower()
-
-                if choice == 'a':
-                    selected_folders = all_valid_folders_to_display
-                    break
-                try:
-                    folder_index = int(choice) - 1
-                    if 0 <= folder_index < len(all_valid_folders_to_display):
-                        selected_folders = [all_valid_folders_to_display[folder_index]]
+                    if choice == 'a':
+                        selected_folders = all_valid_folders_to_display
                         break
-                    else:
-                        print("\nInvalid number. Please enter a valid number from the list.")
-                except ValueError:
-                    print("\nInvalid input. Please enter a number or 'a'.")
+                    try:
+                        folder_index = int(choice) - 1
+                        if 0 <= folder_index < len(all_valid_folders_to_display):
+                            selected_folders = [all_valid_folders_to_display[folder_index]]
+                            break
+                        else:
+                            print("\nInvalid number. Please enter a valid number from the list.")
+                    except ValueError:
+                        print("\nInvalid input. Please enter a number or 'a'.")
 
-            selected_set_has_log = False
-            selected_set_has_out = False
-            for folder_path in selected_folders:
-                if folder_path in folders_with_log_files:
-                    selected_set_has_log = True
-                if folder_path in folders_with_out_files:
-                    selected_set_has_out = True
-                if selected_set_has_log and selected_set_has_out:
-                    break
+            # Which input types the chosen folder(s) actually offer.
+            selected_patterns = [
+                pattern for pattern in _INPUT_PRECEDENCE
+                if any(folder_inputs[f].get(pattern) for f in selected_folders)
+            ]
 
             file_extension_pattern = None
-            if selected_set_has_log and selected_set_has_out:
+            if len(selected_patterns) > 1:
+                menu = "\n".join(
+                    f"  [{i + 1}] {pattern.lstrip('*')} files"
+                    for i, pattern in enumerate(selected_patterns)
+                )
+                prompt = (
+                    f"\nSeveral input types are present in the selected folder(s).\n"
+                    f"Which would you like to process?\n{menu}\n"
+                    f"  Enter your choice (1-{len(selected_patterns)}): "
+                )
                 while file_extension_pattern is None:
-                    type_choice = input("\nBoth .log and .out files are present in the selected folder(s).\nWhich file type would you like to process?\n  [1] .log files\n  [2] .out files\n  Enter your choice (1 or 2): ").strip()
-                    if type_choice == '1':
-                        file_extension_pattern = "*.log"
-                    elif type_choice == '2':
-                        file_extension_pattern = "*.out"
+                    type_choice = input(prompt).strip()
+                    try:
+                        idx = int(type_choice) - 1
+                    except ValueError:
+                        idx = -1
+                    if 0 <= idx < len(selected_patterns):
+                        file_extension_pattern = selected_patterns[idx]
                     else:
-                        print("Invalid choice. Please enter '1' or '2'.")
-            elif selected_set_has_log:
-                file_extension_pattern = "*.log"
-                print("\nOnly .log files found in the selected folder(s). Processing .log files.")
-            elif selected_set_has_out:
-                file_extension_pattern = "*.out"
-                print("\nOnly .out files found in the selected folder(s). Processing .out files.")
+                        print(f"Invalid choice. Please enter a number from 1 to {len(selected_patterns)}.")
+            elif selected_patterns:
+                file_extension_pattern = selected_patterns[0]
+                print(f"\nOnly {file_extension_pattern.lstrip('*')} files found in the selected "
+                      f"folder(s). Processing {file_extension_pattern.lstrip('*')} files.")
             else:
-                print("\nNo .log or .out files found in the selected folder(s) that match available types. Exiting.")
+                print("\nNo .out, .log or .xyz files found in the selected folder(s) that match available types. Exiting.")
                 return 0
+
+        # Single points only make sense for coordinate input: a QM output
+        # already carries its own energy, and recomputing it at a different
+        # level would mix two methods in one feature column.
+        if sp_method and file_extension_pattern != XYZ_GLOB:
+            print(f"WARNING: --sp applies to .xyz input only; ignoring it for "
+                  f"'{file_extension_pattern}' files.")
+            sp_method = None
 
         print(f"\nProcessing {len(selected_folders)} folder(s) for files matching '{file_extension_pattern}'...")
         for folder_path in selected_folders:
@@ -547,7 +670,7 @@ CITATION:
                 display_name = "./"
             print(f"\nProcessing folder: {display_name}\n")
 
-            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir, partialweights=args.partialweights, rmsd_only=rmsd_only_mode, rmsd_heavy=args.rmsd_heavy)
+            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir, partialweights=args.partialweights, rmsd_only=rmsd_only_mode, rmsd_heavy=args.rmsd_heavy, sp_method=sp_method, sp_charge=args.charge, sp_uhf=args.uhf)
 
             print(f"\nFinished processing folder: {display_name}\n")
 

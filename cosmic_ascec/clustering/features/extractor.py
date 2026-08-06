@@ -39,10 +39,37 @@ from cosmic_ascec.clustering.features.parsers import (
     extract_properties_with_cclib,
     extract_properties_with_opi,
     extract_properties_with_xtb,
+    extract_properties_with_xyz,
 )
+from cosmic_ascec.clustering.features.xyz_input import XYZ_EXTENSION, XYZ_GLOB
 
-# Output-file extensions the directory loop considers QM outputs by default.
-DEFAULT_OUTPUT_GLOBS = ("*.out", "*.log")
+# Input-file extensions the directory loop considers clustering candidates by
+# default. ``*.xyz`` is the geometry-only front-end (no QM output required).
+DEFAULT_OUTPUT_GLOBS = ("*.out", "*.log", XYZ_GLOB)
+
+
+def _looks_like_xyz(path) -> bool:
+    """Return whether *path* opens with a bare atom-count line.
+
+    Extension alone is not proof — an ``.xyz`` file that is really a QM output
+    under a misleading name should still reach its proper parser — so the
+    first non-blank line has to be a positive integer on its own.
+    """
+    try:
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            for _ in range(5):
+                line = f.readline()
+                if not line:
+                    return False
+                if not line.strip():
+                    continue
+                try:
+                    return int(line.strip()) > 0
+                except ValueError:
+                    return False
+    except Exception:
+        pass
+    return False
 
 
 def detect_file_type(logfile_path):
@@ -50,11 +77,16 @@ def detect_file_type(logfile_path):
     Detect whether the output file is from ORCA or Gaussian.
 
     Args:
-        logfile_path: Path to output file (.out or .log)
+        logfile_path: Path to output file (.out, .log, or .xyz)
 
     Returns:
-        'orca', 'gaussian', 'xtb', or None if not detected
+        'orca', 'gaussian', 'xtb', 'xyz', or None if not detected
     """
+    # Plain coordinate files are recognised by shape, not by a program banner:
+    # a .xyz whose first line is a bare atom count has no header to sniff.
+    if str(logfile_path).lower().endswith(XYZ_EXTENSION) and _looks_like_xyz(logfile_path):
+        return 'xyz'
+
     try:
         with open(logfile_path, 'r', encoding='utf-8', errors='ignore') as f:
             # Read first 100 lines to detect file type
@@ -113,6 +145,11 @@ def choose_parser(logfile_path):
     """
     # First, detect the file type (ORCA or Gaussian)
     file_type = detect_file_type(logfile_path)
+
+    # Plain coordinates: everything computable comes from geometry, so no
+    # third-party output parser is involved at all.
+    if file_type == 'xyz':
+        return 'xyz'
 
     # Standalone xTB output parsing does not depend on cclib/OPI.
     if file_type == 'xtb':
@@ -218,6 +255,8 @@ def extract_properties_from_logfile(logfile_path):
         return extract_properties_with_opi(logfile_path)
     elif parser_type == 'xtb':
         return extract_properties_with_xtb(logfile_path)
+    elif parser_type == 'xyz':
+        return extract_properties_with_xyz(logfile_path)
     else:
         return extract_properties_with_cclib(logfile_path)
 
@@ -240,13 +279,17 @@ def list_qm_outputs(
     """Return the QM-output files in ``directory``, in natural-sorted order."""
     from cosmic_ascec.exceptions import ClusteringError
 
+    from cosmic_ascec.clustering.features.xyz_input import is_xyz_byproduct
+
     directory = Path(directory)
     if not directory.is_dir():
         raise ClusteringError(f"not a directory: {directory}")
     found: Dict[str, Path] = {}
     for pattern in globs:
         for candidate in directory.glob(pattern):
-            if candidate.is_file():
+            # Engine-written geometries (xtbopt.xyz and friends) are output, not
+            # input; ingesting them would let a re-run cluster its own results.
+            if candidate.is_file() and not is_xyz_byproduct(candidate):
                 found[candidate.name] = candidate
     return [found[name] for name in sorted(found, key=_natural_key)]
 

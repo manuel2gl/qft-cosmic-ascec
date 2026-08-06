@@ -26,7 +26,40 @@ from typing import Any, Dict, List, MutableMapping, Optional, Sequence, Tuple
 from cosmic_ascec.clustering import console
 from cosmic_ascec.clustering.console import print_step, version, vprint
 from cosmic_ascec.clustering.energies import hartree_to_kcal_mol
-from cosmic_ascec.clustering.features.geometric import extract_xyz_from_output
+from cosmic_ascec.clustering.features.geometric import (
+    atomic_number_to_symbol,
+    extract_xyz_from_output,
+)
+
+# Extensions a skipped structure's source file can have. The XYZ entry lets the
+# geometry-only front-end write its skipped structures out like any other run.
+_SOURCE_GLOBS = ("*.log", "*.out", "*.xyz")
+
+
+def _source_geometry(source_file, record=None):
+    """Geometry for a skipped structure as ``(natoms, coords, symbols)``.
+
+    Reads the ORCA/Gaussian coordinate block when the source is a QM output.
+    A plain XYZ input has no such block, so the geometry already parsed onto
+    the record is used instead — it is the same structure, and re-parsing the
+    file would only duplicate work. Returns ``(None, None, None)`` when
+    neither is available.
+    """
+    natoms, coords, symbols = extract_xyz_from_output(source_file)
+    if natoms is not None and coords is not None and symbols is not None:
+        return natoms, coords, symbols
+
+    if record is None:
+        return None, None, None
+    atomnos = record.get('final_geometry_atomnos')
+    atomcoords = record.get('final_geometry_coords')
+    if atomnos is None or atomcoords is None or len(atomnos) == 0:
+        return None, None, None
+    return (
+        len(atomnos),
+        atomcoords,
+        [atomic_number_to_symbol(int(n)) for n in atomnos],
+    )
 
 Record = MutableMapping[str, Any]
 Cluster = List[Record]
@@ -260,21 +293,19 @@ def filter_imaginary_freq_structures(
                 available_files = {os.path.basename(f): f for f in input_source}
             else:
                 # Robust file finding that includes subdirectories (e.g. orca_out_*)
-                log_files = []
-                out_files = []
+                all_files = []
 
                 # Check root
-                log_files.extend(glob_module.glob(os.path.join(str(input_source), "*.log")))
-                out_files.extend(glob_module.glob(os.path.join(str(input_source), "*.out")))
+                for pattern in _SOURCE_GLOBS:
+                    all_files.extend(glob_module.glob(os.path.join(str(input_source), pattern)))
 
                 # Check subdirectories
                 for item in os.listdir(str(input_source)):
                     item_path = os.path.join(str(input_source), item)
                     if os.path.isdir(item_path):
-                        log_files.extend(glob_module.glob(os.path.join(item_path, "*.log")))
-                        out_files.extend(glob_module.glob(os.path.join(item_path, "*.out")))
+                        for pattern in _SOURCE_GLOBS:
+                            all_files.extend(glob_module.glob(os.path.join(item_path, pattern)))
 
-                all_files = log_files + out_files
                 available_files = {os.path.basename(f): f for f in all_files}
 
             for m in skipped_clustered_with_normal:
@@ -285,7 +316,7 @@ def filter_imaginary_freq_structures(
                     shutil.copy2(source_file, dest_file)
 
                     # Extract XYZ geometry
-                    natoms, coords, symbols = extract_xyz_from_output(source_file)
+                    natoms, coords, symbols = _source_geometry(source_file, m)
                     if natoms is not None and coords is not None and symbols is not None:
                         # Save individual XYZ file
                         basename = os.path.splitext(m['filename'])[0]
@@ -307,7 +338,7 @@ def filter_imaginary_freq_structures(
 
                 # Extract XYZ geometry (ALWAYS do this if source file exists)
                 if source_file and os.path.exists(source_file):
-                    natoms, coords, symbols = extract_xyz_from_output(source_file)
+                    natoms, coords, symbols = _source_geometry(source_file, m)
                     if natoms is not None and coords is not None and symbols is not None:
                         # Save individual XYZ file
                         basename = os.path.splitext(m['filename'])[0]
@@ -462,14 +493,14 @@ def save_non_converged_critical_structures(
             available_files = {os.path.basename(f): f for f in input_source}
         elif input_source:
             source_root = str(input_source)
-            root_candidates = glob.glob(os.path.join(source_root, "*.out")) + glob.glob(os.path.join(source_root, "*.log"))
+            root_candidates = [c for pat in _SOURCE_GLOBS for c in glob.glob(os.path.join(source_root, pat))]
             for p in root_candidates:
                 available_files[os.path.basename(p)] = p
 
             for item in os.listdir(source_root):
                 item_path = os.path.join(source_root, item)
                 if os.path.isdir(item_path):
-                    sub_candidates = glob.glob(os.path.join(item_path, "*.out")) + glob.glob(os.path.join(item_path, "*.log"))
+                    sub_candidates = [c for pat in _SOURCE_GLOBS for c in glob.glob(os.path.join(item_path, pat))]
                     for p in sub_candidates:
                         available_files[os.path.basename(p)] = p
     except Exception:
@@ -488,7 +519,7 @@ def save_non_converged_critical_structures(
             except Exception:
                 pass
 
-            natoms, coords, symbols = extract_xyz_from_output(source_file)
+            natoms, coords, symbols = _source_geometry(source_file, m)
             if natoms is not None and coords is not None and symbols is not None:
                 basename = os.path.splitext(filename)[0]
                 xyz_file = os.path.join(critical_dir, f"{basename}.xyz")
@@ -582,13 +613,13 @@ def save_redundant_reduced_structures(
             available_files = {os.path.basename(f): f for f in input_source}
         elif input_source:
             source_root = str(input_source)
-            root_candidates = glob.glob(os.path.join(source_root, "*.out")) + glob.glob(os.path.join(source_root, "*.log"))
+            root_candidates = [c for pat in _SOURCE_GLOBS for c in glob.glob(os.path.join(source_root, pat))]
             for p in root_candidates:
                 available_files[os.path.basename(p)] = p
             for item in os.listdir(source_root):
                 item_path = os.path.join(source_root, item)
                 if os.path.isdir(item_path):
-                    sub_candidates = glob.glob(os.path.join(item_path, "*.out")) + glob.glob(os.path.join(item_path, "*.log"))
+                    sub_candidates = [c for pat in _SOURCE_GLOBS for c in glob.glob(os.path.join(item_path, pat))]
                     for p in sub_candidates:
                         available_files[os.path.basename(p)] = p
     except Exception:
@@ -604,7 +635,7 @@ def save_redundant_reduced_structures(
                 shutil.copy2(source_file, os.path.join(redundant_dir, filename))
             except Exception:
                 pass
-            natoms, coords, symbols = extract_xyz_from_output(source_file)
+            natoms, coords, symbols = _source_geometry(source_file, m)
             if natoms is not None and coords is not None and symbols is not None:
                 basename = os.path.splitext(filename)[0]
                 xyz_file = os.path.join(redundant_dir, f"{basename}.xyz")

@@ -93,6 +93,44 @@ ROTATIONAL_CONSTANT_SUBFEATURES: Tuple[str, ...] = (
 )
 """The 3 rotational-constant axes, appended after the scalar features."""
 
+HBOND_GEOMETRY_FEATURES: Tuple[str, ...] = (
+    "average_hbond_distance",
+    "std_hbond_distance",
+    "average_hbond_angle",
+)
+"""The H-bond geometry columns — the mean/spread/angle of the detected network.
+
+These are real clustering features and discriminate isomers that share every
+energetic descriptor (water-hexamer prism vs cage vs book, for instance).
+What they must *not* do is decide whether a structure is usable: a structure
+with no eligible H-bond has none of them, and that is a property of the
+structure rather than a failed calculation. Two places honour that:
+
+* the criticality / full-feature gate skips them, so a non-H-bonded structure
+  is never demoted to the reduced tier for lacking them;
+* :data:`FEATURE_ABSENT_DEFAULTS` gives them a defined value when absent, so a
+  handful of non-H-bonded structures cannot delete the columns for everyone.
+"""
+
+FEATURE_ABSENT_DEFAULTS: Mapping[str, float] = MappingProxyType(
+    {name: 0.0 for name in HBOND_GEOMETRY_FEATURES}
+)
+"""Value a feature takes in the vector when the structure genuinely lacks it.
+
+Only H-bond geometry qualifies. "No hydrogen bonds" is a determinate state,
+not missing information — ``num_hydrogen_bonds`` already records it as 0, and
+a mean distance of 0 Å / mean angle of 0° is the consistent reading of the
+same fact. Every other feature stays strict: a missing electronic energy or
+rotational constant means the calculation did not provide it, and inventing a
+number there would be a fabrication.
+
+Without this, ``select_complete_group_scalar_features`` — which keeps a column
+only when *every* member has it — deletes all three H-bond geometry columns
+from the whole pool as soon as one structure has no H-bond. A handful of
+non-H-bonded structures would then silently strip H-bond information from the
+hundreds that do have it.
+"""
+
 FEATURE_COLUMNS: Tuple[str, ...] = (
     CLUSTERING_NUMERICAL_FEATURES + ROTATIONAL_CONSTANT_SUBFEATURES
 )
@@ -240,9 +278,11 @@ def parse_abs_tolerance_argument(tolerance_str: str | None) -> Dict[str, float]:
 __all__ = [
     "CLUSTERING_NUMERICAL_FEATURES",
     "DEFAULT_WEIGHTS",
+    "FEATURE_ABSENT_DEFAULTS",
     "FEATURE_COLUMNS",
     "FEATURE_MAPPING",
     "FEATURE_UNITS",
+    "HBOND_GEOMETRY_FEATURES",
     "ROTATIONAL_CONSTANT_SUBFEATURES",
     "SEMIEMPIRICAL_WEIGHTS",
     "labelled_column",

@@ -3196,11 +3196,120 @@ def get_sort_key(filename):
     return float('inf')
 
 
+# xTB writes the optimised geometry to ``<base>.xtbopt.xyz`` and leaves
+# ``<base>.xyz`` untouched as the *input*. ORCA has no such split: it overwrites
+# ``<base>.xyz`` with the optimised geometry, so there the input file is the
+# result. Which file holds the result is therefore an engine convention, and
+# combined_results.xyz has to follow it rather than assume one.
+_XTB_OPTIMIZED_SUFFIX = ".xtbopt.xyz"
+_XTB_OPTIMIZED_BARE = "xtbopt.xyz"   # xTB run without --namespace
+
+# xTB's optimised-geometry comment line, e.g.
+#  " energy: -30.494567939459 gnorm: 0.000320892821 xtb: 6.7.1 (edcfbbe)"
+_XTB_OPT_ENERGY_RE = re.compile(r'energy:\s*([-+]?\d+\.\d+)')
+_ASCEC_CONFIG_RE = re.compile(r'Configuration:\s*(\d+)')
+
+
+def _is_xtb_optimized_name(name):
+    """Whether *name* is an xTB optimised-geometry file rather than an input."""
+    return name.endswith(_XTB_OPTIMIZED_SUFFIX) or name == _XTB_OPTIMIZED_BARE
+
+
+def _group_xyz_by_structure(paths):
+    """Group ``.xyz`` paths into ``{(directory, base): [paths]}``.
+
+    ``opt_conf_7.xyz`` and ``opt_conf_7.xtbopt.xyz`` are the input and the
+    result for the *same* structure, so both land under ``opt_conf_7``.
+
+    A non-namespaced ``xtbopt.xyz`` carries no base name of its own. It is
+    attached to the only other ``.xyz`` in its directory when there is exactly
+    one — the layout ``group_files_by_base_with_tracking`` produces — and
+    otherwise falls back to the directory name, since guessing between several
+    candidates would be worse than keeping it separate.
+    """
+    grouped = {}
+    bare = []
+
+    for filepath in paths:
+        directory, name = os.path.split(filepath)
+        if name == _XTB_OPTIMIZED_BARE:
+            bare.append((directory, filepath))
+            continue
+        if name.endswith(_XTB_OPTIMIZED_SUFFIX):
+            base = name[: -len(_XTB_OPTIMIZED_SUFFIX)]
+        else:
+            base = os.path.splitext(name)[0]
+        grouped.setdefault((directory, base), []).append(filepath)
+
+    for directory, filepath in bare:
+        siblings = [key for key in grouped if key[0] == directory]
+        if len(siblings) == 1:
+            grouped[siblings[0]].append(filepath)
+        else:
+            grouped.setdefault(
+                (directory, os.path.basename(directory) or "xtbopt"), []
+            ).append(filepath)
+
+    return grouped
+
+
+def _relabelled_optimized_frame(opt_path, input_path, base):
+    """Lines of an xTB optimised ``.xyz``, with a COSMIC-readable comment line.
+
+    xTB's own comment (``energy: … gnorm: … xtb: …``) carries neither the
+    configuration number nor a format the downstream readers understand —
+    :func:`extract_configurations_from_xyz` looks for ``Configuration: N`` or a
+    ``conf_N`` / ``E =`` pattern. Rewriting the comment keeps the structure's
+    identity and swaps in the *optimised* energy, which is the whole point of
+    reading this file rather than the input.
+    """
+    with open(opt_path, "r") as handle:
+        lines = handle.readlines()
+    if len(lines) < 2:
+        return lines
+
+    energy_match = _XTB_OPT_ENERGY_RE.search(lines[1])
+
+    # Configuration number: prefer the one the input file already carries, so
+    # numbering stays continuous with the annealing stage that produced it.
+    config_num = None
+    if input_path and os.path.exists(input_path):
+        try:
+            with open(input_path, "r") as handle:
+                original_comment = handle.readlines()[1]
+            config_match = _ASCEC_CONFIG_RE.search(original_comment)
+            if config_match:
+                config_num = int(config_match.group(1))
+        except (IndexError, OSError, ValueError):
+            pass
+    if config_num is None:
+        derived = get_sort_key(f"{base}.xyz")
+        if derived != float('inf'):
+            config_num = int(derived)
+
+    parts = []
+    if config_num is not None:
+        parts.append(f"Configuration: {config_num}")
+    if energy_match:
+        parts.append(f"E = {float(energy_match.group(1)):.8f} a.u.")
+    parts.append(base)
+
+    lines[1] = " | ".join(parts) + "\n"
+    return lines
+
+
 # --- def combine_xyz_files  (ascec-v04.py 7263-7305) ---
 def combine_xyz_files(output_filename="combined_results.xyz", exclude_pattern="_trj.xyz"):
-    """Combine all relevant .xyz files into a single .xyz file."""
-    
-    all_xyz_files = []
+    """Combine each structure's *optimised* .xyz geometry into a single file.
+
+    One frame per structure, taking whichever file the engine wrote the result
+    to: ``<base>.xtbopt.xyz`` for xTB, ``<base>.xyz`` for ORCA (which optimises
+    in place). Previously every ``.xtbopt.`` file was skipped outright, so an
+    xTB stage combined its *input* geometries and ``combined_results.xyz``
+    silently held the pre-optimisation structures.
+    """
+
+    candidates = []
     for root, _, files in os.walk("."):
         for file in files:
             filepath = os.path.join(root, file)
@@ -3211,25 +3320,55 @@ def combine_xyz_files(output_filename="combined_results.xyz", exclude_pattern="_
                 continue
             if exclude_pattern in file:
                 continue
-            if ".xtbopt." in file:
-                continue
-            all_xyz_files.append(filepath)
+            candidates.append(filepath)
 
-    if not all_xyz_files:
+    if not candidates:
         print(f"No relevant .xyz files found (excluding '{exclude_pattern}' and '{output_filename}').")
         return False
 
-    # Sort the files based on the first configuration number found
-    sorted_xyz_files = sorted(all_xyz_files, key=lambda x: get_sort_key(os.path.basename(x)))
+    # Group input/result pairs, then keep one file per structure.
+    by_structure = _group_xyz_by_structure(candidates)
+
+    selected = []          # (base, path, is_xtb_optimized, input_path)
+    unoptimized = []
+    for (directory, base), paths in by_structure.items():
+        optimized = next(
+            (p for p in paths if _is_xtb_optimized_name(os.path.basename(p))), None
+        )
+        plain = next(
+            (p for p in paths if not _is_xtb_optimized_name(os.path.basename(p))), None
+        )
+
+        if optimized is not None:
+            selected.append((base, optimized, True, plain))
+        else:
+            selected.append((base, plain, False, None))
+            # An xTB run that produced artifacts but no optimised geometry did
+            # not converge; its input would otherwise pass silently as a result.
+            if glob.glob(os.path.join(directory, "*.xtbopt.log")) or \
+               glob.glob(os.path.join(directory, "*.xtbrestart")):
+                unoptimized.append(base)
+
+    selected.sort(key=lambda item: get_sort_key(f"{item[0]}.xyz"))
 
     with open(output_filename, "w") as outfile:
-        for xyz_file in sorted_xyz_files:
-            print(f"Processing: {xyz_file}")
-            with open(xyz_file, "r") as infile:
-                lines = infile.readlines()
-                outfile.writelines(lines)
+        for base, path, is_xtb_optimized, input_path in selected:
+            print(f"Processing: {path}")
+            if is_xtb_optimized:
+                outfile.writelines(_relabelled_optimized_frame(path, input_path, base))
+            else:
+                with open(path, "r") as infile:
+                    outfile.writelines(infile.readlines())
 
-    print(f"\nSuccessfully combined {len(sorted_xyz_files)}.xyz files into: {output_filename}")
+    n_opt = sum(1 for item in selected if item[2])
+    print(f"\nSuccessfully combined {len(selected)}.xyz files into: {output_filename}")
+    if n_opt:
+        print(f"  {n_opt} of them read from the xTB optimised geometry (.xtbopt.xyz)")
+    if unoptimized:
+        print(f"  WARNING: {len(unoptimized)} structure(s) have xTB artifacts but no "
+              f"optimised geometry; their input geometry was used: "
+              f"{', '.join(sorted(unoptimized)[:5])}"
+              + (" ..." if len(unoptimized) > 5 else ""))
     
     # Create .mol file if obabel is available
     if shutil.which("obabel"):

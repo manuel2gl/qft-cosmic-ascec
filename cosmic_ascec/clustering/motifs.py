@@ -36,6 +36,7 @@ from cosmic_ascec.clustering.energies import (
     sorting_energy,
 )
 from cosmic_ascec.clustering.features.feature_spec import (
+    CLUSTERING_NUMERICAL_FEATURES,
     FEATURE_MAPPING,
     ROTATIONAL_CONSTANT_SUBFEATURES,
 )
@@ -82,6 +83,91 @@ def detect_motif_input_level(filenames: Sequence[str]) -> Tuple[str, str, bool]:
 
     # Default: first step, use motif
     return 'motif', 'motifs', False
+
+
+def pool_has_energies(all_clusters_data: Sequence[Cluster]) -> bool:
+    """Return whether any structure anywhere carries a usable ranking energy.
+
+    ``False`` means geometry-only input (plain XYZ with no ``--sp``). The
+    energy-based representative rule cannot apply there, and without a fallback
+    every cluster would be reported as having no converged minimum and the
+    motifs folder would come out empty.
+    """
+    return any(
+        member.get('final_electronic_energy') is not None
+        or member.get('gibbs_free_energy') is not None
+        or member.get('composite_gibbs') is not None
+        for cluster in all_clusters_data
+        for member in cluster
+    )
+
+
+def _geometric_representative(cluster_members: Sequence[Record]) -> Record:
+    """Pick the member closest to the cluster's centroid in descriptor space.
+
+    Used when the pool carries no energy at all — the XYZ front-end without
+    ``--sp``, where the usual lowest-energy rule has nothing to rank on. The
+    axes are the same clustering features the partition was built from, so the
+    representative is central in the space the cluster actually lives in.
+
+    Each descriptor is standardised across the cluster before the distance is
+    taken, so a column with a large numeric range (V_NN, in Hartree) cannot
+    outvote one with a small range purely through its units — the same
+    normalisation the clustering distance metric uses. Members missing a
+    descriptor that others have are penalised on that axis rather than
+    excluded, so a cluster always yields a representative. Ties break on
+    filename, keeping the choice reproducible.
+    """
+    columns: List[List[Optional[float]]] = []
+
+    for name in CLUSTERING_NUMERICAL_FEATURES:
+        key = FEATURE_MAPPING.get(name, name)
+        columns.append([_as_float(m.get(key)) for m in cluster_members])
+    for axis in range(3):
+        column: List[Optional[float]] = []
+        for member in cluster_members:
+            rc = member.get('rotational_constants')
+            column.append(
+                _as_float(rc[axis])
+                if rc is not None and hasattr(rc, '__len__') and len(rc) > axis
+                else None
+            )
+        columns.append(column)
+
+    distances = np.zeros(len(cluster_members), dtype=float)
+    for column in columns:
+        present = [v for v in column if v is not None]
+        if len(present) < 2:
+            continue
+        mean = float(np.mean(present))
+        std = float(np.std(present))
+        if std <= 0.0:
+            continue
+        # A missing value sits one standard deviation off the centroid: enough
+        # to disfavour it against a fully-described member, not enough to
+        # dominate the sum.
+        deviations = [
+            abs(v - mean) / std if v is not None else 1.0
+            for v in column
+        ]
+        distances += np.square(deviations)
+
+    order = sorted(
+        range(len(cluster_members)),
+        key=lambda i: (distances[i], cluster_members[i]['filename']),
+    )
+    return cluster_members[order[0]]
+
+
+def _as_float(value: Any) -> Optional[float]:
+    """Coerce *value* to a finite float, or ``None``."""
+    if value is None:
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if np.isfinite(result) else None
 
 
 def representative_energy_comment(mol_data: Record, mode: EnergyMode) -> str:
@@ -166,12 +252,26 @@ def create_unique_motifs_folder(
     representatives = []
     representative_cluster_ids = []
 
+    # Geometry-only input (plain XYZ, no --sp) has no energy to rank on. The
+    # energy predicate below would then reject every member and the folder
+    # would come out empty, so the rule switches to a geometric one instead.
+    geometry_only = not pool_has_energies(all_clusters_data)
+    if geometry_only:
+        print("  No energies available: representatives chosen as the structure "
+              "closest to each cluster's centroid in descriptor space.")
+
     for cluster_idx, cluster_members in enumerate(all_clusters_data):
         if not cluster_members:
             continue
 
         # CRITICAL: No motif can have imaginary frequencies or non-converged data.
-        if dataset_has_freq:
+        if geometry_only:
+            valid_members = [
+                m for m in cluster_members
+                if not m.get('_has_imaginary_freqs', False)
+                and m.get('_is_full_feature', True)
+            ]
+        elif dataset_has_freq:
             # In the energy-refinement (composite) stage the representative carries
             # only a composite Gibbs energy — the high-level single point has no
             # frequencies, so gibbs_free_energy is None.  Accept either so these
@@ -196,8 +296,11 @@ def create_unique_motifs_folder(
             continue
 
         # Find the lowest energy representative from valid (non-imaginary) members only
-        representative = min(valid_members,
-                           key=lambda x: (sorting_energy(x, mode), x['filename']))
+        if geometry_only:
+            representative = _geometric_representative(valid_members)
+        else:
+            representative = min(valid_members,
+                               key=lambda x: (sorting_energy(x, mode), x['filename']))
 
         # Get the cluster ID for this representative
         cluster_id = cluster_id_mapping[cluster_idx] if cluster_id_mapping else cluster_idx + 1

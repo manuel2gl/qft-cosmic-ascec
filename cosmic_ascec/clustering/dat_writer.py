@@ -31,6 +31,7 @@ from cosmic_ascec.clustering.features.geometric import (
     atomic_number_to_symbol,
 )
 from cosmic_ascec.clustering.rmsd import calculate_rmsd
+from cosmic_ascec.clustering.scaling import feature_value
 from cosmic_ascec.clustering.thresholds import (
     pearson_similarity_pct as _pearson_similarity_pct,
 )
@@ -235,9 +236,12 @@ def write_cluster_dat_file(
                 ("First Vibrational Frequency (cm^-1)", lambda d: d.get('first_vib_freq'), "first_vib_freq"),
                 ("Last Vibrational Frequency (cm^-1)", lambda d: d.get('last_vib_freq'), "last_vib_freq"),
                 ("Number of Hydrogen Bonds", lambda d: d.get('num_hydrogen_bonds'), "num_hydrogen_bonds"),
-                ("Average H-Bond Distance (Å)", lambda d: d.get('average_hbond_distance'), "average_hbond_distance"),
-                ("Std H-Bond Distance (Å)", lambda d: d.get('std_hbond_distance'), "std_hbond_distance"),
-                ("Average H-Bond Angle (°)", lambda d: d.get('average_hbond_angle'), "average_hbond_angle"),
+                # Read through feature_value so a member with no hydrogen bonds
+                # shows the 0.0 the clustering vector actually used, instead of
+                # the whole row being reported as an unused feature.
+                ("Average H-Bond Distance (Å)", lambda d: feature_value(d, 'average_hbond_distance'), "average_hbond_distance"),
+                ("Std H-Bond Distance (Å)", lambda d: feature_value(d, 'std_hbond_distance'), "std_hbond_distance"),
+                ("Average H-Bond Angle (°)", lambda d: feature_value(d, 'average_hbond_angle'), "average_hbond_angle"),
                 ("Rotational Constant A (cm^-1)", lambda d: d['rotational_constants'][0] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_A"),
                 ("Rotational Constant B (cm^-1)", lambda d: d['rotational_constants'][1] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_B"),
                 ("Rotational Constant C (cm^-1)", lambda d: d['rotational_constants'][2] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_C"),
@@ -385,21 +389,14 @@ def write_cluster_dat_file(
         f.write("\n")
 
         f.write("Hydrogen bond analysis:\n")
-        HB_min_angle_actual_for_display = HB_MIN_ANGLE  # source of truth: geometric.py
-        f.write(f"Criterion: H...A distance between {HB_MIN_DISTANCE:.1f} Å and {HB_MAX_DISTANCE:.1f} Å, with H covalently bonded to a donor (O, N, F).\n")
-        f.write(f"  (For counting, D-H...A angle must be >= {HB_min_angle_actual_for_display:.1f}°)\n")
+        f.write(f"Criterion: H...A distance between {HB_MIN_DISTANCE:.1f} Å and {HB_MAX_DISTANCE:.1f} Å, D-H...A angle >= {HB_MIN_ANGLE:.1f}°, with H covalently bonded to a donor (O, N, F).\n")
         for mol_data in cluster_members_data:
             f.write(f"    {mol_data['filename']}:\n")
-            num_counted_hb = mol_data.get('num_hydrogen_bonds', 0)
-            total_potential_hb = len(mol_data.get('hbond_details', []))
-            f.write(f"        Number of hydrogen bonds counted (angle >= {HB_min_angle_actual_for_display:.1f}°): {num_counted_hb} out of {total_potential_hb} potential bonds.\n")
+            f.write(f"        Number of hydrogen bonds: {mol_data.get('num_hydrogen_bonds', 0)}\n")
 
             if mol_data.get('hbond_details'):
                 for hbond in mol_data['hbond_details']:
-                    angle_note = ""
-                    if hbond['D-H...A_angle'] < HB_min_angle_actual_for_display:
-                        angle_note = f" (Angle < {HB_min_angle_actual_for_display:.1f}° - Not counted as HB)"
-                    f.write(f"            Hydrogen bond: {hbond['donor_atom_label']}-{hbond['hydrogen_atom_label']}...{hbond['acceptor_atom_label']} (Dist: {hbond['H...A_distance']:.3f} Å, D-H: {hbond['D-H_covalent_distance']:.3f} Å, Angle: {hbond['D-H...A_angle']:.2f}°){angle_note}\n")
+                    f.write(f"            Hydrogen bond: {hbond['donor_atom_label']}-{hbond['hydrogen_atom_label']}...{hbond['acceptor_atom_label']} (Dist: {hbond['H...A_distance']:.3f} Å, D-H: {hbond['D-H_covalent_distance']:.3f} Å, Angle: {hbond['D-H...A_angle']:.2f}°)\n")
             else:
                 f.write("        No hydrogen bonds detected based on the criterion.\n")
         f.write("\n")

@@ -30,6 +30,14 @@ import numpy as np
 # Bohr↔Angstrom conversion. Mirrors the constant in parsers.py.
 BOHR_TO_ANGSTROM = 0.529177210903
 
+# Above this atom count the dense pair matrix in calculate_nuclear_repulsion
+# stops fitting in memory (three N×N float64 arrays: ~1.9 GB at 9k atoms) and a
+# blocked accumulation takes over. The cut is deliberately well above anything
+# the dense path handles comfortably, so every system that works today keeps
+# taking the original code path and returns the identical float.
+_VNN_DENSE_MAX_ATOMS = 6000
+_VNN_BLOCK_ROWS = 1024
+
 # Element masses dictionary (in atomic mass units) — cosmic-v01.py lines 236-255.
 element_masses = {
     "H": 1.008, "He": 4.0026, "Li": 6.94, "Be": 9.012, "B": 10.81,
@@ -221,6 +229,30 @@ def calculate_nuclear_repulsion(atomnos, atomcoords):
         if Z.size < 2:
             return 0.0
         coords_bohr = coords / BOHR_TO_ANGSTROM
+
+        if Z.size > _VNN_DENSE_MAX_ATOMS:
+            # The dense form below materialises three N×N arrays — 5.8 GB at
+            # 27k atoms, which simply fails. Row blocks give the same sum with
+            # bounded memory. Kept off the small-system path because a blocked
+            # summation reorders the additions, and the dense result is the one
+            # every existing run was produced with.
+            n = Z.size
+            total = 0.0
+            for start in range(0, n - 1, _VNN_BLOCK_ROWS):
+                stop = min(start + _VNN_BLOCK_ROWS, n - 1)
+                # Only columns to the right of the block's first row can be in
+                # the upper triangle, so the block never spans the full matrix.
+                cols = slice(start + 1, n)
+                diff = coords_bohr[start:stop, None, :] - coords_bohr[None, cols, :]
+                r_block = np.linalg.norm(diff, axis=-1)
+                del diff
+                # Zero out the sub-diagonal corner of the block by sending its
+                # distances to infinity, which costs no branch in the division.
+                keep = np.arange(start + 1, n)[None, :] > np.arange(start, stop)[:, None]
+                np.copyto(r_block, np.inf, where=~keep)
+                total += float(np.sum((Z[start:stop, None] * Z[None, cols]) / r_block))
+            return total
+
         diff = coords_bohr[:, None, :] - coords_bohr[None, :, :]
         r = np.linalg.norm(diff, axis=-1)
         iu = np.triu_indices(Z.size, k=1)
@@ -312,9 +344,171 @@ def calculate_rotational_constants(atomnos, atomcoords):
 # the printed "Criterion:" line can never drift from the values actually used.
 HB_MIN_DISTANCE = 1.4   # Minimum H...A distance (Å)
 HB_MAX_DISTANCE = 3.2   # Maximum H...A distance (Å)
-HB_MIN_ANGLE = 30.0     # Minimum D-H...A angle (degrees) for a bond to be counted
+HB_MIN_ANGLE = 120.0    # Minimum D-H...A angle (degrees) for a bond to be counted
 HB_MAX_ANGLE = 180.0    # Maximum D-H...A angle (degrees)
 HB_COVALENT_DH_SEARCH_DISTANCE = 1.4  # D-H covalent bond search limit (Å)
+
+
+# Below this atom count the original nested-loop detector is already fast
+# (< 0.05 s) and stays in charge, so the smallest systems keep taking the exact
+# code path every historical run used.
+_HBOND_NEIGHBOUR_MIN_ATOMS = 300
+
+# Slack added to a neighbour-search radius before the exact distance test is
+# applied. The tree's own distances can differ from ``np.linalg.norm`` in the
+# last bit, so candidate generation is made deliberately generous and the real
+# cutoff is enforced afterwards on recomputed distances.
+_HBOND_RADIUS_SLACK = 1e-6
+
+
+def _hbond_statistics(hbonds):
+    """Assemble the H-bond property dict from the accepted bonds.
+
+    Shared by both detector implementations so the two can never disagree on
+    how the count, means and spreads are derived.
+    """
+    extracted_props = {
+        'num_hydrogen_bonds': len(hbonds),
+        'hbond_details': hbonds,
+        'average_hbond_distance': None,
+        'min_hbond_distance': None,
+        'max_hbond_distance': None,
+        'std_hbond_distance': None,
+        'average_hbond_angle': None,
+        'min_hbond_angle': None,
+        'max_hbond_angle': None,
+        'std_hbond_angle': None
+    }
+
+    if hbonds:
+        distances = [bond['H...A_distance'] for bond in hbonds]
+        angles = [bond['D-H...A_angle'] for bond in hbonds]
+
+        extracted_props['average_hbond_distance'] = np.mean(distances)
+        extracted_props['min_hbond_distance'] = np.min(distances)
+        extracted_props['max_hbond_distance'] = np.max(distances)
+        extracted_props['std_hbond_distance'] = np.std(distances) if len(distances) > 1 else 0.0
+
+        extracted_props['average_hbond_angle'] = np.mean(angles)
+        extracted_props['min_hbond_angle'] = np.min(angles)
+        extracted_props['max_hbond_angle'] = np.max(angles)
+        extracted_props['std_hbond_angle'] = np.std(angles) if len(angles) > 1 else 0.0
+
+    return extracted_props
+
+
+def _detect_hydrogen_bonds_neighbour(atomnos, coords, atom_labels, donor_acceptor_z):
+    """Neighbour-search H-bond detector — same result, near-linear cost.
+
+    Returns the same dict as :func:`detect_hydrogen_bonds`, or ``None`` if
+    SciPy is unavailable (the caller then falls back to the original loops).
+
+    Exactness rests on three points, none of which are approximations:
+
+    1. **Donor search.** The original scans every donor-capable atom for the
+       globally nearest one, then keeps it only if it lies within
+       ``HB_COVALENT_DH_SEARCH_DISTANCE``. The globally nearest donor is within
+       that radius exactly when some donor is, and it is then also the nearest
+       *within* the radius — so restricting the search to a ball of that radius
+       cannot change the answer. Ties go to the lowest index, matching the
+       strictly-less-than first-wins scan of the original.
+    2. **Acceptor search.** Pairs are drawn from a ball of the maximum H···A
+       distance, which is a superset of the accepted pairs by construction.
+    3. **Arithmetic.** The tree only nominates candidates. Every distance and
+       angle that reaches a threshold test or the output is recomputed with the
+       same ``np.linalg.norm`` / ``np.dot`` calls the original uses, on the same
+       two coordinate rows, so the reported values are bit-for-bit identical
+       rather than merely close.
+
+    The ``i_d == i_h`` / ``i_a == i_h`` guards in the original are vacuous —
+    hydrogen is not in the donor/acceptor set — so they have no counterpart here.
+    """
+    try:
+        from scipy.spatial import cKDTree
+    except ImportError:
+        return None
+
+    atomnos = np.asarray(atomnos)
+    hydrogen_idx = np.flatnonzero(atomnos == 1)
+    donor_idx = np.flatnonzero(np.isin(atomnos, sorted(donor_acceptor_z)))
+
+    if hydrogen_idx.size == 0 or donor_idx.size == 0:
+        return _hbond_statistics([])
+
+    donor_tree = cKDTree(coords[donor_idx])
+
+    # --- Pass 1: nearest covalently bonded donor for each hydrogen ----------
+    covalent_candidates = donor_tree.query_ball_point(
+        coords[hydrogen_idx], HB_COVALENT_DH_SEARCH_DISTANCE + _HBOND_RADIUS_SLACK
+    )
+
+    h_donor = {}  # {h_idx: (donor_idx, D-H distance)}
+    for row, i_h in enumerate(hydrogen_idx):
+        candidates = covalent_candidates[row]
+        if not candidates:
+            continue
+        coord_h = coords[i_h]
+        best_idx = -1
+        best_dist = float('inf')
+        # Ascending atom index reproduces the original's first-wins tie-break.
+        for i_d in sorted(int(donor_idx[c]) for c in candidates):
+            dist_dh = np.linalg.norm(coords[i_d] - coord_h)
+            if dist_dh < best_dist:
+                best_dist = dist_dh
+                best_idx = i_d
+        if best_idx != -1 and best_dist <= HB_COVALENT_DH_SEARCH_DISTANCE:
+            h_donor[int(i_h)] = (best_idx, best_dist)
+
+    if not h_donor:
+        return _hbond_statistics([])
+
+    # --- Pass 2: acceptors in range, with the D-H...A angle ----------------
+    bonded_h = np.array(sorted(h_donor), dtype=int)
+    acceptor_candidates = donor_tree.query_ball_point(
+        coords[bonded_h], HB_MAX_DISTANCE + _HBOND_RADIUS_SLACK
+    )
+
+    all_potential_hbonds_details = []
+    for row, i_h in enumerate(bonded_h):
+        i_h = int(i_h)
+        donor_i, dh_covalent = h_donor[i_h]
+        coord_h = coords[i_h]
+        coord_d = coords[donor_i]
+
+        for i_a in sorted(int(donor_idx[c]) for c in acceptor_candidates[row]):
+            if i_a == donor_i:
+                continue
+
+            coord_a = coords[i_a]
+            dist_ha = np.linalg.norm(coord_h - coord_a)
+            if not (HB_MIN_DISTANCE <= dist_ha <= HB_MAX_DISTANCE):
+                continue
+
+            vec_h_d = coord_d - coord_h
+            vec_h_a = coord_a - coord_h
+            norm_vec_h_d = np.linalg.norm(vec_h_d)
+            norm_vec_h_a = np.linalg.norm(vec_h_a)
+
+            if norm_vec_h_d == 0 or norm_vec_h_a == 0:
+                angle_deg = 0.0
+            else:
+                cos_angle = np.dot(vec_h_d, vec_h_a) / (norm_vec_h_d * norm_vec_h_a)
+                cos_angle = np.clip(cos_angle, -1.0, 1.0)
+                angle_deg = np.degrees(np.arccos(cos_angle))
+
+            all_potential_hbonds_details.append({
+                'donor_atom_label': atom_labels[donor_i],
+                'hydrogen_atom_label': atom_labels[i_h],
+                'acceptor_atom_label': atom_labels[i_a],
+                'H...A_distance': dist_ha,
+                'D-H...A_angle': angle_deg,
+                'D-H_covalent_distance': dh_covalent
+            })
+
+    return _hbond_statistics([
+        b for b in all_potential_hbonds_details
+        if HB_MIN_ANGLE <= b['D-H...A_angle'] <= HB_MAX_ANGLE
+    ])
 
 
 def detect_hydrogen_bonds(atomnos, atomcoords):
@@ -322,7 +516,7 @@ def detect_hydrogen_bonds(atomnos, atomcoords):
     Detect hydrogen bonds based on distance and angle criteria.
 
     Distance criterion: 1.4-3.2 Å between H and acceptor
-    Angle criterion: D-H...A angle >= 30°
+    Angle criterion: D-H...A angle >= 120°
 
     Args:
         atomnos (array): Atomic numbers
@@ -349,6 +543,18 @@ def detect_hydrogen_bonds(atomnos, atomcoords):
         symbols = [atomic_number_to_symbol(n) for n in atomnos]
         atom_labels = [f"{sym}{i+1}" for i, sym in enumerate(symbols)]
         all_potential_hbonds_details = []
+
+        # The pass below is O(N_H · N) in interpreted Python — 6 s per structure
+        # at 2700 atoms, hours at the sizes the XYZ front-end exists for. A
+        # neighbour-search formulation gives the same answer in near-linear
+        # time; see _detect_hydrogen_bonds_neighbour for why it is exact rather
+        # than merely close.
+        if coords.shape[0] >= _HBOND_NEIGHBOUR_MIN_ATOMS:
+            neighbour_result = _detect_hydrogen_bonds_neighbour(
+                atomnos, coords, atom_labels, potential_donor_acceptor_z
+            )
+            if neighbour_result is not None:
+                return neighbour_result
 
         # First pass: Identify covalently bonded donor (D) for each hydrogen (H)
         h_covalent_donors = {}  # {h_idx: (donor_idx, D-H_distance)}
@@ -421,41 +627,15 @@ def detect_hydrogen_bonds(atomnos, atomcoords):
                             'D-H_covalent_distance': actual_dh_covalent_distance
                         })
 
-        # Filter bonds meeting angle criterion for statistics
-        filtered_hbonds_for_stats = [
+        # Keep the contacts that meet the angle criterion — these are the
+        # hydrogen bonds. Everything below the cutoff is discarded here, so the
+        # count, the detail list and the geometry statistics all describe the
+        # same set of bonds.
+        hbonds = [
             b for b in all_potential_hbonds_details
             if HB_min_angle_actual <= b['D-H...A_angle'] <= HB_max_angle_actual
         ]
-        extracted_props = {
-            'num_hydrogen_bonds': len(filtered_hbonds_for_stats),
-            'hbond_details': all_potential_hbonds_details,
-            'average_hbond_distance': None,
-            'min_hbond_distance': None,
-            'max_hbond_distance': None,
-            'std_hbond_distance': None,
-            'average_hbond_angle': None,
-            'min_hbond_angle': None,
-            'max_hbond_angle': None,
-            'std_hbond_angle': None
-        }
-
-        hbonds_for_geometry_stats = filtered_hbonds_for_stats if filtered_hbonds_for_stats else all_potential_hbonds_details
-
-        if hbonds_for_geometry_stats:
-            distances = [bond['H...A_distance'] for bond in hbonds_for_geometry_stats]
-            angles = [bond['D-H...A_angle'] for bond in hbonds_for_geometry_stats]
-
-            extracted_props['average_hbond_distance'] = np.mean(distances)
-            extracted_props['min_hbond_distance'] = np.min(distances)
-            extracted_props['max_hbond_distance'] = np.max(distances)
-            extracted_props['std_hbond_distance'] = np.std(distances) if len(distances) > 1 else 0.0
-
-            extracted_props['average_hbond_angle'] = np.mean(angles)
-            extracted_props['min_hbond_angle'] = np.min(angles)
-            extracted_props['max_hbond_angle'] = np.max(angles)
-            extracted_props['std_hbond_angle'] = np.std(angles) if len(angles) > 1 else 0.0
-
-        return extracted_props
+        return _hbond_statistics(hbonds)
 
     except Exception as e:
         return {

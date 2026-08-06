@@ -53,7 +53,23 @@ from cosmic_ascec.clustering.energies import (
     sorting_energy,
 )
 from cosmic_ascec.clustering.features.extractor import process_file_parallel_wrapper
-from cosmic_ascec.clustering.features.feature_spec import FEATURE_MAPPING
+from cosmic_ascec.clustering.features.feature_spec import (
+    CLUSTERING_NUMERICAL_FEATURES,
+    FEATURE_MAPPING,
+    HBOND_GEOMETRY_FEATURES,
+)
+from cosmic_ascec.clustering.features.xtb_sp import (
+    merge_single_point_properties,
+    run_single_points,
+)
+from cosmic_ascec.clustering.features.xyz_input import (
+    FRAMES_SUBDIR,
+    XYZ_EXTENSION,
+    XYZ_GLOB,
+    explode_multiframe_xyz,
+    is_xyz_byproduct,
+    resolve_optimized_duplicates,
+)
 from cosmic_ascec.clustering.filters import (
     filter_imaginary_freq_structures,
     filter_non_converged_structures,
@@ -91,6 +107,25 @@ from cosmic_ascec.clustering.thresholds import (
     resolve_clustering_threshold,
     threshold_entry,
 )
+
+
+def _stage_xyz_selection(paths, workdir):
+    """Copy the chosen structures into *workdir* and return it.
+
+    Used when discovery narrowed the input set but nothing had to be split.
+    The pipeline re-globs its input folder several times downstream, so the
+    only way to make a narrowed selection stick is to give it a folder that
+    contains exactly the selection.
+    """
+    import shutil
+
+    os.makedirs(workdir, exist_ok=True)
+    for path in paths:
+        target = os.path.join(workdir, os.path.basename(path))
+        if os.path.abspath(target) != os.path.abspath(path):
+            shutil.copyfile(path, target)
+    return workdir
+
 
 # cosmic-v01.py line 87 — CPU-count cache for get_cpu_count_fast.
 _CPU_COUNT_CACHE = None
@@ -156,7 +191,7 @@ def get_cpu_count_fast():
 
 
 # Modified to accept rmsd_threshold and output_base_dir
-def perform_clustering_and_analysis(input_source, threshold="auto", file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None, partialweights=False, rmsd_only=False, rmsd_heavy=False):
+def perform_clustering_and_analysis(input_source, threshold="auto", file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None, partialweights=False, rmsd_only=False, rmsd_heavy=False, sp_method=None, sp_charge=None, sp_uhf=None):
     """
     Performs hierarchical clustering and comprehensive analysis on molecular structures.
     This is the main analysis function that orchestrates the entire clustering workflow.
@@ -265,13 +300,54 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
         print(f"  All outputs will be placed in the current working directory")
 
 
+    # --- Normalise XYZ input to one structure per file ---------------------
+    # COSMIC is built on a one-file-one-record contract: the cache is keyed by
+    # filename, skipped structures are copied by looking their filename up on
+    # disk, and motif folders are named after the source file. A concatenated
+    # ensemble or a trajectory therefore gets split into single-frame files
+    # here, up front, rather than teaching every downstream layer about frame
+    # indices. Directories of one-structure files are left completely alone.
+    xyz_mode = str(file_extension_pattern) == XYZ_GLOB or (
+        is_compare_mode
+        and isinstance(input_source, list)
+        and all(str(p).lower().endswith(XYZ_EXTENSION) for p in input_source)
+    )
+
+    if xyz_mode:
+        frames_dir = os.path.join(output_base_dir, FRAMES_SUBDIR)
+        if is_compare_mode:
+            input_source, _ = explode_multiframe_xyz(input_source, frames_dir)
+        else:
+            source_xyz = [
+                p for p in glob.glob(os.path.join(str(input_source), XYZ_GLOB))
+                if not is_xyz_byproduct(p)
+            ]
+            # An xTB input and its own optimised result describe one structure
+            # twice; keep the optimised one.
+            source_xyz, _superseded = resolve_optimized_duplicates(source_xyz)
+            if _superseded:
+                print(f"  {len(_superseded)} xTB input geometry(ies) superseded by their "
+                      f"own .xtbopt.xyz result; clustering the optimised structures.")
+
+            _resolved, _materialised = explode_multiframe_xyz(source_xyz, frames_dir)
+            if _materialised or _superseded:
+                if not _materialised:
+                    # Nothing was split, but the folder still holds the inputs
+                    # we just discarded. Stage the survivors so the globs that
+                    # follow cannot pick them back up.
+                    _materialised = _stage_xyz_selection(_resolved, frames_dir)
+                # The frames directory now holds every structure, so the rest
+                # of the pipeline can simply glob it like any input folder.
+                input_source = _materialised
+
     # Provide early feedback before expensive operations
     if not is_compare_mode:
         print_step("Initializing data extraction...")
 
     # Define a generic cache file path with random seed (like ASCEC protocol cache)
-    # Check for existing cache file first
-    import glob
+    # Check for existing cache file first.
+    # (cosmic-v01 re-imported glob here; that shadowed the module-level import
+    # and made every earlier use in this function an UnboundLocalError.)
     existing_caches = glob.glob(os.path.join(output_base_dir, "data_cache_*.pkl"))
 
     if existing_caches:
@@ -329,10 +405,10 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             file_ext = None
             if basenames_to_update:
                 first_basename = next(iter(basenames_to_update))
-                if os.path.exists(os.path.join(str(input_source), first_basename + '.out')):
-                    file_ext = '.out'
-                elif os.path.exists(os.path.join(str(input_source), first_basename + '.log')):
-                    file_ext = '.log'
+                for candidate_ext in ('.out', '.log', XYZ_EXTENSION):
+                    if os.path.exists(os.path.join(str(input_source), first_basename + candidate_ext)):
+                        file_ext = candidate_ext
+                        break
 
             if file_ext:
                 # Load existing cache
@@ -515,6 +591,51 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     if not all_extracted_data:
         print_step("No data was successfully extracted from files. Skipping clustering.")
         return
+
+    # --- Optional xTB single points on geometry-only records ---------------
+    # A plain XYZ determines 7 of the 15 clustering columns; one single point
+    # per structure adds the electronic energy, HOMO, gap and dipole, taking
+    # the vector to 11. Records that already carry an energy are skipped, so a
+    # cached run does not recompute, and a failed call simply leaves that
+    # structure geometry-only rather than dropping it.
+    if sp_method:
+        needs_sp = [
+            d for d in all_extracted_data
+            if d.get('_from_xyz') and d.get('final_electronic_energy') is None
+        ]
+        if not needs_sp:
+            vprint("--sp: every record already carries an electronic energy; nothing to do.")
+        else:
+            print_step(f"Running xTB single points on {len(needs_sp)} structure(s)...")
+            sp_sources = {
+                os.path.basename(p): p
+                for p in glob.glob(os.path.join(str(input_source), XYZ_GLOB))
+            } if not isinstance(input_source, list) else {
+                os.path.basename(p): p for p in input_source
+            }
+            sp_inputs = [sp_sources[d['filename']] for d in needs_sp if d['filename'] in sp_sources]
+            sp_outputs = run_single_points(
+                sp_inputs,
+                output_base_dir,
+                method=sp_method,
+                charge=sp_charge,
+                uhf=sp_uhf,
+                num_cores=num_cores,
+            )
+            n_merged = merge_single_point_properties(needs_sp, sp_outputs)
+            print_step(f"Single-point properties merged for {n_merged}/{len(needs_sp)} structure(s).")
+
+            if n_merged and not is_compare_mode:
+                # Fold the new scalars into the cache so a re-run does not pay
+                # for the same single points twice.
+                try:
+                    with open(cache_file_path, 'wb') as f:
+                        pickle.dump(
+                            {'successful': all_extracted_data, 'skipped': list(skipped_files)},
+                            f,
+                        )
+                except Exception as e:
+                    vprint(f"  Error updating cache with single-point data: {e}")
 
     print_step("Data extraction complete. Proceeding to clustering.\n")
     print() # Add extra blank line for readability
@@ -705,12 +826,7 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
     # --- Dynamic feature vector: all 15 features are always candidates ---
     # Per-structure availability determines the actual vector used.
-    _all_scalar_features = [
-        'electronic_energy', 'gibbs_free_energy', 'homo_energy', 'homo_lumo_gap',
-        'dipole_moment', 'vnn_nuclear_repulsion',
-        'first_vib_freq', 'last_vib_freq',
-        'num_hydrogen_bonds', 'average_hbond_distance', 'std_hbond_distance', 'average_hbond_angle'
-    ]
+    _all_scalar_features = list(CLUSTERING_NUMERICAL_FEATURES)
     _scalar_features = list(_all_scalar_features)
 
     # H-bond geometry features (distance/angle/std) are EXCLUDED from the criticality /
@@ -723,7 +839,7 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     # remain in `_scalar_features`, so they are still used as clustering features when
     # present (e.g. water-hexamer isomer discrimination via H-bond geometry).
     # num_hydrogen_bonds is always a valid scalar (0+) so it never gates anyway.
-    _hbond_geom_features = {'average_hbond_distance', 'std_hbond_distance', 'average_hbond_angle'}
+    _hbond_geom_features = set(HBOND_GEOMETRY_FEATURES)
     _gate_features = [f for f in _scalar_features if f not in _hbond_geom_features]
 
     # Compute available features per structure (gate uses non-H-bond-geometry features)

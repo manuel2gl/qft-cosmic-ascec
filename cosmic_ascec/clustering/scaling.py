@@ -15,7 +15,9 @@ Ported verbatim from cosmic-v01.py (values, ordering, edge cases unchanged):
 * :func:`has_valid_rotational_constants` — ``has_valid_rotational_constants``
   (lines 3918-3925).
 * :func:`select_complete_group_scalar_features` —
-  ``select_complete_group_scalar_features`` (lines 3928-3937).
+  ``select_complete_group_scalar_features`` (lines 3928-3937), extended so a
+  feature with a defined absent-value (H-bond geometry) is not dropped from the
+  whole pool just because some structures have no hydrogen bonds.
 * :func:`build_feature_vectors` — ``_build_feature_vectors`` (lines 3940-3962).
 * :func:`zscore_scale` — ``_zscore_scale`` (lines 3965-4004).
 * :func:`apply_weights` — ``_apply_weights`` (lines 4007-4013).
@@ -36,6 +38,7 @@ import numpy as np
 
 from cosmic_ascec.clustering.features.feature_spec import (
     CLUSTERING_NUMERICAL_FEATURES,
+    FEATURE_ABSENT_DEFAULTS,
     FEATURE_MAPPING,
 )
 
@@ -106,6 +109,22 @@ def has_valid_rotational_constants(molecule_data: Mapping[str, Any]) -> bool:
     )
 
 
+def feature_value(molecule_data: Mapping[str, Any], feature_name: str) -> Any:
+    """Value of *feature_name* for one structure, substituting a defined absence.
+
+    A feature listed in :data:`FEATURE_ABSENT_DEFAULTS` (the H-bond geometry
+    columns) reads back as its default when the structure does not have it,
+    because "no hydrogen bonds" is a determinate state rather than missing
+    data. Every other feature returns whatever the parsers stored, ``None``
+    included.
+    """
+    internal_key = FEATURE_MAPPING.get(feature_name, feature_name)
+    value = molecule_data.get(internal_key)
+    if is_valid_scalar(value):
+        return value
+    return FEATURE_ABSENT_DEFAULTS.get(feature_name, value)
+
+
 def select_complete_group_scalar_features(
     group_data: Sequence[Mapping[str, Any]],
     candidate_features: Sequence[str],
@@ -114,14 +133,20 @@ def select_complete_group_scalar_features(
 
     Returns ``(active_features, dropped_features)``.
 
-    Verbatim port of cosmic-v01's ``select_complete_group_scalar_features``
-    (lines 3928-3937).
+    Ported from cosmic-v01's ``select_complete_group_scalar_features``
+    (lines 3928-3937). One deliberate change: a feature with an entry in
+    :data:`FEATURE_ABSENT_DEFAULTS` counts as present for a member that lacks
+    it. Without that, a single structure with no hydrogen bonds strips the
+    three H-bond geometry columns from every structure in the pool — the
+    non-H-bonded minority deciding what the majority is clustered on.
     """
     active_features: List[str] = []
     dropped_features: List[str] = []
     for feature_name in candidate_features:
-        internal_key = FEATURE_MAPPING.get(feature_name, feature_name)
-        if all(is_valid_scalar(molecule_data.get(internal_key)) for molecule_data in group_data):
+        if all(
+            is_valid_scalar(feature_value(molecule_data, feature_name))
+            for molecule_data in group_data
+        ):
             active_features.append(feature_name)
         else:
             dropped_features.append(feature_name)
@@ -141,7 +166,9 @@ def build_feature_vectors(
     a zero-weight column would contribute nothing to the weighted distance, so
     dropping it keeps ``n_eff`` honest.
 
-    Verbatim port of cosmic-v01's ``_build_feature_vectors`` (lines 3940-3962).
+    Ported from cosmic-v01's ``_build_feature_vectors`` (lines 3940-3962), with
+    values read through :func:`feature_value` so a structure with no hydrogen
+    bonds contributes its defined absence rather than a ``None``.
     """
     vectors: List[List[Any]] = []
     feature_names: List[str] = []
@@ -150,8 +177,7 @@ def build_feature_vectors(
         names: List[str] = []
         for feat in scalar_features:
             if weights.get(feat, 1.0) != 0.0:
-                key = FEATURE_MAPPING.get(feat, feat)
-                vec.append(mol.get(key))
+                vec.append(feature_value(mol, feat))
                 names.append(feat)
         if use_rotconsts:
             rc = mol.get("rotational_constants")
@@ -268,6 +294,7 @@ __all__ = [
     "apply_weights",
     "build_feature_vectors",
     "effective_n_features",
+    "feature_value",
     "group_has_any_clustering_feature_data",
     "has_valid_rotational_constants",
     "is_valid_scalar",

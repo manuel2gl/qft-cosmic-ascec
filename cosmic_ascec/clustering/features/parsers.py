@@ -374,6 +374,137 @@ def extract_properties_with_xtb(logfile_path):
         return None
 
 
+# Feature keys a plain XYZ file can populate. Eight of the fifteen clustering
+# columns are pure functions of (atomic numbers, coordinates); the other seven
+# require a QM calculation and stay None unless ``--sp`` fills them in.
+XYZ_DERIVED_FEATURES = (
+    'vnn_nuclear_repulsion',
+    'num_hydrogen_bonds',
+    'average_hbond_distance',
+    'std_hbond_distance',
+    'average_hbond_angle',
+    'rotational_constants_A',
+    'rotational_constants_B',
+    'rotational_constants_C',
+)
+
+
+def extract_properties_with_xyz(xyz_path):
+    """Extract every geometry-determined property from a plain XYZ file.
+
+    This is COSMIC's third input front-end, alongside the QM-output parsers.
+    It computes the descriptors that follow from coordinates alone and leaves
+    everything requiring a wavefunction as ``None``:
+
+    * ``rotational_constants`` — eigenvalues of the mass-weighted inertia
+      tensor, via :func:`calculate_rotational_constants`. These cannot be
+      derived from the radius of gyration: R_g fixes only ``trace(I) =
+      2·M·R_g²``, one constraint on three unknowns, so the full tensor is
+      required.
+    * ``vnn_nuclear_repulsion`` — Coulomb shape descriptor Σ Z_i Z_j / r_ij.
+    * the hydrogen-bond block — count, mean/std H···A distance, mean D-H···A
+      angle.
+    * ``radius_of_gyration`` — reported in the per-cluster ``.dat`` files but
+      deliberately not a clustering column (v04 dropped it as redundant with
+      the rotational-constant block).
+
+    The comment line is not parsed. It is free-form, most producers write
+    nothing meaningful in it, and ranking structures on a scraped string would
+    be less honest than declining to rank them — ``--sp`` is the supported way
+    to obtain energies.
+
+    The file must hold exactly one structure; multi-frame input is split up
+    front by :func:`~cosmic_ascec.clustering.features.xyz_input.explode_multiframe_xyz`.
+
+    Returns cosmic-v01's ``extracted_props`` dict, or ``None`` if no structure
+    could be read.
+    """
+    from cosmic_ascec.clustering.features.xyz_input import read_xyz_frames
+
+    extracted_props = {
+        'filename': os.path.basename(xyz_path),
+        'method': "N/A (geometry only)",
+        'functional': "N/A (geometry only)",
+        'basis_set': "N/A",
+        'charge': None,
+        'multiplicity': None,
+        'num_atoms': 0,
+        'final_geometry_atomnos': None,
+        'final_geometry_coords': None,
+        'final_electronic_energy': None,
+        'gibbs_free_energy': None,
+        'homo_energy': None,
+        'lumo_energy': None,
+        'homo_lumo_gap': None,
+        'dipole_moment': None,
+        'rotational_constants': None,
+        'radius_of_gyration': None,
+        'vnn_nuclear_repulsion': None,
+        'num_imaginary_freqs': None,
+        'first_vib_freq': None,
+        'last_vib_freq': None,
+        'num_hydrogen_bonds': 0,
+        'hbond_details': [],
+        'average_hbond_distance': None,
+        'min_hbond_distance': None,
+        'max_hbond_distance': None,
+        'std_hbond_distance': None,
+        'average_hbond_angle': None,
+        'min_hbond_angle': None,
+        'max_hbond_angle': None,
+        'std_hbond_angle': None,
+        '_has_freq_calc': False,
+        '_has_imaginary_freqs': False,
+        '_initial_cluster_label': None,
+        '_parent_global_cluster_id': None,
+        '_first_rmsd_context_listing': None,
+        '_second_rmsd_sub_cluster_id': None,
+        '_second_rmsd_context_listing': None,
+        '_second_rmsd_rep_filename': None,
+        '_rmsd_pass_origin': None,
+        '_from_xyz': True,
+    }
+
+    try:
+        frames = read_xyz_frames(xyz_path, max_frames=1)
+        if not frames:
+            print(f"  WARNING: no structure could be read from {os.path.basename(xyz_path)}. Skipping.")
+            return None
+
+        frame = frames[0]
+        atomnos = frame.atomnos
+        coords = frame.coords
+
+        if atomnos.size == 0:
+            print(f"  WARNING: {os.path.basename(xyz_path)} contains no atoms. Skipping.")
+            return None
+
+        unknown = int(np.count_nonzero(atomnos == 0))
+        if unknown:
+            print(
+                f"  WARNING: {os.path.basename(xyz_path)}: {unknown} atom(s) with an "
+                f"unrecognised element symbol; they carry no mass or charge in the descriptors."
+            )
+
+        extracted_props['final_geometry_atomnos'] = atomnos
+        extracted_props['final_geometry_coords'] = coords
+        extracted_props['num_atoms'] = frame.natoms
+
+        rot_consts = calculate_rotational_constants(atomnos, coords)
+        if rot_consts is not None:
+            extracted_props['rotational_constants'] = rot_consts
+
+        extracted_props['radius_of_gyration'] = calculate_radius_of_gyration(atomnos, coords)
+        extracted_props['vnn_nuclear_repulsion'] = calculate_nuclear_repulsion(atomnos, coords)
+        extracted_props.update(detect_hydrogen_bonds(atomnos, coords))
+
+        return extracted_props
+
+    except Exception as e:
+        print(f"  GENERIC_ERROR: Failed to extract properties from {os.path.basename(xyz_path)} with XYZ parser: {e}")
+        return None
+
+
 def extract_properties_with_cclib(logfile_path):
     """
     Extract properties using cclib (original implementation).
