@@ -220,8 +220,15 @@ KEY OPTIONS:
                         become 12). METHOD is gfn2 (default), gfn1, gfn0, or
                         gfnff. Gibbs and the vibrational frequencies still need a
                         frequency calculation, which a single point is not.
+                        Charge and spin come from --charge / --uhf below; both
+                        default to a neutral singlet, so an ion or a radical must
+                        set them or every single point is solved for the wrong
+                        system.
   --charge INT          Total charge for the --sp single points (default 0).
-  --uhf INT             Unpaired electrons for the --sp single points (default 0).
+                        Passed to xTB as --chrg; ignored without --sp.
+  --uhf INT             Unpaired electrons for the --sp single points (default 0,
+                        closed shell). A doublet is 1, a triplet 2. Passed to xTB
+                        as --uhf; ignored without --sp.
   -T FLOAT              Temperature (K) for Boltzmann populations (default 298.15).
   --compare FILE...     Direct pairwise comparison of ≥2 files (no folder).
   --reprocess-files     Ignore the descriptor cache and re-parse outputs.
@@ -248,6 +255,9 @@ EXAMPLES:
   cosmic xyz_dir --sp gfnff -j4    Same via the GFN-FF force field: far faster on
                                    very large systems, but energy only (no HOMO,
                                    gap or dipole — it has no electronic structure)
+  cosmic xyz_dir --sp --charge -1  Single points on an anion (neutral singlet
+                                   is the default, so charged systems must say so)
+  cosmic xyz_dir --sp --uhf 2      Single points on a triplet (2 unpaired electrons)
   cosmic ensemble.xyz -j4          Cluster a multi-frame file (split per frame)
   cosmic --compare a.out b.out     Compare two structures directly
 
