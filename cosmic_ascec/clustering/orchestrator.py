@@ -56,6 +56,7 @@ from cosmic_ascec.clustering.features.extractor import process_file_parallel_wra
 from cosmic_ascec.clustering.features.feature_spec import (
     CLUSTERING_NUMERICAL_FEATURES,
     FEATURE_MAPPING,
+    HBOND_FEATURES,
     HBOND_GEOMETRY_FEATURES,
 )
 from cosmic_ascec.clustering.features.xtb_sp import (
@@ -91,6 +92,7 @@ from cosmic_ascec.clustering.rmsd import (
     post_process_clusters_with_rmsd,
 )
 from cosmic_ascec.clustering.scaling import (
+    apply_absent_defaults,
     apply_weights,
     build_feature_vectors,
     effective_n_features,
@@ -669,6 +671,20 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
         for _mol in clean_data_for_clustering
     )
 
+    # --- Settle what the H-bond columns mean for this dataset ---
+    # If any structure has a hydrogen bond, the ones that do not get the defined
+    # absent value written onto their record, so a non-H-bonded minority cannot
+    # delete the H-bond geometry columns for the majority. If NO structure has
+    # one — a Li5 cluster, or any pool where the criterion never fires — the four
+    # H-bond descriptors are constant and describe nothing; they are dropped from
+    # the vector and from the reports below rather than listed as active features.
+    # This runs after the three cache writes above, so the materialised defaults
+    # never reach data_cache_*.pkl and --data still sees the parsed values.
+    _pool_has_hbonds = apply_absent_defaults(clean_data_for_clustering)
+    if not _pool_has_hbonds:
+        print("  No hydrogen bonds detected in any structure — the H-bond "
+              "descriptors are excluded from the feature vector and the reports.")
+
     # cosmic-v01 sets module globals _DATASET_HAS_FREQ / _DATASET_HAS_COMPOSITE
     # here (lines 5231-5236) so helper functions pick up the mode automatically.
     # v05 carries that state in the explicit EnergyMode `mode` (D-007).
@@ -825,8 +841,13 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     all_non_converged_critical = []
 
     # --- Dynamic feature vector: all 15 features are always candidates ---
-    # Per-structure availability determines the actual vector used.
+    # Per-structure availability determines the actual vector used. The one
+    # exception is a pool with no hydrogen bond anywhere: the four H-bond
+    # descriptors are then not candidates at all (see _pool_has_hbonds above).
     _all_scalar_features = list(CLUSTERING_NUMERICAL_FEATURES)
+    if not _pool_has_hbonds:
+        _all_scalar_features = [f for f in _all_scalar_features
+                                if f not in HBOND_FEATURES]
     _scalar_features = list(_all_scalar_features)
 
     # H-bond geometry features (distance/angle/std) are EXCLUDED from the criticality /
@@ -1495,7 +1516,8 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
             write_cluster_dat_file(cluster_name_prefix, members_data, output_base_dir, rmsd_threshold,
                                    hbond_count_for_original_cluster=hbond_count if group_hb else None, weights=weights, tolerances=abs_tolerances,
-                                   rmsd_only=rmsd_only, rmsd_heavy=rmsd_heavy)
+                                   rmsd_only=rmsd_only, rmsd_heavy=rmsd_heavy,
+                                   pool_has_hbonds=_pool_has_hbonds)
             vprint(f"Wrote combined data for Cluster '{cluster_name_prefix}' to '{cluster_name_prefix}.dat'")
 
             cluster_xyz_subfolder = os.path.join(extracted_clusters_folder, cluster_name_prefix)

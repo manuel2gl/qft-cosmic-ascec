@@ -112,6 +112,19 @@ structure rather than a failed calculation. Two places honour that:
   handful of non-H-bonded structures cannot delete the columns for everyone.
 """
 
+HBOND_FEATURES: Tuple[str, ...] = (
+    ("num_hydrogen_bonds",) + HBOND_GEOMETRY_FEATURES
+)
+"""Every column that describes the hydrogen-bond network — the count and its geometry.
+
+Distinct from :data:`HBOND_GEOMETRY_FEATURES`, which names only the three
+columns that must not gate criticality. This tuple is what a pool with no
+hydrogen bond *anywhere* drops: a Li₅ cluster (or any hydrogen-free system, or
+one where the criterion simply never fires) has nothing for these four columns
+to say, and reporting them as active features misrepresents what the partition
+was built from.
+"""
+
 FEATURE_ABSENT_DEFAULTS: Mapping[str, float] = MappingProxyType(
     {name: 0.0 for name in HBOND_GEOMETRY_FEATURES}
 )
@@ -129,6 +142,12 @@ only when *every* member has it — deletes all three H-bond geometry columns
 from the whole pool as soon as one structure has no H-bond. A handful of
 non-H-bonded structures would then silently strip H-bond information from the
 hundreds that do have it.
+
+The substitution is applied by ``scaling.apply_absent_defaults`` and is
+*conditional on the pool*: it protects a majority that has hydrogen bonds from
+a minority that does not. When no structure in the pool has one there is no
+majority to protect, and a column of identical zeros carries no information —
+the four :data:`HBOND_FEATURES` are dropped instead.
 """
 
 FEATURE_COLUMNS: Tuple[str, ...] = (
@@ -282,6 +301,7 @@ __all__ = [
     "FEATURE_COLUMNS",
     "FEATURE_MAPPING",
     "FEATURE_UNITS",
+    "HBOND_FEATURES",
     "HBOND_GEOMETRY_FEATURES",
     "ROTATIONAL_CONSTANT_SUBFEATURES",
     "SEMIEMPIRICAL_WEIGHTS",

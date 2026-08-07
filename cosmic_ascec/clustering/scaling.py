@@ -15,9 +15,7 @@ Ported verbatim from cosmic-v01.py (values, ordering, edge cases unchanged):
 * :func:`has_valid_rotational_constants` — ``has_valid_rotational_constants``
   (lines 3918-3925).
 * :func:`select_complete_group_scalar_features` —
-  ``select_complete_group_scalar_features`` (lines 3928-3937), extended so a
-  feature with a defined absent-value (H-bond geometry) is not dropped from the
-  whole pool just because some structures have no hydrogen bonds.
+  ``select_complete_group_scalar_features`` (lines 3928-3937).
 * :func:`build_feature_vectors` — ``_build_feature_vectors`` (lines 3940-3962).
 * :func:`zscore_scale` — ``_zscore_scale`` (lines 3965-4004).
 * :func:`apply_weights` — ``_apply_weights`` (lines 4007-4013).
@@ -28,11 +26,16 @@ The only deliberate change is that the leading underscore of the private
 cosmic-v01 names (``_build_feature_vectors`` …) is dropped — these are the
 clustering layer's public surface in v05; the four originally-public helpers
 keep their cosmic-v01 names verbatim.
+
+:func:`pool_has_hydrogen_bonds` and :func:`apply_absent_defaults` are new in
+v05. They run once over the whole pool, before any of the ported functions, and
+settle what the H-bond columns mean for this dataset — see
+:data:`FEATURE_ABSENT_DEFAULTS`.
 """
 
 from __future__ import annotations
 
-from typing import Any, List, Mapping, Sequence, Tuple
+from typing import Any, List, Mapping, MutableMapping, Sequence, Tuple
 
 import numpy as np
 
@@ -109,20 +112,50 @@ def has_valid_rotational_constants(molecule_data: Mapping[str, Any]) -> bool:
     )
 
 
-def feature_value(molecule_data: Mapping[str, Any], feature_name: str) -> Any:
-    """Value of *feature_name* for one structure, substituting a defined absence.
+def pool_has_hydrogen_bonds(pool: Sequence[Mapping[str, Any]]) -> bool:
+    """Return whether any structure in *pool* has a detected hydrogen bond.
 
-    A feature listed in :data:`FEATURE_ABSENT_DEFAULTS` (the H-bond geometry
-    columns) reads back as its default when the structure does not have it,
-    because "no hydrogen bonds" is a determinate state rather than missing
-    data. Every other feature returns whatever the parsers stored, ``None``
-    included.
+    The test is over the whole pool, not one structure: it decides whether the
+    H-bond columns describe anything at all. A Li₅ cluster has no hydrogen to
+    donate; a set of hydrocarbon conformers has hydrogens but never satisfies
+    the criterion. Either way the four :data:`HBOND_FEATURES` are constant and
+    say nothing about how the structures differ.
     """
-    internal_key = FEATURE_MAPPING.get(feature_name, feature_name)
-    value = molecule_data.get(internal_key)
-    if is_valid_scalar(value):
-        return value
-    return FEATURE_ABSENT_DEFAULTS.get(feature_name, value)
+    return any(
+        (molecule_data.get('num_hydrogen_bonds') or 0) > 0
+        for molecule_data in pool
+    )
+
+
+def apply_absent_defaults(pool: Sequence[MutableMapping[str, Any]]) -> bool:
+    """Materialise :data:`FEATURE_ABSENT_DEFAULTS` across *pool*; report if applied.
+
+    When at least one structure has a hydrogen bond, every structure that has
+    none gets the defined absent value (0 Å / 0 Å / 0°) written onto its record,
+    and the function returns ``True``. "No hydrogen bonds" is a determinate
+    state rather than missing data, so without this a non-H-bonded minority
+    would delete the three H-bond geometry columns for the whole pool —
+    :func:`select_complete_group_scalar_features` keeps a column only when
+    *every* member has it.
+
+    When no structure has a hydrogen bond the records are left untouched and
+    the function returns ``False``. There is no majority to protect, and a
+    column of identical zeros carries no information; the caller drops the four
+    :data:`HBOND_FEATURES` instead of clustering on them.
+
+    Writing the values onto the records rather than substituting them at each
+    read keeps the decision in one place: everything downstream — the feature
+    selection, the vectors, ``matching``, the ``.dat`` reports — sees one
+    consistent set of values through a plain ``.get()``.
+    """
+    if not pool_has_hydrogen_bonds(pool):
+        return False
+    for molecule_data in pool:
+        for feature_name, default in FEATURE_ABSENT_DEFAULTS.items():
+            internal_key = FEATURE_MAPPING.get(feature_name, feature_name)
+            if not is_valid_scalar(molecule_data.get(internal_key)):
+                molecule_data[internal_key] = default
+    return True
 
 
 def select_complete_group_scalar_features(
@@ -133,20 +166,17 @@ def select_complete_group_scalar_features(
 
     Returns ``(active_features, dropped_features)``.
 
-    Ported from cosmic-v01's ``select_complete_group_scalar_features``
-    (lines 3928-3937). One deliberate change: a feature with an entry in
-    :data:`FEATURE_ABSENT_DEFAULTS` counts as present for a member that lacks
-    it. Without that, a single structure with no hydrogen bonds strips the
-    three H-bond geometry columns from every structure in the pool — the
-    non-H-bonded minority deciding what the majority is clustered on.
+    Verbatim port of cosmic-v01's ``select_complete_group_scalar_features``
+    (lines 3928-3937). The H-bond geometry columns survive a non-H-bonded
+    member because :func:`apply_absent_defaults` has already written their
+    defined absent value onto the record — the substitution happens once, at
+    the pool, not here.
     """
     active_features: List[str] = []
     dropped_features: List[str] = []
     for feature_name in candidate_features:
-        if all(
-            is_valid_scalar(feature_value(molecule_data, feature_name))
-            for molecule_data in group_data
-        ):
+        internal_key = FEATURE_MAPPING.get(feature_name, feature_name)
+        if all(is_valid_scalar(molecule_data.get(internal_key)) for molecule_data in group_data):
             active_features.append(feature_name)
         else:
             dropped_features.append(feature_name)
@@ -166,9 +196,9 @@ def build_feature_vectors(
     a zero-weight column would contribute nothing to the weighted distance, so
     dropping it keeps ``n_eff`` honest.
 
-    Ported from cosmic-v01's ``_build_feature_vectors`` (lines 3940-3962), with
-    values read through :func:`feature_value` so a structure with no hydrogen
-    bonds contributes its defined absence rather than a ``None``.
+    Verbatim port of cosmic-v01's ``_build_feature_vectors`` (lines 3940-3962).
+    A structure with no hydrogen bonds already carries the defined absent value
+    on its record — :func:`apply_absent_defaults` put it there.
     """
     vectors: List[List[Any]] = []
     feature_names: List[str] = []
@@ -177,7 +207,8 @@ def build_feature_vectors(
         names: List[str] = []
         for feat in scalar_features:
             if weights.get(feat, 1.0) != 0.0:
-                vec.append(feature_value(mol, feat))
+                key = FEATURE_MAPPING.get(feat, feat)
+                vec.append(mol.get(key))
                 names.append(feat)
         if use_rotconsts:
             rc = mol.get("rotational_constants")
@@ -291,14 +322,15 @@ def median_pairwise_distance(scaled_matrix: np.ndarray) -> float:
 
 
 __all__ = [
+    "apply_absent_defaults",
     "apply_weights",
     "build_feature_vectors",
     "effective_n_features",
-    "feature_value",
     "group_has_any_clustering_feature_data",
     "has_valid_rotational_constants",
     "is_valid_scalar",
     "median_pairwise_distance",
+    "pool_has_hydrogen_bonds",
     "select_complete_group_scalar_features",
     "zscore_scale",
 ]

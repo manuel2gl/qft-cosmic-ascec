@@ -24,11 +24,17 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any, Dict, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
+from typing import (
+    Any, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union,
+)
 
 import numpy as np
 
 from cosmic_ascec.clustering.energies import EnergyMode, sorting_energy
+from cosmic_ascec.clustering.motifs import (
+    geometric_representative,
+    pool_has_energies,
+)
 from cosmic_ascec.clustering.scaling import (
     effective_n_features,
     median_pairwise_distance,
@@ -85,32 +91,55 @@ def attach_pearson_to_rep(
     tau: Optional[float],
     mode: EnergyMode,
 ) -> None:
-    """For each mol in *mols*, find the lowest-energy member of its cluster
-    (the property-cluster representative) and record the Pearson similarity
-    of the mol to that representative. Uses the weighted z-scored vectors in
-    *scaled_matrix* (same row order as *mols*).
+    """For each mol in *mols*, find its cluster's representative and record the
+    Pearson similarity of the mol to that representative. Uses the weighted
+    z-scored vectors in *scaled_matrix* (same row order as *mols*).
 
-    Verbatim port of cosmic-v01's ``_attach_pearson_to_rep`` (4068-4089).
+    The representative follows the same rule
+    :func:`~cosmic_ascec.clustering.motifs.create_unique_motifs_folder` uses, so
+    the similarities reported in the ``.dat`` files are measured against the
+    structure that actually becomes the motif: the lowest-energy member
+    normally, the centroid-closest member for a geometry-only pool (plain XYZ
+    with no ``--sp``). Without that second branch every ``sorting_energy`` would
+    be ``inf`` there and the rule would silently degenerate into "first member
+    by filename", naming a structure unrelated to the motif. Each mol carries
+    the rule that was applied in ``_pearson_rep_rule`` so the report can state
+    it.
+
+    Ported from cosmic-v01's ``_attach_pearson_to_rep`` (4068-4089).
     cosmic-v01's ``_sorting_energy`` global becomes the explicit *mode*
     argument (**D-007**).
     """
     n_eff = effective_n_features(scaled_matrix)
-    rep_by_label: Dict[Any, Tuple[int, MutableMapping[str, Any], Tuple[float, str]]] = {}
-    for idx, lbl in enumerate(cluster_labels):
-        current = rep_by_label.get(lbl)
-        mol = mols[idx]
-        if current is None or (sorting_energy(mol, mode), mol['filename']) < current[2]:
-            rep_by_label[lbl] = (idx, mol, (sorting_energy(mol, mode), mol['filename']))
+    geometry_only = not pool_has_energies([list(mols)])
+
+    rep_by_label: Dict[Any, int] = {}
+    if geometry_only:
+        rows_by_label: Dict[Any, List[int]] = {}
+        for idx, lbl in enumerate(cluster_labels):
+            rows_by_label.setdefault(lbl, []).append(idx)
+        for lbl, rows in rows_by_label.items():
+            rep_mol = geometric_representative([mols[i] for i in rows])
+            rep_by_label[lbl] = next(i for i in rows if mols[i] is rep_mol)
+    else:
+        ranked: Dict[Any, Tuple[float, str]] = {}
+        for idx, lbl in enumerate(cluster_labels):
+            mol = mols[idx]
+            key = (sorting_energy(mol, mode), mol['filename'])
+            if lbl not in ranked or key < ranked[lbl]:
+                ranked[lbl] = key
+                rep_by_label[lbl] = idx
+
     for idx, mol in enumerate(mols):
-        lbl = cluster_labels[idx]
-        rep_idx, rep_mol, _ = rep_by_label[lbl]
+        rep_idx = rep_by_label[cluster_labels[idx]]
         d = float(np.linalg.norm(scaled_matrix[idx] - scaled_matrix[rep_idx]))
-        mol['_pearson_rep_filename'] = rep_mol['filename']
+        mol['_pearson_rep_filename'] = mols[rep_idx]['filename']
         mol['_pearson_rep_distance'] = d
         mol['_pearson_n_eff'] = n_eff
         mol['_pearson_rep_r'] = pearson_r_from_distance(d, n_eff)
         mol['_pearson_rep_pct'] = pearson_similarity_pct(d, n_eff)
         mol['_pearson_threshold_tau'] = float(tau) if tau is not None else None
+        mol['_pearson_rep_rule'] = 'centroid' if geometry_only else 'energy'
 
 
 def threshold_entry(

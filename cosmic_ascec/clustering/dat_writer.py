@@ -24,6 +24,7 @@ from cosmic_ascec.clustering.energies import (
     hartree_to_ev,
     hartree_to_kcal_mol,
 )
+from cosmic_ascec.clustering.features.feature_spec import HBOND_FEATURES
 from cosmic_ascec.clustering.features.geometric import (
     HB_MAX_DISTANCE,
     HB_MIN_ANGLE,
@@ -31,7 +32,6 @@ from cosmic_ascec.clustering.features.geometric import (
     atomic_number_to_symbol,
 )
 from cosmic_ascec.clustering.rmsd import calculate_rmsd
-from cosmic_ascec.clustering.scaling import feature_value
 from cosmic_ascec.clustering.thresholds import (
     pearson_similarity_pct as _pearson_similarity_pct,
 )
@@ -49,6 +49,7 @@ def write_cluster_dat_file(
     tolerances: Optional[Mapping[str, float]] = None,
     rmsd_only: bool = False,
     rmsd_heavy: bool = False,
+    pool_has_hbonds: bool = True,
 ) -> None:
     """
     Writes combined .dat file for cluster members, including comparison and
@@ -58,6 +59,14 @@ def write_cluster_dat_file(
     a condensed Pearson trust-score block (intro + similarity floor only) and a
     deviation analysis restricted to the active reduced feature vector
     (unused / N/A features are omitted rather than printed as ``N/A``).
+
+    ``pool_has_hbonds`` is the dataset-wide verdict from
+    ``scaling.apply_absent_defaults``. When it is ``False`` no structure in the
+    run has a single hydrogen bond, so the four H-bond descriptors were never in
+    the feature vector — reporting them here as deviations or weights would say
+    they shaped a partition they took no part in. The whole H-bond section
+    collapses to one line for the same reason. Defaults to ``True`` so a caller
+    outside the orchestrator keeps the full report.
     """
     if weights is None:
         weights = {}
@@ -177,9 +186,24 @@ def write_cluster_dat_file(
                 None,
             )
 
+            # Geometry-only runs (plain XYZ, no --sp) rank on descriptor
+            # geometry rather than energy; attach_pearson_to_rep records which
+            # rule produced the representative so this text cannot drift from
+            # the structure actually named below.
+            _rep_rule = next(
+                (m.get('_pearson_rep_rule') for m in cluster_members_data
+                 if m.get('_pearson_rep_rule')),
+                'energy',
+            )
+            if _rep_rule == 'centroid':
+                _rep_rule_text = ("the member closest to the cluster centroid in\n"
+                                  "  descriptor space, as no energies are available")
+            else:
+                _rep_rule_text = "the lowest-energy member"
+
             f.write("Pearson Similarity to Cluster Representative\n")
             f.write("--------------------------------------------\n")
-            f.write("  Each cluster has a representative (the lowest-energy member).\n")
+            f.write(f"  Each cluster has a representative ({_rep_rule_text}).\n")
             f.write("  For every member we measure how similar it is to that representative\n")
             f.write("  using the Pearson identity derived from the weighted, z-standardised\n")
             f.write("  feature vectors.\n")
@@ -236,12 +260,12 @@ def write_cluster_dat_file(
                 ("First Vibrational Frequency (cm^-1)", lambda d: d.get('first_vib_freq'), "first_vib_freq"),
                 ("Last Vibrational Frequency (cm^-1)", lambda d: d.get('last_vib_freq'), "last_vib_freq"),
                 ("Number of Hydrogen Bonds", lambda d: d.get('num_hydrogen_bonds'), "num_hydrogen_bonds"),
-                # Read through feature_value so a member with no hydrogen bonds
-                # shows the 0.0 the clustering vector actually used, instead of
-                # the whole row being reported as an unused feature.
-                ("Average H-Bond Distance (Å)", lambda d: feature_value(d, 'average_hbond_distance'), "average_hbond_distance"),
-                ("Std H-Bond Distance (Å)", lambda d: feature_value(d, 'std_hbond_distance'), "std_hbond_distance"),
-                ("Average H-Bond Angle (°)", lambda d: feature_value(d, 'average_hbond_angle'), "average_hbond_angle"),
+                # A member with no hydrogen bonds carries the 0.0 the clustering
+                # vector actually used: apply_absent_defaults wrote it onto the
+                # record, so a plain .get() reports what was clustered on.
+                ("Average H-Bond Distance (Å)", lambda d: d.get('average_hbond_distance'), "average_hbond_distance"),
+                ("Std H-Bond Distance (Å)", lambda d: d.get('std_hbond_distance'), "std_hbond_distance"),
+                ("Average H-Bond Angle (°)", lambda d: d.get('average_hbond_angle'), "average_hbond_angle"),
                 ("Rotational Constant A (cm^-1)", lambda d: d['rotational_constants'][0] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_A"),
                 ("Rotational Constant B (cm^-1)", lambda d: d['rotational_constants'][1] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_B"),
                 ("Rotational Constant C (cm^-1)", lambda d: d['rotational_constants'][2] if d.get('rotational_constants') is not None and isinstance(d.get('rotational_constants'), np.ndarray) and len(d.get('rotational_constants')) == 3 else None, "rotational_constants_C"),
@@ -268,6 +292,11 @@ def write_cluster_dat_file(
                 values = [extractor(d) for d in cluster_members_data]
                 if not all(v is not None for v in values):
                     _missing_features.add(feat_key)
+            if not pool_has_hbonds:
+                # No structure in the run has a hydrogen bond, so none of these
+                # four was a clustering feature. num_hydrogen_bonds is a valid
+                # 0 on every record and would otherwise slip through as active.
+                _missing_features.update(HBOND_FEATURES)
             _all_excluded = _missing_features | _zero_weight
 
             if _all_excluded:
@@ -369,10 +398,11 @@ def write_cluster_dat_file(
                 f.write(f"        Rotational Constants (cm^-1): {rc[0]:.6f}, {rc[1]:.6f}, {rc[2]:.6f}\n")
             else:
                 f.write("        Rotational Constants (cm^-1): N/A\n")
-            write_scalar_descriptor_line(f, "Average H-Bond Distance (Å)", mol_data.get('average_hbond_distance'), lambda value: f"{value:.6f}")
-            write_scalar_descriptor_line(f, "Std H-Bond Distance (Å)", mol_data.get('std_hbond_distance'), lambda value: f"{value:.6f}")
-            write_scalar_descriptor_line(f, "Average H-Bond Angle (°)", mol_data.get('average_hbond_angle'), lambda value: f"{value:.6f}")
-            write_scalar_descriptor_line(f, "Number of Hydrogen Bonds", mol_data.get('num_hydrogen_bonds'), lambda value: f"{int(value)}")
+            if pool_has_hbonds:
+                write_scalar_descriptor_line(f, "Average H-Bond Distance (Å)", mol_data.get('average_hbond_distance'), lambda value: f"{value:.6f}")
+                write_scalar_descriptor_line(f, "Std H-Bond Distance (Å)", mol_data.get('std_hbond_distance'), lambda value: f"{value:.6f}")
+                write_scalar_descriptor_line(f, "Average H-Bond Angle (°)", mol_data.get('average_hbond_angle'), lambda value: f"{value:.6f}")
+                write_scalar_descriptor_line(f, "Number of Hydrogen Bonds", mol_data.get('num_hydrogen_bonds'), lambda value: f"{int(value)}")
         f.write("\n")
 
         f.write("Vibrational frequency summary:\n")
@@ -390,15 +420,19 @@ def write_cluster_dat_file(
 
         f.write("Hydrogen bond analysis:\n")
         f.write(f"Criterion: H...A distance between {HB_MIN_DISTANCE:.1f} Å and {HB_MAX_DISTANCE:.1f} Å, D-H...A angle >= {HB_MIN_ANGLE:.1f}°, with H covalently bonded to a donor (O, N, F).\n")
-        for mol_data in cluster_members_data:
-            f.write(f"    {mol_data['filename']}:\n")
-            f.write(f"        Number of hydrogen bonds: {mol_data.get('num_hydrogen_bonds', 0)}\n")
+        if pool_has_hbonds:
+            for mol_data in cluster_members_data:
+                f.write(f"    {mol_data['filename']}:\n")
+                f.write(f"        Number of hydrogen bonds: {mol_data.get('num_hydrogen_bonds', 0)}\n")
 
-            if mol_data.get('hbond_details'):
-                for hbond in mol_data['hbond_details']:
-                    f.write(f"            Hydrogen bond: {hbond['donor_atom_label']}-{hbond['hydrogen_atom_label']}...{hbond['acceptor_atom_label']} (Dist: {hbond['H...A_distance']:.3f} Å, D-H: {hbond['D-H_covalent_distance']:.3f} Å, Angle: {hbond['D-H...A_angle']:.2f}°)\n")
-            else:
-                f.write("        No hydrogen bonds detected based on the criterion.\n")
+                if mol_data.get('hbond_details'):
+                    for hbond in mol_data['hbond_details']:
+                        f.write(f"            Hydrogen bond: {hbond['donor_atom_label']}-{hbond['hydrogen_atom_label']}...{hbond['acceptor_atom_label']} (Dist: {hbond['H...A_distance']:.3f} Å, D-H: {hbond['D-H_covalent_distance']:.3f} Å, Angle: {hbond['D-H...A_angle']:.2f}°)\n")
+                else:
+                    f.write("        No hydrogen bonds detected based on the criterion.\n")
+        else:
+            # One line instead of the same sentence repeated per structure.
+            f.write("    No hydrogen bonds detected in any structure of this cluster.\n")
         f.write("\n")
 
         # RMSD comparison section (for clusters with multiple configurations)

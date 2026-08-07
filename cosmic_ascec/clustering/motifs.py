@@ -38,9 +38,11 @@ from cosmic_ascec.clustering.energies import (
 from cosmic_ascec.clustering.features.feature_spec import (
     CLUSTERING_NUMERICAL_FEATURES,
     FEATURE_MAPPING,
+    HBOND_FEATURES,
     ROTATIONAL_CONSTANT_SUBFEATURES,
 )
 from cosmic_ascec.clustering.features.geometric import atomic_number_to_symbol
+from cosmic_ascec.clustering.scaling import pool_has_hydrogen_bonds
 
 Record = MutableMapping[str, Any]
 Cluster = List[Record]
@@ -102,11 +104,14 @@ def pool_has_energies(all_clusters_data: Sequence[Cluster]) -> bool:
     )
 
 
-def _geometric_representative(cluster_members: Sequence[Record]) -> Record:
+def geometric_representative(cluster_members: Sequence[Record]) -> Record:
     """Pick the member closest to the cluster's centroid in descriptor space.
 
     Used when the pool carries no energy at all — the XYZ front-end without
-    ``--sp``, where the usual lowest-energy rule has nothing to rank on. The
+    ``--sp``, where the usual lowest-energy rule has nothing to rank on. Public
+    because ``thresholds.attach_pearson_to_rep`` selects the same representative
+    for its similarity report: the ``.dat`` block must name the structure that
+    becomes the motif, not a different one. The
     axes are the same clustering features the partition was built from, so the
     representative is central in the space the cluster actually lives in.
 
@@ -297,7 +302,7 @@ def create_unique_motifs_folder(
 
         # Find the lowest energy representative from valid (non-imaginary) members only
         if geometry_only:
-            representative = _geometric_representative(valid_members)
+            representative = geometric_representative(valid_members)
         else:
             representative = min(valid_members,
                                key=lambda x: (sorting_energy(x, mode), x['filename']))
@@ -464,6 +469,13 @@ def create_unique_motifs_folder(
                 'average_hbond_angle'
             ]
             all_potential_numerical_features = _all_num_features if dataset_has_freq else [f for f in _all_num_features if f not in _freq_dep]
+            # No representative has a hydrogen bond: the four H-bond descriptors
+            # are constant and were not clustering features in the main run
+            # either (orchestrator's _pool_has_hbonds). Keep this dendrogram's
+            # feature set matching the one that produced the motifs.
+            if not pool_has_hydrogen_bonds([rep_data for rep_data, _ in sorted_representatives_with_ids]):
+                all_potential_numerical_features = [f for f in all_potential_numerical_features
+                                                    if f not in HBOND_FEATURES]
             rotational_constant_subfeatures = ROTATIONAL_CONSTANT_SUBFEATURES
 
             # Check which features are globally available across all representatives
@@ -670,5 +682,7 @@ __all__ = [
     "combine_xyz_files",
     "create_unique_motifs_folder",
     "detect_motif_input_level",
+    "geometric_representative",
+    "pool_has_energies",
     "write_xyz_file",
 ]

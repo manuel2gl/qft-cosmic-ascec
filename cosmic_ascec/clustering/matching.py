@@ -26,6 +26,10 @@ from typing import Any, Dict, List, MutableMapping, Mapping, Sequence, Tuple
 import numpy as np
 
 from cosmic_ascec.clustering.energies import EnergyMode, sorting_energy
+from cosmic_ascec.clustering.motifs import (
+    geometric_representative,
+    pool_has_energies,
+)
 from cosmic_ascec.clustering.scaling import (
     apply_weights,
     build_feature_vectors,
@@ -69,9 +73,17 @@ def match_reduced_to_clusters(
     clusters: Dict[Any, List[Record]] = defaultdict(list)
     for mol, lbl in zip(fullest_mols, cluster_labels_fullest):
         clusters[lbl].append(mol)
+    # Same representative rule as motifs / attach_pearson_to_rep: lowest energy,
+    # or centroid-closest when the pool carries none (plain XYZ, no --sp). There
+    # every sorting_energy is inf, so the energy rule would anchor the match on
+    # whichever member sorts first by filename.
+    geometry_only = not pool_has_energies([list(fullest_mols)])
     representatives: Dict[Any, Record] = {}
     for lbl, members in clusters.items():
-        representatives[lbl] = min(members, key=lambda x: (sorting_energy(x, mode), x['filename']))
+        representatives[lbl] = (
+            geometric_representative(members) if geometry_only
+            else min(members, key=lambda x: (sorting_energy(x, mode), x['filename']))
+        )
 
     # Index fullest mols for quick lookup
     fullest_idx = {id(mol): i for i, mol in enumerate(fullest_mols)}
@@ -144,6 +156,7 @@ def match_reduced_to_clusters(
                 mol['_pearson_rep_r'] = pearson_r_from_distance(best_dist, n_eff_reduced)
                 mol['_pearson_rep_pct'] = pearson_similarity_pct(best_dist, n_eff_reduced)
                 mol['_pearson_threshold_tau'] = float(threshold) if threshold is not None else None
+                mol['_pearson_rep_rule'] = 'centroid' if geometry_only else 'energy'
                 matched_by_label[best_label].append(mol)
             else:
                 unmatched.append(mol)
