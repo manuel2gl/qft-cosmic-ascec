@@ -102,6 +102,7 @@ from cosmic_ascec.clustering.scaling import (
     select_complete_group_scalar_features,
     zscore_scale,
 )
+from cosmic_ascec.file_formats.provenance import describe, load_mapping
 from cosmic_ascec.clustering.thresholds import (
     attach_pearson_to_rep,
     compute_knee_threshold,
@@ -730,6 +731,12 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     dendrogram_images_folder = os.path.join(output_base_dir, "dendrogram_images")
     extracted_data_folder = os.path.join(output_base_dir, "extracted_data")
     extracted_clusters_folder = os.path.join(output_base_dir, "extracted_clusters")
+
+    # Trajectory provenance for this run, or None. mapping.dat is written by the
+    # MD pre-filter and exists nowhere else, so an ordinary clustering run gets
+    # None here and every comment and summary line below is built as it always
+    # was. This is the whole of the MD/non-MD distinction.
+    md_provenance = load_mapping(output_base_dir)
 
 
 
@@ -1492,6 +1499,11 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                     elec = m_data.get('final_electronic_energy')
                     elec_str = f"{elec:.6f} Hartree" if elec is not None else "N/A"
                     hbond_group_summary_lines.append(f"  - {m_data['filename']} (Electronic Energy: {elec_str})")
+                # Trajectory-derived runs name the frame each structure came
+                # from; every other run appends nothing at all.
+                _trace = describe(md_provenance, m_data['filename'])
+                if _trace:
+                    hbond_group_summary_lines[-1] += f"  [{_trace}]"
             hbond_group_summary_lines.append("\n")
 
             # Add newline after cluster info
@@ -1528,9 +1540,10 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             for m_data in members_data:
                 m_data['_cluster_global_id'] = current_global_cluster_id
                 xyz_filename = os.path.join(cluster_xyz_subfolder, os.path.splitext(m_data['filename'])[0] + ".xyz")
-                write_xyz_file(m_data, xyz_filename, mode)
+                write_xyz_file(m_data, xyz_filename, mode, provenance=md_provenance)
 
-            combine_xyz_files(members_data, cluster_xyz_subfolder, mode, output_base_name=cluster_name_prefix)
+            combine_xyz_files(members_data, cluster_xyz_subfolder, mode,
+                              output_base_name=cluster_name_prefix, provenance=md_provenance)
 
             total_clusters_outputted += 1
             cluster_global_id_counter += 1

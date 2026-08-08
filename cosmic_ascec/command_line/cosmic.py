@@ -30,6 +30,9 @@ Flag surface (full list in ``cosmic --help``):
 * ``--prev-out-dir`` — sibling stage for composite-Gibbs energy lookup.
 * ``--data`` — dump the feature matrix and exit.
 * ``--sp`` / ``--charge`` / ``--uhf`` — xTB single points for XYZ input.
+* ``--shell`` / ``--nearest`` — reduce a solvated MD trajectory to the solute
+  and its solvation shell, then cluster that. See
+  :mod:`cosmic_ascec.file_formats.md_trajectory`.
 
 The CLI is intentionally a thin shell over
 :func:`cosmic_ascec.clustering.perform_clustering_and_analysis` — adding a
@@ -43,6 +46,7 @@ import argparse
 import glob
 import os
 import sys
+from pathlib import Path
 
 from cosmic_ascec.clustering import console
 from cosmic_ascec.clustering.console import print_step, print_version_banner
@@ -55,6 +59,7 @@ from cosmic_ascec.clustering.features.feature_spec import (
 )
 from cosmic_ascec.clustering.features.xtb_sp import SP_METHODS, resolve_sp_method
 from cosmic_ascec.clustering.features.xyz_input import (
+    FRAMES_SUBDIR,
     XYZ_EXTENSION,
     XYZ_GLOB,
     is_xyz_byproduct,
@@ -161,6 +166,242 @@ def preprocess_j_argument(argv):
     return extracted_flags + processed_argv
 
 
+#: Where a single named .xyz is staged so the downstream globs see only it.
+SELECTED_SUBDIR = "xyz_selected"
+
+
+def _stage_single_xyz(path, base_dir):
+    """Copy one named .xyz into a directory of its own and return that directory.
+
+    ``cosmic ensemble.xyz`` has to mean *that* ensemble. The clustering pipeline
+    works in terms of an input folder and re-globs it as it goes
+    (:func:`~cosmic_ascec.clustering.orchestrator.perform_clustering_and_analysis`),
+    so a lone file is honoured by giving it a folder containing exactly itself —
+    the same device :func:`_stage_xyz_selection` uses when discovery narrows a
+    set. Kept out of the frames directory the orchestrator writes into, so
+    nothing reads and writes the same place.
+    """
+    import shutil
+
+    staged = os.path.join(base_dir, SELECTED_SUBDIR)
+    os.makedirs(staged, exist_ok=True)
+    for stale in glob.glob(os.path.join(staged, XYZ_GLOB)):
+        os.remove(stale)
+    target = os.path.join(staged, os.path.basename(path))
+    if os.path.abspath(target) != os.path.abspath(path):
+        shutil.copyfile(path, target)
+    return staged
+
+
+def _clear_work_dir(work_dir, parser, replace):
+    """Make *work_dir* hold nothing left over from an earlier extraction.
+
+    Only the frames just extracted may live in the directory that gets
+    clustered, and that has to hold one level down as well: the orchestrator
+    explodes the multi-frame file into ``xyz_frames/`` and then globs *that*,
+    so 23 frames left there by a previous selection would join a new run of 5
+    and be clustered alongside them.
+
+    Deletes precisely what a re-extraction invalidates — the staged frames, the
+    exploded copies and the descriptor cache — rather than emptying the
+    directory, which may be one the user named and put other things in.
+    """
+    import shutil
+
+    if not work_dir.is_dir():
+        work_dir.mkdir(parents=True, exist_ok=True)
+        return
+
+    stale = sorted(work_dir.glob(XYZ_GLOB))
+    frames_dir = work_dir / FRAMES_SUBDIR
+    caches = sorted(work_dir.glob("data_cache_*.pkl"))
+
+    if (stale or frames_dir.is_dir()) and not replace:
+        parser.error(
+            f"'{work_dir}' already holds an earlier extraction. Re-run with "
+            f"--reprocess-files to replace it, or point --work-dir somewhere else."
+        )
+
+    for path in stale + caches:
+        path.unlink()
+    if frames_dir.is_dir():
+        shutil.rmtree(frames_dir)
+
+
+def _output_dir_for(input_source):
+    """Where a run's results belong: *beside* the input that produced them.
+
+    Naming an input on the command line means "analyse that", and the answer
+    belongs next to it — so a batch fired off from one place,
+
+        for f in serie*/w6_*/w6_*.pdb; do cosmic "$f"; done
+
+    leaves each result in its own directory instead of every run's output
+    collapsing into whichever directory the loop was launched from.
+
+    "Beside" is meant literally in both cases, which makes them differ:
+
+    * a **file** puts its results in the directory holding it, next to the file;
+    * a **folder** puts them in that folder's parent, next to the folder —
+      never inside it, so a directory of inputs stays a directory of inputs and
+      does not accumulate motifs and caches among the structures.
+
+    Returns None, meaning "the working directory" as COSMIC has always done,
+    whenever that is where the results would land anyway: no input named, an
+    input that *is* the working directory (``cosmic .``), or the ordinary
+    ``cosmic xyz_dir`` whose parent is simply where you already are.
+    """
+    if not input_source:
+        return None
+
+    here = os.path.abspath(os.getcwd())
+    if os.path.isfile(input_source):
+        directory = os.path.dirname(os.path.abspath(input_source))
+    else:
+        folder = os.path.abspath(input_source)
+        if folder == here:
+            return None
+        directory = os.path.dirname(folder)
+
+    return None if directory == here else directory
+
+
+#: Default name for a trajectory run's output directory, before numbering.
+WORK_DIR_BASENAME = "cosmic"
+
+
+def _next_work_dir(base_dir, basename=WORK_DIR_BASENAME):
+    """``cosmic``, then ``cosmic_2``, ``cosmic_3`` … — the first name not taken.
+
+    Every trajectory run gets a directory of its own, so a second run never
+    lands on top of the first. That matters more here than for ordinary
+    clustering: the pipeline re-globs its input folder, so frames left over
+    from an earlier selection would silently join the new ensemble rather than
+    being overwritten.
+
+    Created in the working directory rather than beside the trajectory. The old
+    name was derived from the trajectory's own (``traj_dt90_shell``) and could
+    safely sit next to it; a name as generic as ``cosmic`` belongs where the
+    user is working, not scattered through shared data directories.
+    """
+    base = Path(base_dir)
+    candidate = base / basename
+    if not candidate.exists():
+        return candidate
+    suffix = 2
+    while (base / f"{basename}_{suffix}").exists():
+        suffix += 1
+    return base / f"{basename}_{suffix}"
+
+
+def _parse_name_list(value):
+    """Split a comma-separated residue-name argument into a tuple of names."""
+    if not value:
+        return ()
+    return tuple(part for part in (p.strip() for p in value.split(",")) if part)
+
+
+def run_shell_extraction(args, parser):
+    """``--shell`` / ``--nearest``: carve a solute + its solvation shell.
+
+    A solvated MD trajectory is not a clustering input — a box of bisphenol A in
+    water is 22077 atoms per frame, and the descriptors are pairwise. This
+    reduces every frame to the solute and its nearest solvent, and writes the
+    result into a directory holding nothing else.
+
+    That directory is the return value, and ``main`` then points the ordinary
+    folder-clustering path at it, so the whole job is one command and there is
+    still only one call into
+    :func:`~cosmic_ascec.clustering.perform_clustering_and_analysis`. Returns an
+    exit status instead when the run should stop after extracting.
+    """
+    from cosmic_ascec.exceptions import TrajectoryError
+    from cosmic_ascec.file_formats.md_trajectory import (
+        ShellSpec,
+        extract_shell,
+        parse_element_overrides,
+    )
+
+    if args.shell is not None and args.nearest is not None:
+        parser.error("--shell and --nearest are alternatives; pass only one")
+    if not args.input_source:
+        parser.error("--shell / --nearest need a trajectory, e.g. "
+                     "cosmic traj.pdb --solute-resname=LIG --nearest=30")
+
+    trajectory = Path(args.input_source)
+
+    # A .pdb output can only be looked at, not clustered, so asking for one is
+    # itself a request to stop after extracting.
+    output_is_pdb = bool(args.output) and args.output.lower().endswith(".pdb")
+    extract_only = args.extract_only or output_is_pdb
+
+    # A named --work-dir is the user's choice and may already hold a run, so it
+    # is checked and cleared. The default picks a fresh numbered name instead,
+    # which cannot collide and so needs neither.
+    if args.work_dir:
+        work_dir = Path(args.work_dir)
+        if not extract_only:
+            _clear_work_dir(work_dir, parser, replace=args.reprocess_files)
+    else:
+        # Beside the trajectory, not in the working directory. The point is to
+        # be able to fire a batch off from one place —
+        #   for f in serie*/w6_*/w6_*.pdb; do cosmic "$f" --nearest=5; done
+        # — and have every result land with the input it came from, instead of
+        # thirty numbered directories piling up wherever the loop was launched.
+        work_dir = _next_work_dir(trajectory.parent)
+
+    output = Path(args.output) if args.output else work_dir / "shell.xyz"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if not extract_only:
+        # Only when it is about to be clustered — an --extract-only run writing
+        # elsewhere should not leave an empty directory behind.
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+    box = None
+    if args.box:
+        try:
+            box = [float(v) for v in args.box.replace(",", " ").split()]
+        except ValueError:
+            parser.error(f"--box must be a number or 'Lx,Ly,Lz', not {args.box!r}")
+
+    try:
+        overrides = parse_element_overrides(args.elements)
+    except TrajectoryError as exc:
+        parser.error(str(exc))
+
+    spec = ShellSpec(
+        output=output,
+        cutoff=args.shell,
+        count=args.nearest,
+        solute_resnames=_parse_name_list(args.solute_resname),
+        solute_indices=args.solute,
+        solvent_resnames=_parse_name_list(args.solvent_resname),
+        solvent_size=args.solvent_size,
+        box=box,
+        periodic=not args.no_pbc,
+        first=args.first,
+        last=args.last,
+        stride=args.stride,
+        order=args.order,
+        element_overrides=overrides,
+        verify=args.verify,
+        command=" ".join(["cosmic"] + sys.argv[1:]),
+    )
+
+    # Flushed so the header cannot appear after an error written to stderr.
+    print_step("Extracting solute + solvation shell from trajectory", flush=True)
+    try:
+        extract_shell(trajectory, spec)
+    except TrajectoryError as exc:
+        print(f"\nERROR: {exc}", file=sys.stderr)
+        return 1
+
+    if extract_only:
+        print(f"\n  Stopping after extraction. Cluster it with:  cosmic {output}")
+        return 0
+    return str(work_dir)
+
+
 def main(argv=None):
     """COSMIC clustering CLI — verbatim port of cosmic-v01.py lines 6296-6744.
 
@@ -184,6 +425,17 @@ def main(argv=None):
   rotational constants A/B/C, and the four H-bond columns) with no QM run at
   all — the entry point for large systems. '--sp' adds 4 more via one xTB
   single point per structure. A multi-frame .xyz is split per frame.
+
+  An MD trajectory (.pdb/.gro/.xyz) can be given directly. Say which part of it
+  matters and cosmic reduces every frame to the solute plus its solvation shell
+  before clustering, in the same command:
+
+      cosmic traj.pdb --solute-resname=BPA --nearest=30 -j4
+
+  Without that, a solvated box is far too large to cluster — the descriptors
+  are pairwise, so tens of thousands of atoms per frame is hopeless while the
+  solute and its 30 nearest waters is 123 atoms. See 'MD TRAJECTORY PRE-FILTER'
+  under KEY OPTIONS.
 
 HOW IT WORKS:
   1. Parse QM outputs (.log/.out) or coordinates (.xyz) into the feature vector
@@ -235,7 +487,78 @@ KEY OPTIONS:
   FOLDER                Directory of .out/.log QM outputs or .xyz coordinates —
                         or a single .xyz file (default: current / interactive).
 
+MD TRAJECTORY PRE-FILTER (--shell / --nearest):
+  A solvated trajectory cannot be clustered as it stands — a solute in a box of
+  water is tens of thousands of atoms per frame, and the descriptors are
+  pairwise. These flags carve out the solute plus the solvent actually touching
+  it and then cluster the result, in one command. Input is .pdb or .gro (both
+  carry a cell per frame and residue names) or .xyz (needs --box and --solute).
+
+  --nearest N           Keep the N nearest solvent molecules. Constant atom
+                        count, so frames differ in geometry only, and --rmsd
+                        has the equal-size input it requires. Note that solvent
+                        identity still turns over between frames, so an
+                        all-atom RMSD across the shell measures that turnover
+                        as much as it measures the solute.
+  --nearest 0           Drop the solvent entirely — cluster the solute's own
+                        conformations across the trajectory. No cell needed,
+                        since no distance is measured across one.
+  --shell R             Keep every solvent molecule within R Å. Physically
+                        honest, but frames vary in size and composition.
+  --solute-resname NAMES  Residue name(s) of the solute: BPA, or LIG,HEM.
+  --solvent-resname NAMES Residue name(s) allowed into the shell. Keeps
+                        counter-ions out; everything unnamed is ignored.
+  --solute 1-33         Solute as atom indices (required for .xyz input).
+  --stride N            Keep every Nth frame — thins a long trajectory.
+  --verify              Check every frame: molecules intact, correctly re-imaged.
+  --extract-only        Write the frames and stop, without clustering.
+  --elements MAP        Name the element behind a force-field atom type, e.g.
+                        'IN=N', or '@types.map' for a whole force field.
+  --work-dir DIR        Where the frames and the clustering output go (default
+                        'cosmic' beside the trajectory, then 'cosmic_2',
+                        'cosmic_3' … so a re-run never lands on top of an
+                        earlier one).
+  -o FILE               Name the extracted file. A .pdb name implies
+                        --extract-only, since only .xyz can be clustered.
+
+  Selection is molecule-whole and periodic: a molecule counts if any of its
+  atoms reaches the solute, it is never cut in half, and it is translated into
+  the periodic image beside the solute. Skipping that last step writes a
+  neighbour 3 Å away as one 57 Å away and quietly ruins every descriptor. Any
+  cell shape is handled, including the rhombic dodecahedron GROMACS defaults to
+  for solvated proteins, and the selection uses a KD-tree so a protein-sized
+  solute costs no more than a small molecule.
+
+  Atom names in an MD file are force-field types, not element symbols. COSMIC
+  reads the PDB element columns when they are filled in, drops virtual sites
+  (TIP4P's MW, lone pairs, Drude particles) rather than choking on them, and
+  prints the name->element table it resolved so a wrong guess is visible at
+  once. Genuinely ambiguous types — IN is indium and a nitrogen type — are
+  refused rather than guessed; name them with --elements.
+
+  TRACEABILITY: every trajectory run writes mapping.dat into the work
+  directory, joining each clustered structure to the trajectory frame it came
+  from, its simulation time and step, which solvent molecules were in its
+  shell, and the cluster and motif it ended up in. The same frame and time are
+  appended to the comment lines of shell.xyz, the motif files,
+  extracted_clusters/ and clustering_summary.txt. Runs that are not from a
+  trajectory have no mapping.dat and are not annotated at all.
+
+WHERE RESULTS GO:
+  Naming an input puts its results beside it, so a batch launched from one
+  place leaves each answer with the data it came from rather than piling
+  everything into the directory the loop ran in:
+    cosmic runs/a/traj.pdb --nearest=5   → runs/a/cosmic/ (then cosmic_2, ...)
+    cosmic runs/a/w6.xyz                 → runs/a/
+    cosmic runs/a                        → runs/  (beside the folder, never
+                                            inside it — a folder of inputs
+                                            stays a folder of inputs)
+  With no input, or with '.', results land in the working directory as always.
+  --output-dir overrides all of this.
+
 MAIN OUTPUTS:
+  mapping.dat              Trajectory runs only: frame → time, step, solvent,
+                           cluster and motif (see --shell / --nearest below)
   clustering_summary.txt   Full report (clusters, τ source, similarity floors)
   dendrogram_images/       Annotated dendrogram(s)
   extracted_clusters/      One folder per family + representative motif
@@ -261,11 +584,41 @@ EXAMPLES:
   cosmic ensemble.xyz -j4          Cluster a multi-frame file (split per frame)
   cosmic --compare a.out b.out     Compare two structures directly
 
+MD TRAJECTORY EXAMPLES (extract + cluster in one command):
+  cosmic traj.pdb --solute-resname=BPA --nearest=30 -j4
+                                   Solute + its 30 nearest waters, every frame
+                                   the same size, clustered. Everything lands
+                                   in cosmic/ (cosmic_2/ next time)
+  cosmic traj.pdb --solute-resname=BPA --nearest=0 -j4
+                                   Solute only, solvent discarded — pure
+                                   conformational clustering of the molecule
+  cosmic traj.pdb --solute-resname=BPA --shell=5.0 -j4
+                                   Everything within 5 Å instead (variable size)
+  cosmic traj.pdb --solute-resname=LIG,HEM --solvent-resname=SOL --nearest=40 -j4
+                                   Two-residue solute, ions excluded from the
+                                   shell by naming the solvent
+  cosmic traj.pdb --solute-resname=BPA --nearest=30 --stride=5 -j4
+                                   Same, keeping every 5th frame
+  cosmic traj.pdb --solute-resname=BPA --nearest=30 --verify --extract-only
+                                   Extract and self-check, cluster later
+  cosmic traj.pdb --solute-resname=BPA --nearest=30 -o look.pdb
+                                   Write a PDB to open in VMD (extract only)
+  cosmic traj.gro --solute-resname=BPA --nearest=30 -j4
+                                   GROMACS .gro, triclinic cells included
+  cosmic traj.xyz --solute=1-33 --box=60.729 --nearest=30 -j4
+                                   XYZ input: no residues and no box, so both
+                                   have to be given explicitly
+
 TYPICAL PIPELINE (or use the automated protocol in one .asc file):
   ascec input.asc r5 --concurrent=5   → 5 replicate annealing runs
   ascec opt template.inp launcher.sh  → build + run optimization inputs
   ascec sort                          → collect and rank
   cosmic -j4                          → unique motifs
+
+FROM AN MD TRAJECTORY (one command, nothing to prepare):
+  gmx trjconv -f run.xtc -o traj.pdb -pbc mol    → text trajectory, solute whole
+  cosmic traj.pdb --solute-resname=BPA --nearest=30 -j4
+                                                 → shell extracted, then motifs
 
 SUPPORTED FORMATS:
   Gaussian .log (cclib) · ORCA 5.0.x .out (cclib) · ORCA 6.1+ .out (OPI)
@@ -274,6 +627,9 @@ SUPPORTED FORMATS:
   8 geometry-derived descriptors; add --sp for the 4 electronic ones. Precedence
   in a mixed folder is .out > .log > .xyz. An xTB input superseded by its own
   .xtbopt.xyz result is dropped, so a structure is never clustered twice.
+  MD trajectories: .pdb and .gro (both carry a cell per frame and residue names,
+  any cell shape), or .xyz with --box and --solute. Needs --shell or --nearest to
+  say what to keep. Convert a binary trajectory first: gmx trjconv -pbc mol.
 
 CITATION:
   Manuel, G.; Sara, G.; Albeiro, R. Universidad de Antioquia (2026)
@@ -366,6 +722,88 @@ CITATION:
                         help="number of unpaired electrons passed to the --sp single "
                              "points (default 0).")
 
+    # --- MD trajectory pre-filter -----------------------------------------
+    # A solvated trajectory cannot be clustered as it stands: hundreds of bulk
+    # solvent molecules swamp the pairwise descriptors and say nothing about
+    # the solute's conformation. Passing --shell or --nearest turns cosmic into
+    # a one-shot extractor that writes a small multi-frame XYZ and exits; that
+    # file is then clustered by an ordinary second cosmic call.
+    md = parser.add_argument_group(
+        "MD trajectory pre-filter",
+        "Carve a solute plus its solvation shell out of a solvated trajectory "
+        "(.pdb, .gro or .xyz), then cluster it — one command, one call."
+    )
+    md.add_argument("--shell", type=float, default=None, metavar="R",
+                    help="keep every solvent molecule coming within R Å of the solute. "
+                         "Physically honest, but the count varies per frame, so frames "
+                         "differ in composition as well as geometry (and --rmsd cannot "
+                         "compare them).")
+    md.add_argument("--nearest", type=int, default=None, metavar="N",
+                    help="keep the N nearest solvent molecules. Every frame gets the same "
+                         "formula and atom count, which is what makes frames comparable "
+                         "and is required for --rmsd. Recommended for clustering. "
+                         "--nearest=0 drops the solvent entirely and clusters the solute's "
+                         "own conformations.")
+    md.add_argument("-o", "--output", type=str, default=None, metavar="FILE",
+                    help="where to write the extracted frames (default: shell.xyz inside "
+                         "the work directory). Give a .pdb name to inspect the result in "
+                         "VMD instead — that stops after extraction, since only .xyz can "
+                         "be clustered.")
+    md.add_argument("--extract-only", action="store_true",
+                    help="write the extracted frames and stop, without clustering them. "
+                         "Use it to check a selection before committing to a long run.")
+    md.add_argument("--work-dir", type=str, default=None, metavar="DIR",
+                    help="directory for the extracted frames and the clustering output "
+                         "(default: 'cosmic' beside the trajectory, then 'cosmic_2', "
+                         "'cosmic_3' and so on, so a re-run never overwrites an earlier "
+                         "one). It holds exactly the extracted frames, which is what "
+                         "keeps the clustering from picking up unrelated .xyz files.")
+    md.add_argument("--solute-resname", type=str, default=None, metavar="NAMES",
+                    help="residue name(s) of the solute, comma-separated: BPA, or "
+                         "LIG,HEM for a multi-residue solute. Default: the residue of "
+                         "atom 1. .pdb / .gro input only.")
+    md.add_argument("--solvent-resname", type=str, default=None, metavar="NAMES",
+                    help="residue name(s) eligible as shell material, comma-separated. "
+                         "Anything neither solute nor solvent is ignored entirely — this "
+                         "is what keeps counter-ions out of the shell. Default: "
+                         "everything that is not solute.")
+    md.add_argument("--solute", type=str, default=None, metavar="SPEC",
+                    help="solute as explicit 1-based atom indices, e.g. 1-33 or 1-33,58. "
+                         "Required for .xyz input, which carries no residue names.")
+    md.add_argument("--solvent-size", type=int, default=3, metavar="N",
+                    help="atoms per solvent molecule for .xyz input (default 3, water). "
+                         ".pdb / .gro input read this from the residue numbering instead.")
+    # A single string rather than nargs='+': with nargs the FOLDER positional
+    # gets swallowed by `cosmic --box 60.7 traj.xyz`.
+    md.add_argument("--box", type=str, default=None, metavar="L",
+                    help="periodic box: one cubic edge, or three as 'Lx,Ly,Lz', in Å. "
+                         "Read per frame from CRYST1 (.pdb) or the box line (.gro), so "
+                         "both an NPT cell and a non-orthogonal one are handled; "
+                         "required only for .xyz input.")
+    md.add_argument("--no-pbc", action="store_true",
+                    help="treat the system as non-periodic (no minimum-image distances, "
+                         "no re-imaging of the selected molecules).")
+    md.add_argument("--first", type=int, default=0, metavar="I",
+                    help="first trajectory frame to read, 0-based (default 0).")
+    md.add_argument("--last", type=int, default=None, metavar="I",
+                    help="last trajectory frame to read, inclusive (default: to the end).")
+    md.add_argument("--stride", type=int, default=1, metavar="N",
+                    help="keep only every Nth frame (default 1). The cheapest way to "
+                         "thin a long trajectory down to a workable ensemble.")
+    md.add_argument("--order", choices=("distance", "index"), default="distance",
+                    help="write solvent molecules ordered by distance to the solute "
+                         "(default) or by their original atom index.")
+    md.add_argument("--elements", type=str, default="", metavar="MAP",
+                    help="name the element behind an atom name, e.g. 'OS=O,IN=N'. Use "
+                         "'@types.map' to read a whole force field from a file, one "
+                         "'NAME SYMBOL' pair per line. Needed when a force-field atom "
+                         "type is ambiguous — 'IN' is indium and a nitrogen type, and "
+                         "COSMIC asks rather than guessing.")
+    md.add_argument("--verify", action="store_true",
+                    help="after building each frame, check that every kept molecule is "
+                         "geometrically intact and landed in the periodic image beside "
+                         "the solute. Reports the worst deviation found.")
+
     # Hidden/advanced options
     parser.add_argument("--min-std-threshold", type=float, default=1e-6,
                         help=argparse.SUPPRESS)
@@ -375,9 +813,11 @@ CITATION:
                         help=argparse.SUPPRESS)
 
     # Positional argument
-    parser.add_argument('input_source', nargs='?', default=None, metavar="FOLDER",
+    parser.add_argument('input_source', nargs='?', default=None, metavar="FOLDER|TRAJECTORY",
                         help='directory containing .out/.log QM outputs or .xyz '
-                             'coordinate files (a single .xyz file is also accepted)')
+                             'coordinate files (a single .xyz file is also accepted), '
+                             'or an MD trajectory (.pdb/.gro/.xyz) together with '
+                             '--shell/--nearest saying which part of it to cluster')
 
 
     # Preprocess arguments to handle -j8 format
@@ -393,6 +833,32 @@ CITATION:
     # --data: dump feature vectors from the given cache file and exit.
     if args.data:
         return run_data_extraction(args.data, out_dir=args.output_dir)
+
+    # --shell / --nearest: pre-filter an MD trajectory, then carry on and
+    # cluster what came out. Extraction happens here, before any clustering
+    # setup, and simply re-points input_source at the directory it filled — so
+    # every clustering flag below applies unchanged and there is still only one
+    # call into the orchestrator.
+    if args.shell is not None or args.nearest is not None:
+        outcome = run_shell_extraction(args, parser)
+        if isinstance(outcome, int):
+            return outcome
+        args.input_source = outcome
+        # Keep the clustering output beside the frames it came from rather than
+        # scattering it through the user's working directory.
+        if args.output_dir is None:
+            args.output_dir = outcome
+
+    # A trajectory that arrived without a selection would otherwise fall
+    # through to the folder scan and be reported as "no structures found".
+    if args.input_source and str(args.input_source).lower().endswith((".pdb", ".gro")):
+        parser.error(
+            f"'{args.input_source}' is an MD trajectory, not a structure folder. "
+            f"Say which part of it to cluster, e.g.\n"
+            f"    cosmic {args.input_source} --solute-resname=<RES> --nearest=30\n"
+            f"which extracts the solute plus its 30 nearest solvent molecules and "
+            f"clusters them in one go."
+        )
 
     # Validate --threshold: accept "auto", "opt", or a float string.
     # "opt-pearson"/"opt-spread" are deprecated (they rebuilt τ from the current
@@ -460,7 +926,7 @@ CITATION:
     except ValueError as exc:
         parser.error(str(exc))
 
-    output_directory = args.output_dir
+    output_directory = args.output_dir or _output_dir_for(args.input_source)
     force_reprocess_cache = args.reprocess_files
     user_weights_dict = parse_weights_argument(args.weights)
     # Pick tuned semiempirical baseline only when --partialweights is passed;
@@ -563,7 +1029,12 @@ CITATION:
                     print(f"Error: '{args.input_source}' is a file; only .xyz files can be "
                           f"given directly. Pass the containing folder instead.")
                     return 1
-                selected_folders = [os.path.dirname(os.path.abspath(args.input_source)) or current_dir]
+                # Name one file and that is the file you get. Handing over its
+                # directory instead would sweep in every other .xyz beside it,
+                # because the pipeline re-globs its input folder several times
+                # downstream — so the only way to make a one-file selection
+                # stick is to give it a folder holding exactly that file.
+                selected_folders = [_stage_single_xyz(args.input_source, args.output_dir or current_dir)]
                 file_extension_pattern = XYZ_GLOB
             elif not os.path.isdir(args.input_source):
                 print(f"Error: Input source '{args.input_source}' is not a directory.")

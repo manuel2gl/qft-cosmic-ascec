@@ -24,7 +24,7 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Any, Dict, List, MutableMapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -43,6 +43,7 @@ from cosmic_ascec.clustering.features.feature_spec import (
 )
 from cosmic_ascec.clustering.features.geometric import atomic_number_to_symbol
 from cosmic_ascec.clustering.scaling import pool_has_hydrogen_bonds
+from cosmic_ascec.file_formats.provenance import describe, load_mapping, update_mapping
 
 Record = MutableMapping[str, Any]
 Cluster = List[Record]
@@ -192,12 +193,40 @@ def representative_energy_comment(mol_data: Record, mode: EnergyMode) -> str:
         label, value = 'E', mol_data.get('final_electronic_energy')
 
     if value is None:
-        return f"{label} = N/A"
+        # Nothing to say. A geometry-only run has no energy at all, and writing
+        # "E = N/A" into every comment line of every file states that at length
+        # without informing anyone. Callers omit the parenthetical entirely
+        # when this is empty; with --sp, or with QM outputs, it comes back.
+        return ""
     return (f"{label} = {value:.6f} Hartree "
             f"({hartree_to_kcal_mol(value):.2f} kcal/mol, {hartree_to_ev(value):.2f} eV)")
 
 
-def write_xyz_file(mol_data: Record, filename: str, mode: EnergyMode) -> None:
+def structure_comment(mol_data: Record, mode: EnergyMode, *,
+                      prefix: str = "", provenance: Optional[Mapping[str, Any]] = None) -> str:
+    """The comment line for one structure's XYZ record.
+
+    ``<prefix><name> (E = ...) | traj frame 3  t= 40000 ps``, with each part
+    dropped when it has nothing to say: no energy without a QM result, no
+    provenance outside a trajectory-derived run. Every writer of a structure
+    goes through here so the four places COSMIC emits geometry cannot drift
+    into four different formats.
+    """
+    name = os.path.splitext(os.path.basename(mol_data.get('filename', '')))[0]
+    comment = f"{prefix}{name}"
+
+    energy = representative_energy_comment(mol_data, mode)
+    if energy:
+        comment += f" ({energy})"
+
+    trace = describe(provenance, mol_data.get('filename', ''))
+    if trace:
+        comment += f" | {trace}"
+    return comment
+
+
+def write_xyz_file(mol_data: Record, filename: str, mode: EnergyMode,
+                   provenance: Optional[Mapping[str, Any]] = None) -> None:
     """
     Writes atomic coordinates to an XYZ file with energy in the comment line.
     Freq mode: Gibbs free energy (original).  Opt-only mode: electronic energy.
@@ -213,8 +242,7 @@ def write_xyz_file(mol_data: Record, filename: str, mode: EnergyMode) -> None:
         print(f"  WARNING: Cannot write XYZ for {os.path.basename(filename)}: Missing geometry data.")
         return
 
-    base_name = os.path.splitext(os.path.basename(mol_data['filename']))[0]
-    comment_line = f"{base_name} ({representative_energy_comment(mol_data, mode)})"
+    comment_line = structure_comment(mol_data, mode, provenance=provenance)
 
     symbols = [atomic_number_to_symbol(n) for n in atomnos]
 
@@ -354,6 +382,23 @@ def create_unique_motifs_folder(
             key=lambda x: (sorting_energy(x[0], mode), x[0]['filename'])
         )
 
+    # Trajectory provenance, when this run came from one. load_mapping returns
+    # None for every ordinary COSMIC run, so the comment lines below are built
+    # exactly as they always were unless a mapping.dat sits in the output dir.
+    provenance = load_mapping(output_base_dir)
+    if provenance is not None:
+        cluster_of = {}
+        for cluster_idx, members in enumerate(all_clusters_data):
+            resolved = cluster_id_mapping[cluster_idx] if cluster_id_mapping else cluster_idx + 1
+            for member in members:
+                cluster_of[member.get('filename', '')] = resolved
+        motif_of = {rep['filename']: idx for idx, (rep, _)
+                    in enumerate(sorted_representatives_with_ids, 1)}
+        update_mapping(output_base_dir, cluster_of, motif_of)
+        # Re-read so the records carry the columns just written, and the motif
+        # files below can quote a structure's cluster as well as its frame.
+        provenance = load_mapping(output_base_dir)
+
     for motif_idx, (representative, cluster_id) in enumerate(sorted_representatives_with_ids, 1):
         base_name = os.path.splitext(representative['filename'])[0]
 
@@ -382,7 +427,7 @@ def create_unique_motifs_folder(
 
         motif_path = os.path.join(motifs_dir, motif_filename)
 
-        write_xyz_file(representative, motif_path, mode)
+        write_xyz_file(representative, motif_path, mode, provenance=provenance)
 
         display_prefix = output_prefix.upper() if output_prefix == 'umotif' else 'Motif'
         if dataset_has_freq:
@@ -406,15 +451,21 @@ def create_unique_motifs_folder(
                 continue
 
             base_name = os.path.splitext(rep_data['filename'])[0]
-            energy_comment = representative_energy_comment(rep_data, mode)
             # Use the output_prefix for naming, include source info for umotif
             if output_prefix == 'umotif':
                 # For umotifs, include the source motif name in the comment for traceability
-                motif_name = f"{output_prefix}_{motif_idx:02d}"
-                comment_line = f"{motif_name} (from {base_name}, {energy_comment})"
+                energy_comment = representative_energy_comment(rep_data, mode)
+                source = f"from {base_name}"
+                detail = f"{source}, {energy_comment}" if energy_comment else source
+                comment_line = f"{output_prefix}_{motif_idx:02d} ({detail})"
+                trace = describe(provenance, rep_data.get('filename', ''))
+                if trace:
+                    comment_line += f" | {trace}"
             else:
-                motif_name = f"{output_prefix}_{motif_idx:02d}_{base_name}"
-                comment_line = f"{motif_name} ({energy_comment})"
+                comment_line = structure_comment(
+                    rep_data, mode, prefix=f"{output_prefix}_{motif_idx:02d}_",
+                    provenance=provenance,
+                )
 
             outfile.write(f"{len(atomnos)}\n")
             outfile.write(f"{comment_line}\n")
@@ -564,6 +615,7 @@ def combine_xyz_files(
     openbabel_alias: str = "obabel",
     prefix_template: Optional[str] = None,
     motif_numbers: Optional[Sequence[int]] = None,
+    provenance: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """
     Combines relevant .xyz data from cluster members into a single multi-frame
@@ -620,24 +672,15 @@ def combine_xyz_files(
                     print(f"    WARNING: Skipping {mol_data['filename']} in combined XYZ due to missing geometry data.")
                     continue
 
-                base_name_for_frame = os.path.splitext(mol_data['filename'])[0]
-                if mode.has_freq:
-                    gibbs_free_energy = mol_data.get('gibbs_free_energy')
-                    gibbs_str = f"{gibbs_free_energy:.6f} Hartree ({hartree_to_kcal_mol(gibbs_free_energy):.2f} kcal/mol, {hartree_to_ev(gibbs_free_energy):.2f} eV)" if gibbs_free_energy is not None else "N/A"
-                    energy_comment = f"G = {gibbs_str}"
-                else:
-                    electronic_energy = mol_data.get('final_electronic_energy')
-                    elec_str = f"{electronic_energy:.6f} Hartree ({hartree_to_kcal_mol(electronic_energy):.2f} kcal/mol, {hartree_to_ev(electronic_energy):.2f} eV)" if electronic_energy is not None else "N/A"
-                    energy_comment = f"E = {elec_str}"
-
                 # Apply prefix template with actual motif number if provided
                 if prefix_template and sorted_motif_numbers:
-                    motif_num = sorted_motif_numbers[frame_idx - 1]  # frame_idx starts at 1
-                    comment_line = f"{prefix_template.format(motif_num)}{base_name_for_frame} ({energy_comment})"
+                    prefix = prefix_template.format(sorted_motif_numbers[frame_idx - 1])
                 elif prefix_template:
-                    comment_line = f"{prefix_template.format(frame_idx)}{base_name_for_frame} ({energy_comment})"
+                    prefix = prefix_template.format(frame_idx)
                 else:
-                    comment_line = f"{base_name_for_frame} ({energy_comment})"
+                    prefix = ""
+                comment_line = structure_comment(mol_data, mode, prefix=prefix,
+                                                 provenance=provenance)
 
                 outfile.write(f"{len(atomnos)}\n")
                 outfile.write(f"{comment_line}\n")

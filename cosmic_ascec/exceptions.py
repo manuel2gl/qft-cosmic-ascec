@@ -35,6 +35,10 @@ class BoxTooSmallError(GeometryError):
     """Requested cluster does not fit in the simulation box."""
 
 
+class TrajectoryError(CosmicAscecError):
+    """Raised when an MD trajectory cannot be read or the shell selection is invalid."""
+
+
 class QMError(CosmicAscecError):
     """Raised on quantum chemistry package failures."""
 
