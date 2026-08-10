@@ -1,3 +1,39 @@
 # Tell GitHub Linguist to ignore the HTML tool file for language detection.
 # The repo is Python-based; the HTML is a bundled web interface (not source code).
 index.html linguist-vendored=true
+
+# ---------------------------------------------------------------------------
+# Line endings.
+#
+# Git for Windows defaults to core.autocrlf=true, which rewrites every text
+# file to CRLF on checkout. That silently breaks the two things that care:
+#   - install.sh / uninstall.sh and every generated launcher, which fail under
+#     WSL and Git Bash with "bad interpreter: /bin/bash^M"
+#   - nothing at all on the .bat side, which genuinely wants CRLF
+# Pinning both directions makes a Windows clone work without asking the user to
+# configure git first.
+#
+# Deliberately NOT using "* text=auto": that would renormalise every existing
+# file in the repo (including the 1.7 MB index.html) and produce an enormous
+# one-off diff. The extensions that actually matter are listed instead.
+# ---------------------------------------------------------------------------
+
+*.sh    text eol=lf
+*.py    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
+*.asc   text eol=lf
+*.xyz   text eol=lf
+
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Leave these to the platform default.
+*.md    text
+*.html  text
+
+# Never touched by end-of-line conversion.
+*.pdf   binary
+*.png   binary
+*.jpg   binary
