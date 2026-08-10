@@ -17,11 +17,11 @@ REM  certutil.exe and tar.exe, all shipped with Windows 10 1803 and later.
 REM
 REM  What it does:
 REM    1. Installs Miniconda to %USERPROFILE%\Miniconda3 if no conda is found
-REM    2. Obtains git if missing (winget, else conda-forge, else a source zip)
-REM    3. Clones or updates the source in %USERPROFILE%\software\ascec04
-REM    4. Creates the Python 3.11 conda environment "py11"
-REM    5. Installs numpy, scipy, matplotlib, cclib, openbabel, xtb, orca-pi
-REM    6. Writes ascec.cmd / cosmic.cmd into %USERPROFILE%\bin and adds it to PATH
+REM    2. Creates the Python 3.11 conda environment "py11"
+REM    3. Downloads the source into %USERPROFILE%\software\ascec04 (a plain zip
+REM       download is used when git is absent; git is optional)
+REM    4. Installs numpy, scipy, matplotlib, cclib, openbabel, xtb, orca-pi
+REM    5. Writes ascec.cmd / cosmic.cmd into %USERPROFILE%\bin and adds it to PATH
 REM
 REM  Nothing here needs administrator rights.
 REM ===========================================================================
@@ -59,7 +59,7 @@ echo.
 REM ===========================================================================
 REM  1. Find conda, or install Miniconda.
 REM ===========================================================================
-REM  Conda comes first because it doubles as a way to obtain git in step 2.
+REM  Conda comes first because it doubles as a way to obtain git in step 3.
 REM  Windows has no system package manager to fall back on.
 
 echo [1/6] Looking for an existing conda installation...
@@ -154,11 +154,14 @@ if exist "%ENV_PYTHON%" (
 )
 
 REM ===========================================================================
-REM  3. Obtain git, then fetch the source.
+REM  3. Obtain the source.
 REM ===========================================================================
-REM  git is NOT a prerequisite. Cascade: existing git -> winget -> conda-forge
-REM  -> plain zip download. The previous version ran "conda install -n base git",
-REM  which polluted the user's base environment and could force a base re-solve.
+REM  git is NOT a prerequisite and this installer never installs it for you. A
+REM  fresh install uses a plain zip download from GitHub, which needs no git at
+REM  all. git is used only when it already exists on PATH: to clone a fresh copy
+REM  (a real checkout you can update later) or to "git pull" an EXISTING one. If
+REM  you want that, install Git for Windows yourself from
+REM  https://git-scm.com/download/win and re-run this installer.
 
 echo.
 echo [3/6] Fetching the source...
@@ -166,35 +169,15 @@ echo [3/6] Fetching the source...
 set "HAVE_GIT="
 where git.exe >nul 2>&1 && set "HAVE_GIT=1"
 
-if not defined HAVE_GIT (
-    echo       git not found. Trying winget (official signed Git for Windows)...
-    where winget.exe >nul 2>&1
-    if not errorlevel 1 winget install --id Git.Git -e --source winget --silent --accept-source-agreements --accept-package-agreements >nul 2>&1
-    REM winget only updates PATH for new shells, so probe the usual location.
-    if exist "%ProgramFiles%\Git\cmd\git.exe" (
-        set "PATH=%ProgramFiles%\Git\cmd;%PATH%"
-        set "HAVE_GIT=1"
-    )
-)
-
-if not defined HAVE_GIT (
-    echo       Installing git from conda-forge into "%ENV_NAME%"...
-    "%CONDA_EXE%" install -n %ENV_NAME% --override-channels -c conda-forge -y git >nul 2>&1
-    if exist "%ENV_LIBBIN%\git.exe" (
-        set "PATH=%ENV_LIBBIN%;%ENV_SCRIPTS%;%PATH%"
-        set "HAVE_GIT=1"
-    )
-)
-
 if exist "%TARGET_DIR%\.git" goto :src_update
 if exist "%TARGET_DIR%\*" goto :src_check_empty
-goto :src_new
+goto :src_fresh
 
 :src_check_empty
 REM Target exists. If it holds anything and is not a checkout, refuse rather
-REM than letting git fail with a bare "destination path already exists".
+REM than letting the copy land on top of unrelated files.
 dir /b /a "%TARGET_DIR%" 2>nul | findstr "." >nul
-if errorlevel 1 goto :src_new
+if errorlevel 1 goto :src_fresh
 echo.
 echo   ERROR: %TARGET_DIR%
 echo   already exists, is not empty, and is not a git checkout.
@@ -205,7 +188,9 @@ goto :fail
 :src_update
 echo       Existing checkout found.
 if not defined HAVE_GIT (
-    echo       git unavailable, so it cannot be updated. Using the existing code.
+    echo       git is not installed, so this checkout cannot be updated.
+    echo       Install Git for Windows from https://git-scm.com/download/win
+    echo       and re-run to pull updates. Using the existing code for now.
     goto :src_done
 )
 REM Never clobber local edits: someone who has been editing the code in place is
@@ -228,7 +213,11 @@ if errorlevel 1 (
 )
 goto :src_done
 
-:src_new
+:src_fresh
+REM Fresh install. If git already exists, a clone gives a real checkout that can
+REM be updated later; otherwise fall straight to a zip download. We do NOT try to
+REM INSTALL git here -- installing git just to clone is exactly what stalled a
+REM fresh install before, and it buys nothing a zip download does not.
 if defined HAVE_GIT (
     echo       Cloning %REPO_URL%
     git clone "%REPO_URL%" "%TARGET_DIR%"
@@ -245,9 +234,9 @@ curl.exe -L --fail --progress-bar -o "%SRC_ZIP%" "%REPO_ZIP%"
 if errorlevel 1 (
     echo.
     echo   ERROR: could not download the source.
-    echo   git is unavailable and the zip download failed.
-    echo   Install Git for Windows from https://git-scm.com/download/win
-    echo   and re-run this installer.
+    echo   Check your network connection or proxy, then re-run this installer.
+    echo   Or install Git for Windows from https://git-scm.com/download/win
+    echo   and re-run.
     goto :fail
 )
 tar.exe -xf "%SRC_ZIP%" -C "%SRC_TMP%"
