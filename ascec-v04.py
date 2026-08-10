@@ -38,6 +38,32 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 
+def _force_utf8_console() -> None:
+    """Make stdout/stderr UTF-8 safe on Windows.
+
+    The startup banner and the progress output use box-drawing characters and
+    check marks. When stdout is a real Windows console Python encodes those
+    fine, but the generated launchers redirect it (``ascec ... > run.out``) and
+    a redirected stream falls back to the ANSI code page — cp1252 on most
+    installs — where the very first banner line raises UnicodeEncodeError and
+    kills the run before any chemistry happens. ``errors='replace'`` also keeps
+    an exotic code page from taking the process down mid-run.
+
+    POSIX is left alone: it is already UTF-8 and reconfiguring would be a no-op
+    at best.
+    """
+    if sys.platform != "win32":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+_force_utf8_console()
+
+
 def _route_aux_modes() -> int | None:
     """Intercept the auxiliary subcommands that don't need the main dispatcher."""
     if len(sys.argv) <= 1:
