@@ -4264,17 +4264,21 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 <div class="card">
                     <h2>⚙️ Installation</h2>
                     <p><strong>One-click install for Linux and Windows.</strong> The installer pulls Miniconda (if missing), the <code>py11</code> environment, and every dependency including <strong>standalone xTB</strong>, the new default annealing backend.</p>
-                    <p>ASCEC requires <strong>Python 3.9+</strong> (<strong>3.11 recommended</strong>). <strong>ORCA is optional</strong> — a preliminary run uses standalone xTB and needs no ORCA at all. Install ORCA only if you want DFT-level optimization or refinement stages.</p>
+                    <p>ASCEC requires <strong>Python 3.10+</strong> (<strong>3.11 recommended</strong>). <strong>ORCA is optional</strong> — a preliminary run uses standalone xTB and needs no ORCA at all. Install ORCA only if you want DFT-level optimization or refinement stages.</p>
+
+                    <div class="install-callout">
+                        <strong>Prerequisites:</strong> <strong>git</strong> — installed automatically if missing (from conda-forge on Linux; winget or conda-forge on Windows), with a source-archive fallback so a git-free install still works. A network connection is needed for the initial download. <strong>Administrator rights are not required</strong> on either platform.
+                    </div>
 
                     <div class="install-warning">
                         <strong>If you do install ORCA:</strong> use ORCA <strong>6.1.1</strong> (Linux). ORCA 6.0 is not supported due to parser limitations. The User Manual includes ORCA installation instructions for Linux.
                     </div>
 
                     <h3>Option 1: Automatic "One-Click" Installation (Recommended)</h3>
-                    <p>What the installer does: 1) installs Miniconda if missing, 2) creates the Python 3.11 <code>py11</code> environment, 3) installs all dependencies (numpy/scipy/matplotlib/scikit-learn, cclib, openbabel, <strong>xtb</strong>, orca-pi), 4) clones ASCEC + COSMIC, 5) wires up <code>ascec</code> / <code>cosmic</code> launchers on PATH.</p>
+                    <p>What the installer does: 1) installs Miniconda if missing, 2) creates the Python 3.11 <code>py11</code> environment, 3) installs all dependencies from conda-forge (numpy/scipy/matplotlib, cclib, openbabel, <strong>xtb</strong>, orca-pi), 4) clones ASCEC + COSMIC, 5) wires up <code>ascec</code> / <code>cosmic</code> launchers on PATH.</p>
 
                     <h4 style="margin-top:14px;">🐧 Linux (bash)</h4>
-                    <p class="install-step-note">Clones into <code>~/software/ascec04</code>, updates aliases in <code>~/.bashrc</code>.</p>
+                    <p class="install-step-note">Clones into <code>~/software/ascec04</code>. Aliases go into a fenced <code># &gt;&gt;&gt; COSMIC ASCEC &gt;&gt;&gt;</code> block in <code>~/.bashrc</code> (and <code>~/.zshrc</code> if present) — only that block is rewritten on reinstall, so your own aliases are never touched. Re-running on a checkout with uncommitted edits skips the <code>git pull</code> instead of discarding them.</p>
 
                     <div class="install-step">
                         <div class="install-step-title">1. Download the installation script</div>
@@ -4302,7 +4306,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                     </div>
 
                     <h4 style="margin-top:18px;">🪟 Windows</h4>
-                    <p class="install-step-note">Clones into <code>%USERPROFILE%\software\ascec04</code>, drops <code>ascec.cmd</code>/<code>cosmic.cmd</code> into <code>%USERPROFILE%\bin</code>, and adds that directory to your user PATH. Requires <a href="https://git-scm.com/download/win" target="_blank">Git for Windows</a>.</p>
+                    <p class="install-step-note">Clones into <code>%USERPROFILE%\software\ascec04</code>, drops <code>ascec.cmd</code>/<code>cosmic.cmd</code> into <code>%USERPROFILE%\bin</code>, and adds that directory to your user PATH. Git is installed automatically if missing; you can also install <a href="https://git-scm.com/download/win" target="_blank">Git for Windows</a> yourself beforehand.</p>
 
                     <div class="install-step">
                         <div class="install-step-title">1. Download the installer</div>
@@ -4313,6 +4317,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
                     <div class="install-step">
                         <div class="install-step-title">2. Double-click <code>win_install.bat</code> in File Explorer</div>
+                        <p class="install-step-note">Because the file came from the internet, Windows marks it and SmartScreen may show <em>"Windows protected your PC"</em>. Choose <strong>More info &rarr; Run anyway</strong>. The installer is plain, readable batch — open it in Notepad first if you want to check exactly what it does.</p>
                     </div>
 
                     <div class="install-step">
@@ -4324,7 +4329,11 @@ H  -0.757000  0.586000  0.000000"></textarea>
                     </div>
 
                     <div class="install-callout">
-                        Manual setup: open the <a href="https://manuel2gl.github.io/qft-cosmic-ascec/manual.pdf" target="_blank">User Manual</a> and follow <strong>Step-by-Step Conda Installation</strong>.
+                        <strong>On Windows,</strong> running calculations is fully supported — annealing, preoptimization, clustering and refinement all work. <code>ascec status</code>, Ctrl+D detach and the <code>after &lt;PID&gt;</code> background queue are <strong>Linux-only</strong>, since they rely on process groups, signals and <code>/proc</code>.
+                    </div>
+
+                    <div class="install-callout">
+                        Manual setup: open the <a href="https://manuel2gl.github.io/qft-cosmic-ascec/manual.pdf" target="_blank">User Manual</a> and follow <strong>Step-by-Step Conda Installation</strong>, or use the <code>environment.yml</code> shipped in the repository (<code>conda env create -f environment.yml</code>).
                     </div>
                 </div>
 
