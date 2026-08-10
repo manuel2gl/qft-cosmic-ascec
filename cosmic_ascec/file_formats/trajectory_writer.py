@@ -38,7 +38,7 @@ def _restore_dummy_atom_symbol(mol_path: Path) -> None:
     # obabel writes the non-standard 'X' element as '*' in the MOL atom block;
     # restore it so viewers don't choke on the placeholder.
     try:
-        text = mol_path.read_text()
+        text = mol_path.read_text(encoding='utf-8', errors='replace')
     except OSError:
         return
     fixed_lines = []
@@ -47,7 +47,7 @@ def _restore_dummy_atom_symbol(mol_path: Path) -> None:
             line = line[:31] + _BOX_MARKER_SYMBOL + line[32:]
         fixed_lines.append(line)
     try:
-        mol_path.write_text("".join(fixed_lines))
+        mol_path.write_text("".join(fixed_lines), encoding='utf-8')
     except OSError:
         pass
 
@@ -83,8 +83,8 @@ class TrajectoryWriter(AnnealingCallback):
 
     def on_run_start(self, event: RunStart) -> None:  # noqa: ARG002
         """Truncate the trajectory files so a re-run never appends to stale data."""
-        self.result_path.write_text("")
-        self.resultbox_path.write_text("")
+        self.result_path.write_text("", encoding='utf-8')
+        self.resultbox_path.write_text("", encoding='utf-8')
 
     def on_config_accepted(self, event: ConfigAccepted) -> None:
         """Append one frame to ``result`` and one (box-marked) to ``resultbox``."""
@@ -97,7 +97,7 @@ class TrajectoryWriter(AnnealingCallback):
             _atom_line(Z_TO_SYMBOL.get(z, "X"), x, y, zc)
             for z, (x, y, zc) in zip(cluster.atomic_numbers, cluster.coords)
         ]
-        with self.result_path.open("a") as fh:
+        with self.result_path.open("a", encoding='utf-8') as fh:
             fh.write(f"{cluster.num_atoms}\n{header}\n")
             fh.write("\n".join(atom_lines) + "\n")
 
@@ -109,7 +109,7 @@ class TrajectoryWriter(AnnealingCallback):
             _atom_line(_BOX_MARKER_SYMBOL, x, y, z)
             for x, y, z in _box_corner_coords(cluster.box_length)
         ]
-        with self.resultbox_path.open("a") as fh:
+        with self.resultbox_path.open("a", encoding='utf-8') as fh:
             fh.write(f"{cluster.num_atoms + len(corner_lines)}\n{box_header}\n")
             fh.write("\n".join(atom_lines + corner_lines) + "\n")
 
@@ -125,7 +125,12 @@ class TrajectoryWriter(AnnealingCallback):
         """Generate result_<seed>.mol and resultbox_<seed>.mol via obabel, matching mono."""
         import shutil as _shutil
         import subprocess as _subprocess
-        if not _shutil.which("obabel"):
+        # Invoke the resolved path, not the bare name. conda-forge ships
+        # obabel on Windows as a .bat shim, which CreateProcess will not
+        # find from "obabel" alone (PATHEXT is consulted by shutil.which,
+        # not by subprocess).
+        _obabel = _shutil.which("obabel")
+        if not _obabel:
             return
         for xyz_path in (self.result_path, self.resultbox_path):
             if not xyz_path.exists() or xyz_path.stat().st_size == 0:
@@ -133,7 +138,7 @@ class TrajectoryWriter(AnnealingCallback):
             mol_path = xyz_path.with_suffix(".mol")
             try:
                 _subprocess.run(
-                    ["obabel", "-ixyz", str(xyz_path), "-omol", "-O", str(mol_path)],
+                    [_obabel, "-ixyz", str(xyz_path), "-omol", "-O", str(mol_path)],
                     capture_output=True, check=False, timeout=60,
                 )
             except (OSError, _subprocess.SubprocessError):
@@ -168,7 +173,7 @@ class TrajectoryWriter(AnnealingCallback):
             ):
                 symbol = Z_TO_SYMBOL.get(z, "X")
                 lines.append(f"{symbol:<3} {x: 12.6f} {y: 12.6f} {zc: 12.6f}")
-        self.rless_path.write_text("\n".join(lines) + "\n")
+        self.rless_path.write_text("\n".join(lines) + "\n", encoding='utf-8')
 
 
 __all__ = ["TrajectoryWriter"]

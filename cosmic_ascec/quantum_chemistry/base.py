@@ -228,7 +228,7 @@ class QuantumChemistryAdapter(ABC):
         first, then :attr:`energy_fallback_patterns` in order. Raises
         :class:`~cosmic_ascec.exceptions.QMError` if nothing matches.
         """
-        content = Path(output_path).read_text(errors="ignore")
+        content = Path(output_path).read_text(errors="ignore", encoding='utf-8')
         energy = parse_energy_from_text(
             content, self.energy_pattern, self.energy_fallback_patterns
         )

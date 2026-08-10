@@ -115,7 +115,7 @@ def update_box_size_in_input(input_file_path: str, new_box_size: float) -> str:
     Returns:
         str: Modified content with updated box size
     """
-    with open(input_file_path, 'r') as f:
+    with open(input_file_path, 'r', encoding='utf-8', errors='replace') as f:
         lines = f.readlines()
     
     # Find and update Line 2 (Simulation Cube Length)
@@ -165,7 +165,12 @@ def create_launcher_script(replicated_files: List[str], input_dir: str, script_n
     ascec_directory = _REPO_ROOT
 
     try:
-        with open(launcher_path, 'w') as f:
+        # newline='': write bytes exactly as given. The Windows branch below
+        # emits explicit \r\n; with the default newline=None those \n would be
+        # translated a second time on Windows, producing \r\r\n on every line.
+        # The POSIX branch writes \n and must keep \n even when generated on
+        # Windows, so that the .sh still runs under WSL or Git Bash.
+        with open(launcher_path, 'w', newline='', encoding='utf-8') as f:
             if is_windows:
                 f.write("@echo off\r\n\r\n")
                 f.write("rem Configuration for ASCEC v04\r\n")
@@ -255,7 +260,7 @@ def merge_launcher_scripts(working_dir: str = ".") -> str:
 
     try:
         for script_path in launcher_scripts:
-            with open(script_path, 'r') as f:
+            with open(script_path, 'r', encoding='utf-8', errors='replace') as f:
                 lines = f.readlines()
 
             # Extract python commands (skip shebang, comments, echo, set/export lines)
@@ -277,7 +282,8 @@ def merge_launcher_scripts(working_dir: str = ".") -> str:
         ascec_directory = _REPO_ROOT
 
         # Write merged launcher script
-        with open(merged_launcher_path, 'w') as f:
+        # newline='': see create_launcher_script above.
+        with open(merged_launcher_path, 'w', newline='', encoding='utf-8') as f:
             if is_windows:
                 f.write("@echo off\r\n\r\n")
                 f.write("rem Configuration for ASCEC v04\r\n")
@@ -369,7 +375,7 @@ def create_replicated_runs(input_file_path: str, num_replicas: int, create_launc
         
         # Copy the original input file to the new location
         try:
-            with open(input_file_path_full, 'r') as src:
+            with open(input_file_path_full, 'r', encoding='utf-8', errors='replace') as src:
                 content = src.read()
             
             # Update box size if specified
@@ -378,7 +384,7 @@ def create_replicated_runs(input_file_path: str, num_replicas: int, create_launc
 
             content = strip_protocol_from_content(content)
             
-            with open(replicated_input_path, 'w') as dst:
+            with open(replicated_input_path, 'w', encoding='utf-8') as dst:
                 dst.write(content)
             
             replicated_files.append(replicated_input_path)

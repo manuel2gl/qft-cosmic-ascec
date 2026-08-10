@@ -295,6 +295,89 @@ def natural_sort_key(s):
     return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
 
 
+def _has_path_separator(path: str) -> bool:
+    """True when *path* contains a directory separator of either flavour.
+
+    Tests written as ``'/' in path`` silently answer False for every Windows
+    path, because os.path.join produces backslashes there. Several callers use
+    that question to decide whether a string is a path or a bare name, so
+    getting it wrong sends them down the wrong branch entirely.
+    """
+    return '/' in path or '\\' in path
+
+
+def _split_path_components(path: str) -> List[str]:
+    """Split *path* on either separator, dropping empty components."""
+    return [p for p in re.split(r'[\\/]+', path) if p]
+
+
+def _rmtree(path: str, **kwargs) -> None:
+    """``shutil.rmtree`` that can also delete read-only files.
+
+    Windows refuses to unlink a file carrying the read-only attribute, and QM
+    engines leave plenty of those behind (ORCA scratch files, Gaussian ``.chk``).
+    Plain ``shutil.rmtree`` therefore fails partway through cleanup and leaves a
+    half-deleted tree. The handler clears the attribute and retries the failed
+    operation; on POSIX it never fires.
+
+    ``onexc`` superseded ``onerror`` in Python 3.12 (``onerror`` is removed in
+    3.14), and the two differ only in whether the third argument is an
+    exception or an exc_info triple — which this handler ignores either way.
+    """
+    import stat as _stat
+
+    def _make_writable(target: str) -> None:
+        # OR the write bit in rather than assigning S_IWRITE outright: a bare
+        # assignment drops the execute bit, which a directory needs to be
+        # traversable, turning one failure into another.
+        mode = os.stat(target).st_mode
+        extra = _stat.S_IWRITE | _stat.S_IWUSR
+        if _stat.S_ISDIR(mode):
+            extra |= _stat.S_IEXEC | _stat.S_IXUSR
+        os.chmod(target, mode | extra)
+
+    def _clear_readonly(func, target, _exc):
+        try:
+            # Windows blocks the unlink via the target's own read-only
+            # attribute; POSIX blocks it via the parent directory's write bit.
+            # Clear both so one handler covers either platform.
+            try:
+                _make_writable(target)
+            except OSError:
+                pass
+            parent = os.path.dirname(target)
+            if parent:
+                try:
+                    _make_writable(parent)
+                except OSError:
+                    pass
+            func(target)
+        except Exception:
+            pass
+
+    key = 'onexc' if sys.version_info >= (3, 12) else 'onerror'
+    kwargs.setdefault(key, _clear_readonly)
+    shutil.rmtree(path, **kwargs)
+
+
+def _dedupe_paths(paths: Iterable[str]) -> List[str]:
+    """Drop case-insensitive duplicates, keeping first-seen order.
+
+    Several scans probe both spellings of a legacy directory, e.g.
+    ``glob('cosmic*') + glob('COSMIC*')``. On a case-sensitive filesystem those
+    two patterns match disjoint sets. On Windows and macOS they match the SAME
+    directory, so every entry appears twice — which silently corrupts anything
+    that then indexes or counts the result (the cosmic-chaining logic below) and
+    makes rmtree loops revisit an already-deleted path.
+    """
+    seen: Dict[str, str] = {}
+    for p in paths:
+        key = os.path.normcase(os.path.normpath(p))
+        if key not in seen:
+            seen[key] = p
+    return list(seen.values())
+
+
 def _cosmic_base_name(path: str) -> str:
     """Extract the cosmic base folder name from a path.
 
@@ -302,16 +385,22 @@ def _cosmic_base_name(path: str) -> str:
     returns 'cosmic'.  For relative paths like 'cosmic/orca_out_126',
     returns 'cosmic'.  For plain names like 'cosmic', returns as-is.
     Case-insensitive (legacy 'COSMIC' directories still match) for resume safety.
+
+    Both separators are accepted regardless of platform. Splitting on '/' alone
+    left the relative branch returning the whole of 'cosmic_2\\orca_out_5' on
+    Windows, so every path derived from it (skipped_structures/... and friends)
+    pointed at a directory that does not exist.
     """
     if os.path.isabs(path):
         # Walk up from the leaf until we find a 'cosmic*' component
-        parts = path.split(os.sep)
+        parts = _split_path_components(path)
         for part in reversed(parts):
             if part.lower().startswith('cosmic'):
                 return part
         # Fallback: parent of last component
         return os.path.basename(os.path.dirname(path))
-    return path.split('/')[0] if '/' in path else path
+    parts = _split_path_components(path)
+    return parts[0] if parts else path
 
 
 def _canonical_calc_key(name: str) -> str:
@@ -1110,7 +1199,7 @@ def read_input_file(state: SystemState, source) -> List[MoleculeData]:
     lines = []
     if isinstance(source, str):
         state.input_file_path = source
-        with open(source, 'r') as f_obj:
+        with open(source, 'r', encoding='utf-8', errors='replace') as f_obj:
             lines = f_obj.readlines()
     else:
         state.input_file_path = "stdin_input.in" # Placeholder name for stdin
@@ -1937,7 +2026,7 @@ def extract_configurations_from_xyz(xyz_file_path: str) -> List[Dict]:
     configurations = []
     
     try:
-        with open(xyz_file_path, 'r') as f:
+        with open(xyz_file_path, 'r', encoding='utf-8', errors='replace') as f:
             lines = f.readlines()
         
         i = 0
@@ -2277,7 +2366,11 @@ def extract_qm_executable_from_launcher(launcher_content: str, qm_program_idx: i
     
     # If we found a ROOT variable, construct the executable path
     if root_var and root_value:
-        if '$' in root_value or not root_value.startswith('/'):
+        # os.path.isabs rather than a leading-'/' test: 'C:\\g16' is absolute
+        # but does not start with a slash. The '/' joining the executable onto
+        # the root is deliberate — this string is written into a POSIX launcher
+        # script, so it must stay a forward slash even when built on Windows.
+        if '$' in root_value or not os.path.isabs(root_value):
             # Variable expansion in path, use the variable
             return f"${root_var}/{default_exe}"
         else:
@@ -2596,14 +2689,14 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
         if not os.path.exists(launcher_template):
             return f"Error: Launcher template '{launcher_template}' not found."
         try:
-            with open(launcher_template, 'r') as f:
+            with open(launcher_template, 'r', encoding='utf-8', errors='replace') as f:
                 launcher_content = f.read()
         except IOError as e:
             return f"Error reading launcher template '{launcher_template}': {e}"
     
     # Read template content
     try:
-        with open(template_file, 'r') as f:
+        with open(template_file, 'r', encoding='utf-8', errors='replace') as f:
             template_content = f.read()
     except IOError as e:
         return f"Error reading template file '{template_file}': {e}"
@@ -2822,7 +2915,7 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
             # up the standard "orca" binary unless a launcher template is given.
             auto_launcher_tmp = create_auto_launcher(tmpdir, qm_program, "orca", quiet=workflow_mode)
             if auto_launcher_tmp and os.path.exists(auto_launcher_tmp):
-                with open(auto_launcher_tmp, 'r') as f:
+                with open(auto_launcher_tmp, 'r', encoding='utf-8', errors='replace') as f:
                     launcher_base_content = f.read()
                 launcher_generated_automatically = True
 
@@ -2831,7 +2924,7 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
         try:
             qm_executable = extract_qm_executable_from_launcher(launcher_base_content, qm_program_idx)
             # Ensure ORCA uses full path - fall back to detect_orca_executable if needed
-            if qm_program == 'orca' and qm_executable in ('orca', qm_alias) and '/' not in qm_executable and '$' not in qm_executable:
+            if qm_program == 'orca' and qm_executable in ('orca', qm_alias) and not _has_path_separator(qm_executable) and '$' not in qm_executable:
                 detected_path = detect_orca_executable(qm_alias)
                 if detected_path:
                     qm_executable = detected_path
@@ -2840,7 +2933,7 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
             if not workflow_mode:
                 print(f"Using QM executable: {qm_executable}")
 
-            with open(launcher_path, 'w') as f:
+            with open(launcher_path, 'w', newline='\n', encoding='utf-8') as f:  # LF: POSIX shell script
                 # Header - copy everything up to ### separator, skip any existing run commands
                 launcher_lines = launcher_base_content.rstrip().split('\n')
                 separator_found = False
@@ -2898,7 +2991,7 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
     if qm_program == 'xtb':
         launcher_path = os.path.join(output_dir, 'launcher_xtb.sh')
         try:
-            with open(launcher_path, 'w') as f:
+            with open(launcher_path, 'w', newline='\n', encoding='utf-8') as f:  # LF: POSIX shell script
                 f.write('#!/bin/bash\n')
                 f.write('set -e\n')
                 # Cap BLAS threads so --parallel 1 actually means one thread per xtb.
@@ -3077,7 +3170,7 @@ def merge_xyz_files(xyz_files: List[str], output_filename: str, quiet: bool = Fa
         
         total_configs = 0
         
-        with open(output_filename, 'w') as outfile:
+        with open(output_filename, 'w', encoding='utf-8') as outfile:
             for file_idx, xyz_file in enumerate(sorted_files):
                 try:
                     # Extract configurations from this file
@@ -3263,7 +3356,7 @@ def _relabelled_optimized_frame(opt_path, input_path, base):
     identity and swaps in the *optimised* energy, which is the whole point of
     reading this file rather than the input.
     """
-    with open(opt_path, "r") as handle:
+    with open(opt_path, "r", encoding='utf-8', errors='replace') as handle:
         lines = handle.readlines()
     if len(lines) < 2:
         return lines
@@ -3275,7 +3368,7 @@ def _relabelled_optimized_frame(opt_path, input_path, base):
     config_num = None
     if input_path and os.path.exists(input_path):
         try:
-            with open(input_path, "r") as handle:
+            with open(input_path, "r", encoding='utf-8', errors='replace') as handle:
                 original_comment = handle.readlines()[1]
             config_match = _ASCEC_CONFIG_RE.search(original_comment)
             if config_match:
@@ -3351,13 +3444,13 @@ def combine_xyz_files(output_filename="combined_results.xyz", exclude_pattern="_
 
     selected.sort(key=lambda item: get_sort_key(f"{item[0]}.xyz"))
 
-    with open(output_filename, "w") as outfile:
+    with open(output_filename, "w", encoding='utf-8') as outfile:
         for base, path, is_xtb_optimized, input_path in selected:
             print(f"Processing: {path}")
             if is_xtb_optimized:
                 outfile.writelines(_relabelled_optimized_frame(path, input_path, base))
             else:
-                with open(path, "r") as infile:
+                with open(path, "r", encoding='utf-8', errors='replace') as infile:
                     outfile.writelines(infile.readlines())
 
     n_opt = sum(1 for item in selected if item[2])
@@ -3394,7 +3487,10 @@ def convert_xyz_to_mol_simple(input_xyz, output_mol):
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-        command = ["obabel", "-i", "xyz", input_xyz, "-o", "mol", "-O", output_mol]
+        # Resolved path rather than the bare name: conda-forge ships obabel on
+        # Windows as a .bat shim that shutil.which locates via PATHEXT but
+        # subprocess cannot launch by name alone.
+        command = [shutil.which("obabel") or "obabel", "-i", "xyz", input_xyz, "-o", "mol", "-O", output_mol]
         subprocess.run(command, check=True, capture_output=True)
         return True, None
     except subprocess.CalledProcessError as e:
@@ -3850,7 +3946,7 @@ export LD_LIBRARY_PATH="$ORCA{orca_version_str}_ROOT:$_SYSTEM_LD_LIBRARY_PATH"
 '''
     
     try:
-        with open(launcher_path, 'w') as f:
+        with open(launcher_path, 'w', newline='\n', encoding='utf-8') as f:  # LF: POSIX shell script
             f.write(launcher_content)
         os.chmod(launcher_path, 0o755)
         return launcher_path
@@ -3885,7 +3981,7 @@ def resolve_orca_executable_from_launcher(launcher_content: str, qm_alias: str =
         if match:
             var_name = match.group(1)
             var_value = match.group(2)
-            if var_value.startswith('/') and '$' not in var_value:
+            if os.path.isabs(var_value) and '$' not in var_value:
                 # Absolute path - use it directly
                 full_path = os.path.join(var_value, "orca")
                 if os.path.exists(full_path):
@@ -4441,7 +4537,15 @@ def group_files_by_base_with_tracking(directory='.'):
                 src = os.path.join(directory, file)
                 dest = os.path.join(folder_path, file)
                 tracking['moved_files'][dest] = src  # destination -> original
-                shutil.move(src, dest)
+                # os.replace rather than shutil.move when the destination is
+                # already there: shutil.move raises on Windows if the target
+                # exists (POSIX rename silently overwrites), which makes a
+                # re-run of this organiser fail where the first run succeeded.
+                # The sibling loop below guards the same way.
+                if os.path.exists(dest):
+                    os.replace(src, dest)
+                else:
+                    shutil.move(src, dest)
             
             print(f"Moved {len(grouped_files)} files to folder: {base}")
             moved_count += len(grouped_files)
@@ -4685,7 +4789,7 @@ def collect_out_files_with_tracking(reuse_existing=False, target_cosmic_folder=N
                 if os.path.exists(item_path):
                     try:
                         if os.path.isdir(item_path):
-                            shutil.rmtree(item_path)
+                            _rmtree(item_path)
                         else:
                             os.remove(item_path)
                     except Exception as e:
@@ -4825,7 +4929,7 @@ def parse_cosmic_summary(summary_file: str) -> Tuple[float, float]:
     skipped_pct = 0.0
 
     try:
-        with open(summary_file, 'r') as f:
+        with open(summary_file, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
 
         # Capture critical percentages from both formats and use the strictest value.
@@ -4864,7 +4968,7 @@ def parse_cosmic_output(cosmic_dir: str) -> Tuple[int, int]:
     skipped_count = 0
 
     try:
-        with open(summary_file, 'r') as f:
+        with open(summary_file, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
 
             # Critical count can come from skipped critical files or reduced-vector unmatched.
@@ -4903,7 +5007,7 @@ def get_critical_count(optimization_dir_path: str) -> int:
             if file.endswith('.out') or file.endswith('.log'):
                 filepath = os.path.join(root, file)
                 try:
-                    with open(filepath, 'r') as f:
+                    with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
                         content = f.read()
                         # Check for imaginary frequencies (ORCA and Gaussian)
                         if 'imaginary mode' in content.lower() or '***imaginary' in content.lower():
@@ -4928,7 +5032,7 @@ def get_critical_files_list(optimization_dir_path: str) -> List[str]:
             if file.endswith('.out') or file.endswith('.log'):
                 filepath = os.path.join(root, file)
                 try:
-                    with open(filepath, 'r') as f:
+                    with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
                         content = f.read()
                         if 'imaginary mode' in content.lower() or '***imaginary' in content.lower():
                             critical_files.append(filepath)
@@ -5492,12 +5596,15 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
         # If context has better info from cache, also scan for dirs directly
         if not opt_dirs:
-            for d in sorted(glob.glob("geometry_optimization*") + glob.glob("Geom Optimization*")) + sorted(glob.glob("calculation*")) + sorted(glob.glob("geometry_refinement*") + glob.glob("Geom Refinement*")) + sorted(glob.glob("energy_refinement*") + glob.glob("Energy Refinement*")):
+            for d in (sorted(_dedupe_paths(glob.glob("geometry_optimization*") + glob.glob("Geom Optimization*")))
+                      + sorted(_dedupe_paths(glob.glob("calculation*")))
+                      + sorted(_dedupe_paths(glob.glob("geometry_refinement*") + glob.glob("Geom Refinement*")))
+                      + sorted(_dedupe_paths(glob.glob("energy_refinement*") + glob.glob("Energy Refinement*")))):
                 if os.path.isdir(d):
                     is_ref = "refine" in d.lower()
                     opt_dirs.append((d, -1, is_ref))
         if not cosmic_dirs:
-            for d in sorted(glob.glob("cosmic*") + glob.glob("COSMIC*")):
+            for d in sorted(_dedupe_paths(glob.glob("cosmic*") + glob.glob("COSMIC*"))):
                 if os.path.isdir(d) and not d.lower().startswith("cosmic_tmp"):
                     cosmic_dirs.append((d, -1))
 
@@ -5562,7 +5669,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             boltz = os.path.join(cosmic_dir_path, "boltzmann_distribution.txt")
             if os.path.exists(boltz):
                 try:
-                    with open(boltz, 'r') as bf:
+                    with open(boltz, 'r', encoding='utf-8', errors='replace') as bf:
                         lines = bf.readlines()
                     cur_rank = None
                     for line in lines:
@@ -5645,7 +5752,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 src_path, _ = rep_folders[rank]
                 dest_path = os.path.join(out_dir, f"{prefix}_{rank:02d}")
                 if os.path.exists(dest_path):
-                    shutil.rmtree(dest_path)
+                    _rmtree(dest_path)
                 shutil.copytree(src_path, dest_path)
                 # Strip only non-output files: temp/intermediate, redo artifacts,
                 # and runtime scratch.  All genuine calculation outputs are kept.
@@ -5767,7 +5874,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     if entry in preserve:
                         kept_root_files.add(entry)
                         continue
-                    shutil.rmtree(entry_path)
+                    _rmtree(entry_path)
                     removed_count += 1
 
             if verbose and removed_count > 0:
@@ -5932,7 +6039,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     # Default to reasonable values if not specified or if input file doesn't exist
     try:
         if os.path.exists(input_file):
-            with open(input_file, 'r') as f:
+            with open(input_file, 'r', encoding='utf-8', errors='replace') as f:
                 lines = f.readlines()
                 config_line_count = 0
                 for line in lines:
@@ -6152,22 +6259,34 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     if use_cache:
         # Low-overhead process-tied progress file: points to an open FD path.
         # When this process dies (even SIGKILL), the FD vanishes automatically.
-        try:
-            import tempfile as _tempfile
-            _fd, _tmp_path = _tempfile.mkstemp(
-                suffix='.json',
-                prefix='.ascec_progress_',
-                dir=os.getcwd(),
-                text=True,
-            )
-            _progress_stream = os.fdopen(_fd, 'w+')
+        #
+        # Linux only, and deliberately not attempted elsewhere. The trick relies
+        # on two POSIX behaviours Windows does not have: unlinking a file while
+        # it is still open, and reaching the open FD back through /proc. On
+        # Windows the unlink raises (leaving a stray .ascec_progress_*.json in
+        # the working directory on every run) and the resulting /proc path names
+        # nothing, so progress readers would block on "Connecting..." forever.
+        # The plain on-disk file below works everywhere.
+        if sys.platform == 'linux':
             try:
-                # Remove directory entry immediately; file lives only via open FD.
-                os.unlink(_tmp_path)
-            except OSError:
-                pass
-            _progress_file = f"/proc/{os.getpid()}/fd/{_progress_stream.fileno()}"
-        except Exception:
+                import tempfile as _tempfile
+                _fd, _tmp_path = _tempfile.mkstemp(
+                    suffix='.json',
+                    prefix='.ascec_progress_',
+                    dir=os.getcwd(),
+                    text=True,
+                )
+                _progress_stream = os.fdopen(_fd, 'w+')
+                try:
+                    # Remove directory entry immediately; file lives only via open FD.
+                    os.unlink(_tmp_path)
+                except OSError:
+                    pass
+                _progress_file = f"/proc/{os.getpid()}/fd/{_progress_stream.fileno()}"
+            except Exception:
+                _progress_stream = None
+                _progress_file = _progress_legacy_file
+        else:
             _progress_stream = None
             _progress_file = _progress_legacy_file
 
@@ -6185,7 +6304,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         _safe_name = re.sub(r'[^\w.-]', '_', os.path.basename(input_file))
         _log_file = str(_state_dir / "logs" / f"{_safe_name}_{_ts_str}.log")
         try:
-            _log_fh = open(_log_file, 'w', buffering=1)
+            _log_fh = open(_log_file, 'w', buffering=1, encoding='utf-8')
         except OSError:
             _log_fh = None
 
@@ -6341,7 +6460,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 _child_log = _subprocess.DEVNULL
                 _child_log_handle = None
                 if _log_fh is not None:
-                    _child_log_handle = open(_log_file, 'a', buffering=1)
+                    _child_log_handle = open(_log_file, 'a', buffering=1, encoding='utf-8')
                     _child_log = _child_log_handle
 
                 _child = _subprocess.Popen(
@@ -6396,7 +6515,13 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             _orig_stdout.flush()
 
         def _stdin_ctrl_d_watcher():
-            """Daemon thread: read raw bytes from stdin; trigger detach on Ctrl+D."""
+            """Daemon thread: read raw bytes from stdin; trigger detach on Ctrl+D.
+
+            POSIX only. ``select`` accepts none but sockets on Windows, so the
+            thread would raise on its first iteration and die silently; the
+            detach relaunch it triggers also depends on ``start_new_session``,
+            which is a no-op there. The caller gates on ``sys.platform``.
+            """
             try:
                 import select as _sel
                 _stdin_obj = getattr(sys, '__stdin__', None)
@@ -6413,7 +6538,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             except Exception:
                 pass
 
-        if sys.stdin.isatty() and not _background_tty_launch:
+        if sys.platform != 'win32' and sys.stdin.isatty() and not _background_tty_launch:
             _watcher = _threading.Thread(target=_stdin_ctrl_d_watcher, daemon=True)
             _watcher.start()
     # ──────────────────────────────────────────────────────────────────────────
@@ -6590,7 +6715,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 _progress_stream.flush()
             else:
                 _tmp_prog = _progress_file + ".tmp"
-                with open(_tmp_prog, 'w') as _pf:
+                with open(_tmp_prog, 'w', encoding='utf-8') as _pf:
                     json.dump(_prog_state, _pf)
                 os.replace(_tmp_prog, _progress_file)
         except Exception:
@@ -6755,7 +6880,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             result_files = glob.glob(os.path.join(adir, "result_*.xyz"))
                             if result_files:
                                 # Read XYZ file to count structures
-                                with open(result_files[0], 'r') as f:
+                                with open(result_files[0], 'r', encoding='utf-8', errors='replace') as f:
                                     lines = f.readlines()
                                     i = 0
                                     while i < len(lines):
@@ -7849,7 +7974,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                         if os.path.exists(item_path):
                                             try:
                                                 if os.path.isdir(item_path):
-                                                    shutil.rmtree(item_path)
+                                                    _rmtree(item_path)
                                                 else:
                                                     os.remove(item_path)
                                             except Exception:
@@ -8133,7 +8258,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     
     # Clean up temporary folders from retry attempts (final safety cleanup)
     temp_calc_folders = glob.glob("calculation_tmp_*")
-    temp_cosmic_folders = glob.glob("cosmic_tmp_*") + glob.glob("COSMIC_tmp_*")
+    temp_cosmic_folders = _dedupe_paths(glob.glob("cosmic_tmp_*") + glob.glob("COSMIC_tmp_*"))
     retry_input = ["retry_input"] if os.path.exists("retry_input") else []
     all_temp = temp_calc_folders + temp_cosmic_folders + retry_input
     
@@ -8142,7 +8267,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             print("\nCleaning up temporary folders...")
         for folder in all_temp:
             if os.path.exists(folder):
-                shutil.rmtree(folder)
+                _rmtree(folder)
                 if context.workflow_verbose_level >= 1:
                     print(f"  Removed: {folder}")
         if context.workflow_verbose_level >= 1:
@@ -8191,7 +8316,7 @@ def _extract_replica_error(stderr_capture_file: str) -> Optional[str]:
     tagged message is present.
     """
     try:
-        with open(stderr_capture_file, 'r', errors='replace') as fh:
+        with open(stderr_capture_file, 'r', errors='replace', encoding='utf-8') as fh:
             lines = [ln.strip() for ln in fh.read().splitlines() if ln.strip()]
     except OSError:
         return None
@@ -8244,7 +8369,7 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
     annealing_folder = os.path.join(os.path.dirname(context.input_file), "annealing")
     if os.path.exists(annealing_folder):
         try:
-            shutil.rmtree(annealing_folder)
+            _rmtree(annealing_folder)
             if verbose:
                 print(f"Cleaned up previous Annealing folder")
         except Exception as e:
@@ -8323,7 +8448,7 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
         if not os.path.exists(output_file):
             return False
         try:
-            with open(output_file, 'r') as f:
+            with open(output_file, 'r', encoding='utf-8', errors='replace') as f:
                 content = f.read()
             return ('Normal annealing termination' in content) or ('Annealing simulation finished' in content)
         except OSError:
@@ -8375,7 +8500,7 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
                     )
                     while proc.poll() is None:
                         try:
-                            with open(step_progress_file, 'r') as _spf:
+                            with open(step_progress_file, 'r', encoding='utf-8', errors='replace') as _spf:
                                 line = _spf.readline().strip()
                             if line:
                                 on_step(line)
@@ -8409,7 +8534,7 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
             mode0_artifacts_exist = bool(glob.glob(os.path.join(run_dir, 'mto_*.xyz')))
 
             if os.path.exists(output_file):
-                with open(output_file, 'r') as f:
+                with open(output_file, 'r', encoding='utf-8', errors='replace') as f:
                     content = f.read()
                     if 'Normal annealing termination' in content or 'Annealing simulation finished' in content:
                         result_info['success'] = True
@@ -8473,7 +8598,7 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
                 output_file = os.path.join(run_dir, input_basename.replace('.in', '.out'))
                 if os.path.exists(output_file):
                     try:
-                        with open(output_file, 'r') as f:
+                        with open(output_file, 'r', encoding='utf-8', errors='replace') as f:
                             content = f.read()
                             if 'Traceback' in content:
                                 lines = content.split('\n')
@@ -8573,7 +8698,7 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
                     spf = os.path.join(d, '.ascec_step')
                     x = None
                     try:
-                        with open(spf, 'r') as f:
+                        with open(spf, 'r', encoding='utf-8', errors='replace') as f:
                             line = f.readline().strip()
                         x_str, y_str = line.split('/', 1)
                         x = int(x_str.strip())
@@ -8817,7 +8942,7 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
     
     # Get template content
     if template_file and os.path.exists(template_file):
-        with open(template_file, 'r') as f:
+        with open(template_file, 'r', encoding='utf-8', errors='replace') as f:
             template_content = f.read()
     else:
         _redo_log(f"  Warning: Template file {template_file} not found. Cannot regenerate inputs.")
@@ -8838,7 +8963,7 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
         if os.path.exists(lp):
             launcher_path = lp
             try:
-                with open(lp, 'r') as f:
+                with open(lp, 'r', encoding='utf-8', errors='replace') as f:
                     launcher_content = f.read()
             except Exception:
                 pass
@@ -8997,7 +9122,7 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                         # Save geometry to temporary XYZ for rescue calculation
                         rescue_xyz_path = os.path.join(stage_dir, f"{basename}_rescue_geom.xyz")
                         try:
-                            with open(rescue_xyz_path, 'w') as f:
+                            with open(rescue_xyz_path, 'w', encoding='utf-8') as f:
                                 natoms = len([line for line in new_geometry if line.strip()])
                                 f.write(f"{natoms}\n")
                                 f.write(f"{basename} geometry for rescue Hessian\n")
@@ -9024,7 +9149,7 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                         # Fallback to cosmic XYZ
                         _redo_log(f"    {basename}: non-converged (max iter), using cosmic XYZ", end='')
                         if os.path.exists(xyz_file):
-                            with open(xyz_file, 'r') as f:
+                            with open(xyz_file, 'r', encoding='utf-8', errors='replace') as f:
                                 new_geometry = f.readlines()[2:]
                             _redo_log(f" ✓")
                         else:
@@ -9038,7 +9163,7 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                     else:
                         _redo_log(f"    {basename}: non-converged (max iter), using cosmic XYZ", end='')
                         if os.path.exists(xyz_file):
-                            with open(xyz_file, 'r') as f:
+                            with open(xyz_file, 'r', encoding='utf-8', errors='replace') as f:
                                 new_geometry = f.readlines()[2:]
                             _redo_log(f" ✓")
                         else:
@@ -9047,7 +9172,7 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                     # Converged with no imaginary freqs - use cosmic XYZ
                     _redo_log(f"    {basename}: No imaginary freqs, using cosmic XYZ", end='')
                     if os.path.exists(xyz_file):
-                        with open(xyz_file, 'r') as f:
+                        with open(xyz_file, 'r', encoding='utf-8', errors='replace') as f:
                             new_geometry = f.readlines()[2:]
                         _redo_log(f" ✓")
                     else:
@@ -9056,14 +9181,14 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
             # No .out file found - check if from critical_non_converged (needs rescue hessian)
             if is_critical_non_converged and xyz_file and os.path.exists(xyz_file):
                 # Structure from critical_non_converged - use XYZ with rescue Hessian
-                with open(xyz_file, 'r') as f:
+                with open(xyz_file, 'r', encoding='utf-8', errors='replace') as f:
                     new_geometry = f.readlines()[2:]
 
                 if rescue_method and launcher_path:
                     # Queue rescue Hessian for concurrent execution
                     rescue_xyz_path = os.path.join(stage_dir, f"{basename}_rescue_geom.xyz")
                     try:
-                        with open(rescue_xyz_path, 'w') as f:
+                        with open(rescue_xyz_path, 'w', encoding='utf-8') as f:
                             natoms = len([line for line in new_geometry if line.strip()])
                             f.write(f"{natoms}\n")
                             f.write(f"{basename} geometry for rescue Hessian\n")
@@ -9090,7 +9215,7 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
             elif xyz_file and os.path.exists(xyz_file):
                 # Regular case - just use XYZ from cosmic
                 _redo_log(f"    {basename}: No .out file, using cosmic XYZ", end='')
-                with open(xyz_file, 'r') as f:
+                with open(xyz_file, 'r', encoding='utf-8', errors='replace') as f:
                     new_geometry = f.readlines()[2:]
                 _redo_log(f" ✓")
             else:
@@ -9114,7 +9239,7 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
             if os.path.exists(input_path):
                 # Original file exists - just update coordinates
                 try:
-                    with open(input_path, 'r') as f:
+                    with open(input_path, 'r', encoding='utf-8', errors='replace') as f:
                         original_lines = f.readlines()
                     
                     # Find and replace the coordinate block
@@ -9152,7 +9277,7 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                         updated_lines.append(line)
                     
                     # Write updated file
-                    with open(input_path, 'w') as f:
+                    with open(input_path, 'w', encoding='utf-8') as f:
                         f.writelines(updated_lines)
                     
                     processed_count += 1
@@ -9361,7 +9486,7 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
     # CRITICAL: If cosmic_dir includes orca_out_X subdirectory, strip it
     # organize step sets context.refinement_cosmic_folder to "cosmic_2/orca_out_5_1"
     # but skipped_structures is at "cosmic_2/skipped_structures/"
-    if '/' in cosmic_dir and ('orca_out_' in cosmic_dir or 'gaussian_out_' in cosmic_dir):
+    if _has_path_separator(cosmic_dir) and ('orca_out_' in cosmic_dir or 'gaussian_out_' in cosmic_dir):
         cosmic_dir = _cosmic_base_name(cosmic_dir)
     
     # 2. Locate need_recalculation directory and optionally clustered_with_minima
@@ -9422,7 +9547,7 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
         print(f"Error: Template file {template_file} not found")
         return False
         
-    with open(template_file, 'r') as f:
+    with open(template_file, 'r', encoding='utf-8', errors='replace') as f:
         template_content = f.read()
     
     # Find launcher path for ORCA calculations (load early for version detection)
@@ -9440,7 +9565,7 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
         if os.path.exists(lp):
             launcher_path = lp
             try:
-                with open(lp, 'r') as f:
+                with open(lp, 'r', encoding='utf-8', errors='replace') as f:
                     launcher_content = f.read()
             except Exception:
                 pass
@@ -9570,7 +9695,7 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
                         # Save geometry to temporary XYZ for rescue calculation
                         rescue_xyz_path = os.path.join(stage_dir, f"{basename}_rescue_geom.xyz")
                         try:
-                            with open(rescue_xyz_path, 'w') as f:
+                            with open(rescue_xyz_path, 'w', encoding='utf-8') as f:
                                 natoms = len([line for line in new_geometry if line.strip()])
                                 f.write(f"{natoms}\n")
                                 f.write(f"{basename} geometry for rescue Hessian\n")
@@ -9610,14 +9735,14 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
             # No .out file found - check if from critical_non_converged (needs rescue hessian)
             if is_critical_non_converged and os.path.exists(xyz_file):
                 # Structure from critical_non_converged - use XYZ with rescue Hessian
-                with open(xyz_file, 'r') as f:
+                with open(xyz_file, 'r', encoding='utf-8', errors='replace') as f:
                     new_geometry = f.readlines()[2:]
                 
                 if rescue_method and launcher_path:
                     # Queue rescue Hessian for concurrent execution
                     rescue_xyz_path = os.path.join(stage_dir, f"{basename}_rescue_geom.xyz")
                     try:
-                        with open(rescue_xyz_path, 'w') as f:
+                        with open(rescue_xyz_path, 'w', encoding='utf-8') as f:
                             natoms = len([line for line in new_geometry if line.strip()])
                             f.write(f"{natoms}\n")
                             f.write(f"{basename} geometry for rescue Hessian\n")
@@ -9647,7 +9772,7 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
         
         # Fallback to XYZ file
         if not new_geometry:
-            with open(xyz_file, 'r') as f:
+            with open(xyz_file, 'r', encoding='utf-8', errors='replace') as f:
                 new_geometry = f.readlines()[2:]
             imag_count = 0  # Initialize
             if out_file is None or imag_count == 0:
@@ -9936,7 +10061,13 @@ def _run_qm_job_direct(qm_program: str, calc_working_dir: str,
                        env=env, preexec_fn=_PDEATHSIG_PREEXEC)
         return
     else:
-        return
+        # Returning silently here left an empty .out behind, which the caller
+        # read as a launch failure and retried, so an unsupported program
+        # looked like a flaky one. Say what actually happened.
+        raise RuntimeError(
+            f"QM program {qm_program!r} has no direct-execution path on Windows. "
+            f"Supported without a bash launcher: xtb, orca, gaussian."
+        )
 
     with open(output_path, 'wb') as out_fh:
         subprocess.run(cmd, cwd=calc_working_dir, stdout=out_fh,
@@ -10026,7 +10157,7 @@ def _run_single_qm_job(job_info: Dict[str, Any]) -> Dict[str, Any]:
 
         # STEP 2: RUN CALCULATION
         temp_script = os.path.join(calc_working_dir, f'_run_{script_basename}.sh')
-        with open(temp_script, 'w') as f:
+        with open(temp_script, 'w', newline='\n', encoding='utf-8') as f:  # LF: POSIX shell script
             f.write(launcher_content.split('###')[0])
             f.write("\n\n")
             if qm_program == 'orca':
@@ -10074,7 +10205,7 @@ def _run_single_qm_job(job_info: Dict[str, Any]) -> Dict[str, Any]:
         if qm_program == 'orca':
             for tmp_dir in glob.glob(os.path.join(calc_working_dir, f'.orca_tmp_{script_basename}_*')):
                 try:
-                    shutil.rmtree(tmp_dir)
+                    _rmtree(tmp_dir)
                 except:
                     pass
             # Remove ORCA per-job .tmp files left in the job directory after success or failure
@@ -10281,7 +10412,7 @@ def plot_annealing_diagrams(tvse_file: str, output_dir: str, scaled: bool = Fals
         temperatures = []
         energies = []
         
-        with open(tvse_file, 'r') as f:
+        with open(tvse_file, 'r', encoding='utf-8', errors='replace') as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith('#'):
@@ -10405,7 +10536,7 @@ def plot_combined_replicas_diagram(tvse_files: List[str], output_file: str, num_
             steps = []
             energies = []
             
-            with open(tvse_file, 'r') as f:
+            with open(tvse_file, 'r', encoding='utf-8', errors='replace') as f:
                 for line in f:
                     line = line.strip()
                     if not line or line.startswith('#'):
@@ -10510,7 +10641,7 @@ def parse_annealing_energy_evals(annealing_dir: str) -> Optional[int]:
         if os.path.basename(out_file).startswith('rless_'):
             continue
         try:
-            with open(out_file, 'r', errors='ignore') as fh:
+            with open(out_file, 'r', errors='ignore', encoding='utf-8') as fh:
                 content = fh.read()
         except OSError:
             continue
@@ -10609,7 +10740,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
     def _extract_time_from_orca_summary(summary_file: str) -> Optional[float]:
         """Extract total execution time from orca_summary.txt file."""
         try:
-            with open(summary_file, 'r') as f:
+            with open(summary_file, 'r', encoding='utf-8', errors='replace') as f:
                 content = f.read()
                 match = re.search(r'Total execution time:\s+(\d+):(\d+):(\d+\.\d+)', content)
                 if match:
@@ -10633,7 +10764,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
     def _extract_final_clusters_from_summary(summary_file: str) -> Optional[int]:
         """Extract final cluster count from clustering_summary.txt."""
         try:
-            with open(summary_file, 'r') as f:
+            with open(summary_file, 'r', encoding='utf-8', errors='replace') as f:
                 content = f.read()
             match = re.search(r'Total number of final clusters:\s*(\d+)', content, re.IGNORECASE)
             if match:
@@ -11111,7 +11242,7 @@ def create_qm_input_file(config_data: Dict, template_content: str, output_path: 
             os.makedirs(output_dir, exist_ok=True)
         
         # Write the input file
-        with open(output_path, 'w') as f:
+        with open(output_path, 'w', encoding='utf-8') as f:
             f.write(content)
         
         return True
@@ -11136,7 +11267,7 @@ def create_xyz_input_file(config_data: Dict, output_path: str) -> bool:
         if output_dir and not os.path.exists(output_dir):
             os.makedirs(output_dir, exist_ok=True)
 
-        with open(output_path, 'w') as f:
+        with open(output_path, 'w', encoding='utf-8') as f:
             f.write(f"{len(atoms)}\n")
             f.write(f"{comment}\n")
             for atom in atoms:
@@ -11645,7 +11776,7 @@ def _run_xtb_rescue_hessian(xyz_file: str, rescue_method: str, working_dir: str,
 
     # Create run script
     temp_script = os.path.join(working_dir, f'_run_rescue_{basename}.sh')
-    with open(temp_script, 'w') as f:
+    with open(temp_script, 'w', newline='\n', encoding='utf-8') as f:  # LF: POSIX shell script
         f.write("#!/bin/bash\nset -e\n\n")
         f.write(f"cd \"{working_dir}\"\n")
         f.write(f"{xtb_cmd} > \"{os.path.basename(rescue_out_path)}\" 2>&1\n")
@@ -11783,7 +11914,7 @@ def run_rescue_hessian_calculation(xyz_file: str, rescue_method: str, launcher_p
     # --- ORCA rescue path (default) ---
     # Read XYZ coordinates
     try:
-        with open(xyz_file, 'r') as f:
+        with open(xyz_file, 'r', encoding='utf-8', errors='replace') as f:
             lines = f.readlines()
         # Skip first two lines (atom count and comment)
         xyz_coords = "".join(lines[2:])
@@ -11801,12 +11932,12 @@ def run_rescue_hessian_calculation(xyz_file: str, rescue_method: str, launcher_p
     rescue_out_path = os.path.join(working_dir, f"{basename}_rescue.out")
     rescue_hess_path = os.path.join(working_dir, f"{basename}_rescue.hess")
 
-    with open(rescue_inp_path, 'w') as f:
+    with open(rescue_inp_path, 'w', encoding='utf-8') as f:
         f.write(rescue_input)
 
     # Read launcher for environment setup
     try:
-        with open(launcher_path, 'r') as f:
+        with open(launcher_path, 'r', encoding='utf-8', errors='replace') as f:
             launcher_content = f.read()
     except Exception as e:
         _rescue_log(f"  Error reading launcher: {e}")
@@ -11833,7 +11964,7 @@ def run_rescue_hessian_calculation(xyz_file: str, rescue_method: str, launcher_p
 
     # Create run script with full paths
     temp_script = os.path.join(working_dir, f'_run_rescue_{basename}.sh')
-    with open(temp_script, 'w') as f:
+    with open(temp_script, 'w', newline='\n', encoding='utf-8') as f:  # LF: POSIX shell script
         f.write(env_setup)
         f.write("\n\n")
         f.write(f"cd \"{working_dir}\"\n")
@@ -12301,7 +12432,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                 launcher_env_setup = ""
                 existing_launcher = ""
                 if os.path.exists(launcher_script):
-                    with open(launcher_script, 'r') as lf:
+                    with open(launcher_script, 'r', encoding='utf-8', errors='replace') as lf:
                         existing_launcher = lf.read()
                     if '###' in existing_launcher:
                         launcher_env_setup = existing_launcher.split('###')[0].rstrip()
@@ -12351,7 +12482,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                         orca_exe_for_launcher = resolve_orca_executable_from_launcher(
                             launcher_env_setup, getattr(context, 'qm_alias', 'orca'))
 
-                    with open(launcher_script, 'w') as lf:
+                    with open(launcher_script, 'w', newline='\n', encoding='utf-8') as lf:  # LF: POSIX shell script
                         if launcher_env_setup:
                             lf.write(launcher_env_setup + "\n\n")
                         if qm_program == 'xtb':
@@ -12437,7 +12568,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                 print()
             
             # Read launcher script to get environment setup
-            with open(launcher_script, 'r') as f:
+            with open(launcher_script, 'r', encoding='utf-8', errors='replace') as f:
                 launcher_content = f.read()
             
             try:
@@ -12582,7 +12713,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                                         if not os.path.exists(dest_folder):
                                             shutil.copytree(src_folder, dest_folder)
                                 # Clean up good_structures folder
-                                shutil.rmtree("good_structures")
+                                _rmtree("good_structures")
                             
                             os.chdir(optimization_dir_path)
 
@@ -12653,7 +12784,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                         _orca_sum_path = os.path.join(optimization_dir_path, "orca_summary.txt")
                     if os.path.exists(_orca_sum_path):
                         try:
-                            with open(_orca_sum_path, 'r') as _sf:
+                            with open(_orca_sum_path, 'r', encoding='utf-8', errors='replace') as _sf:
                                 _sc = _sf.read()
                             _tm = __import__('re').search(r'Total execution time:\s+(\d+):(\d+):(\d+\.\d+)', _sc)
                             if _tm:
@@ -12676,7 +12807,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
     
     # Clean up retry_input folder if it exists
     if os.path.exists("retry_input"):
-        shutil.rmtree("retry_input")
+        _rmtree("retry_input")
     
     return 0
 
@@ -12815,7 +12946,7 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
             if os.path.exists(item_path):
                 try:
                     if os.path.isdir(item_path):
-                        shutil.rmtree(item_path)
+                        _rmtree(item_path)
                     else:
                         os.remove(item_path)
                 except Exception:
@@ -13056,7 +13187,7 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
                     match = re.search(r'Processing folder:\s+(\S+)', line)
                     if match:
                         folder_name = match.group(1)
-                        context.cosmic_folder = f"{cosmic_base}/{folder_name}"
+                        context.cosmic_folder = os.path.join(cosmic_base, folder_name)
 
                 # Skip printing in non-verbose mode (but still collect lines)
                 if not verbose:
@@ -13477,7 +13608,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
                 else:
                     # No skipped structures - safe to delete and rebuild
                     try:
-                        shutil.rmtree(output_cosmic_folder)
+                        _rmtree(output_cosmic_folder)
                     except Exception:
                         pass
     
@@ -13579,7 +13710,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
         # Not resuming or empty directory - create fresh directory
         if os.path.exists(opt_dir):
             # Remove old directory if it exists
-            shutil.rmtree(opt_dir)
+            _rmtree(opt_dir)
         os.makedirs(opt_dir)
         # CRITICAL: If we recreated the directory, this is NOT a redo scenario
         is_redo = False
@@ -13612,7 +13743,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
         input_ext = ".xyz"
     
     # Read template content
-    with open(template_inp, 'r') as f:
+    with open(template_inp, 'r', encoding='utf-8', errors='replace') as f:
         template_content = f.read()
     
     # Determine if we should skip input file creation:
@@ -13675,7 +13806,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
         launcher_path = os.path.join(opt_dir, f"launcher_{qm_program}.sh")
         
         # Read launcher template to get environment setup
-        with open(launcher_sh, 'r') as f:
+        with open(launcher_sh, 'r', encoding='utf-8', errors='replace') as f:
             launcher_template = f.read()
         
         # Extract the environment setup part (everything before ###)
@@ -13702,7 +13833,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
             if resolved_orca:
                 orca_exe_for_launcher = resolved_orca
 
-        with open(launcher_path, 'w') as f:
+        with open(launcher_path, 'w', newline='\n', encoding='utf-8') as f:  # LF: POSIX shell script
             # Write environment setup from template
             f.write(env_setup)
             f.write("\n\n###\n\n")
@@ -13847,7 +13978,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
         # CRITICAL: Strip orca_out_X suffix if present
         # organize step may set the folder to "cosmic_2/orca_out_5"
         # but we need just "cosmic_2" to scan for orca_out subdirectories
-        if refinement_cosmic_folder and '/' in refinement_cosmic_folder:
+        if refinement_cosmic_folder and _has_path_separator(refinement_cosmic_folder):
             refinement_cosmic_folder = _cosmic_base_name(refinement_cosmic_folder)
 
         if not refinement_cosmic_folder:
@@ -13954,7 +14085,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
             print()
         
         # Read launcher script to get environment setup
-        with open(launcher_path, 'r') as f:
+        with open(launcher_path, 'r', encoding='utf-8', errors='replace') as f:
             launcher_content = f.read()
         
         # Resolve ORCA executable path
@@ -14137,7 +14268,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
 
             # Write failed_opt.txt
             failed_list_file = os.path.join(opt_dir, "failed_opt.txt")
-            with open(failed_list_file, 'w') as f:
+            with open(failed_list_file, 'w', encoding='utf-8') as f:
                 f.write(f"# Failed {_kind_noun}: {len(failed_optimizations)}/{num_inputs}\n")
                 f.write(f"# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
                 for failed_file in sorted(failed_optimizations, key=natural_sort_key):
@@ -14300,7 +14431,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
                 _ref_sum_path = os.path.join(opt_dir, "orca_summary.txt")
             if os.path.exists(_ref_sum_path):
                 try:
-                    with open(_ref_sum_path, 'r') as _sf:
+                    with open(_ref_sum_path, 'r', encoding='utf-8', errors='replace') as _sf:
                         _sc = _sf.read()
                     _tm = __import__('re').search(r'Total execution time:\s+(\d+):(\d+):(\d+\.\d+)', _sc)
                     if _tm:
@@ -14482,7 +14613,7 @@ def extract_protocol_from_input(input_file: str) -> Optional[str]:
         Protocol command string or None if not found
     """
     try:
-        with open(input_file, 'r') as f:
+        with open(input_file, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
 
         protocol_lines: List[str] = []
@@ -14900,7 +15031,7 @@ def update_existing_input_files(template_file: str, target_pattern: str = "") ->
     
     # Read template content
     try:
-        with open(template_file, 'r') as f:
+        with open(template_file, 'r', encoding='utf-8', errors='replace') as f:
             template_content = f.read()
     except IOError as e:
         return f"Error reading template file '{template_file}': {e}"
@@ -14926,12 +15057,12 @@ def update_existing_input_files(template_file: str, target_pattern: str = "") ->
     for input_file in input_files:
         try:
             # Read existing input file
-            with open(input_file, 'r') as f:
+            with open(input_file, 'r', encoding='utf-8', errors='replace') as f:
                 existing_content = f.read()
             
             # Create backup file
             backup_file = input_file + '.backup_temp'
-            with open(backup_file, 'w') as f:
+            with open(backup_file, 'w', encoding='utf-8') as f:
                 f.write(existing_content)
             backup_files.append((input_file, backup_file))
             
@@ -14968,9 +15099,9 @@ def update_existing_input_files(template_file: str, target_pattern: str = "") ->
                     try:
                         if os.path.exists(backup_file):
                             # Restore original content
-                            with open(backup_file, 'r') as f:
+                            with open(backup_file, 'r', encoding='utf-8', errors='replace') as f:
                                 original_content = f.read()
-                            with open(original_file, 'w') as f:
+                            with open(original_file, 'w', encoding='utf-8') as f:
                                 f.write(original_content)
                             reverted_count += 1
                     except IOError as e:
@@ -15613,7 +15744,24 @@ def execute_box_analysis(input_file: str):
 
 # --- def show_ascec_status  (ascec-v04.py 18676-19252) ---
 def show_ascec_status() -> None:
-    """Interactive ASCEC job status viewer."""
+    """Interactive ASCEC job status viewer.
+
+    Linux only. The viewer is built on /proc process-tree walking, process
+    groups (``os.getpgid``/``os.killpg``), ``SIGKILL`` and a termios raw-mode
+    keyboard loop — none of which exist on Windows. Rather than degrade into a
+    half-working screen that reports live jobs as crashed, say so plainly.
+    """
+    if sys.platform == 'win32':
+        print("ascec status is not supported on Windows.")
+        print()
+        print("  The job viewer needs process groups, signals and /proc, which")
+        print("  Windows does not provide. Annealing, optimization, clustering")
+        print("  and refinement all run normally; only the status viewer, the")
+        print("  'after <PID>' queue and Ctrl+D detach are Linux-only.")
+        print()
+        print("  To watch a run's progress on Windows, follow its log file.")
+        return
+
     import signal as _sig
 
     def _collect_descendant_pids(root_pid: int) -> List[int]:
@@ -15627,7 +15775,7 @@ def show_ascec_status() -> None:
                     continue
                 pid = int(entry)
                 try:
-                    with open(f"/proc/{pid}/stat", 'r') as sf:
+                    with open(f"/proc/{pid}/stat", 'r', encoding='utf-8', errors='replace') as sf:
                         stat_line = sf.read().strip()
                     # Format: pid (comm) state ppid ... ; split after final ') '
                     tail = stat_line.rsplit(') ', 1)[1].split()
@@ -15655,7 +15803,7 @@ def show_ascec_status() -> None:
         if not _is_pid_alive(pid):
             return False
         try:
-            with open(f"/proc/{pid}/stat", 'r') as sf:
+            with open(f"/proc/{pid}/stat", 'r', encoding='utf-8', errors='replace') as sf:
                 stat_line = sf.read().strip()
             tail = stat_line.rsplit(') ', 1)[1].split()
             state = tail[0]
@@ -15746,7 +15894,7 @@ def show_ascec_status() -> None:
 
     def _tail_lines(path: str, n: int = 10) -> List[str]:
         try:
-            with open(path) as f:
+            with open(path, encoding='utf-8', errors='replace') as f:
                 return f.readlines()[-n:]
         except Exception:
             return []
@@ -15993,7 +16141,7 @@ def show_ascec_status() -> None:
                 # json.load, causing the viewer to miss updates when the file is briefly empty
                 # during truncate+write (especially on filesystems with coarse mtime resolution).
                 try:
-                    with open(prog_file) as _pf:
+                    with open(prog_file, encoding='utf-8', errors='replace') as _pf:
                         new_data = json.load(_pf)
                     render_key = (
                         new_data.get('pct'),

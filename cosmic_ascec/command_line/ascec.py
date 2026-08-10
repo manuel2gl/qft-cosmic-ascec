@@ -82,6 +82,8 @@ from cosmic_ascec.workflow.protocol_cache import (
 )
 from cosmic_ascec.workflow.stages import (
     ASCEC_VERSION,
+    _dedupe_paths,
+    _rmtree,
     consume_protocol_maxprint_flag,
     create_refinement_system,
     create_simple_optimization_system,
@@ -131,7 +133,7 @@ class _AscecStepWriter(AnnealingCallback):
 
     def on_temperature_start(self, event: TemperatureStart) -> None:
         try:
-            with open(self._step_file, "w") as f:
+            with open(self._step_file, "w", encoding='utf-8') as f:
                 f.write(f"{event.step_index}/{event.total_steps}\n")
         except OSError:
             pass
@@ -246,9 +248,9 @@ def _run_random_configurations(
     current_energy = 0.0
     dummy_temperature = 1.0  # any T > 0; delta == 0 makes the value irrelevant
 
-    xyz_path.write_text("")
-    box_path.write_text("")
-    with xyz_path.open("a") as fh, box_path.open("a") as fhb:
+    xyz_path.write_text("", encoding='utf-8')
+    box_path.write_text("", encoding='utf-8')
+    with xyz_path.open("a", encoding='utf-8') as fh, box_path.open("a", encoding='utf-8') as fhb:
         for i in range(1, n_configs + 1):
             result = trial(
                 current_cluster,
@@ -293,14 +295,16 @@ def _run_random_configurations(
     import shutil as _shutil
     import subprocess as _subprocess
     from cosmic_ascec.file_formats.trajectory_writer import _restore_dummy_atom_symbol
-    if _shutil.which("obabel"):
+    # Resolved path, not the bare name: see trajectory_writer._write_mol_files.
+    _obabel = _shutil.which("obabel")
+    if _obabel:
         for path in (xyz_path, box_path):
             if not path.exists() or path.stat().st_size == 0:
                 continue
             mol_path = path.with_suffix(".mol")
             try:
                 _subprocess.run(
-                    ["obabel", "-ixyz", str(path), "-omol", "-O", str(mol_path)],
+                    [_obabel, "-ixyz", str(path), "-omol", "-O", str(mol_path)],
                     capture_output=True, check=False, timeout=60,
                 )
             except (OSError, _subprocess.SubprocessError):
@@ -928,7 +932,7 @@ def _dispatch_protocol(argv: list[str]) -> int:
                         for dir_name in ("geometry_optimization", "Geom Optimization"):
                             if os.path.exists(dir_name):
                                 print(f"     Removing {dir_name}/")
-                                shutil.rmtree(dir_name)
+                                _rmtree(dir_name)
                         for pattern in (
                             "geometry_optimization_*",
                             "Geom Optimization_*",
@@ -936,9 +940,9 @@ def _dispatch_protocol(argv: list[str]) -> int:
                             for dir_path in glob.glob(pattern):
                                 if os.path.isdir(dir_path):
                                     print(f"     Removing {dir_path}/")
-                                    shutil.rmtree(dir_path)
+                                    _rmtree(dir_path)
                         cosmic_dirs = sorted(
-                            glob.glob("cosmic*") + glob.glob("COSMIC*")
+                            _dedupe_paths(glob.glob("cosmic*") + glob.glob("COSMIC*"))
                         )
                         for cosmic_dir in cosmic_dirs:
                             if os.path.isdir(cosmic_dir) and "_" in cosmic_dir:
@@ -946,7 +950,7 @@ def _dispatch_protocol(argv: list[str]) -> int:
                                     cosmic_num = int(cosmic_dir.split("_")[1])
                                     if cosmic_num > min_restart_num:
                                         print(f"     Removing {cosmic_dir}/")
-                                        shutil.rmtree(cosmic_dir)
+                                        _rmtree(cosmic_dir)
                                 except Exception:
                                     pass
                 all_stage_keys = sorted(
@@ -1121,8 +1125,19 @@ def _spawn_detached_after_run(orig_argv: list[str], after_pid: int) -> int:
     stdin is ``/dev/null`` (so the Ctrl+D detach watcher never starts) and its
     console output is redirected to ``<input>_queue.log`` in the cwd. Returns
     the child PID, or 0 if the spawn failed (caller then runs in foreground).
+
+    Linux/macOS only. ``start_new_session=True`` is accepted on Windows but is
+    a no-op there: the child stays attached to the parent's console and dies
+    when that window closes, so a "queued" run would silently disappear. The
+    caller falls back to running in the foreground, which still honours the
+    wait-for-PID semantics.
     """
     import subprocess
+
+    if sys.platform == "win32":
+        print("\nBackground queueing ('after <PID>') is not supported on Windows.")
+        print("  Running in the foreground instead; this window must stay open.")
+        return 0
 
     try:
         entry = os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else ""
@@ -1146,7 +1161,7 @@ def _spawn_detached_after_run(orig_argv: list[str], after_pid: int) -> int:
         env = os.environ.copy()
         env["ASCEC_AFTER_DETACHED"] = "1"
 
-        log_fh = open(log_path, "a", buffering=1)
+        log_fh = open(log_path, "a", buffering=1, encoding='utf-8')
         try:
             child = subprocess.Popen(
                 cmd,
@@ -1355,7 +1370,7 @@ def main_ascec_integrated(argv=None) -> int:
         # v04 lines 20139-20171.
         print("Cleaning up temporary folders...")
         temp_calc_folders = glob.glob("calculation_tmp_*")
-        temp_cosmic_folders = glob.glob("cosmic_tmp_*") + glob.glob("COSMIC_tmp_*")
+        temp_cosmic_folders = _dedupe_paths(glob.glob("cosmic_tmp_*") + glob.glob("COSMIC_tmp_*"))
         retry_input = ["retry_input"] if os.path.exists("retry_input") else []
         good_structures = ["good_structures"] if os.path.exists("good_structures") else []
         all_temp = temp_calc_folders + temp_cosmic_folders + retry_input + good_structures
@@ -1365,7 +1380,7 @@ def main_ascec_integrated(argv=None) -> int:
                 print("  (Current redo logic unsorts folders instead of creating _tmp_ copies)\n")
             for folder in all_temp:
                 if os.path.exists(folder):
-                    shutil.rmtree(folder)
+                    _rmtree(folder)
                     print(f"  Removed: {folder}")
             print(f"\n✓ Cleaned {len(all_temp)} temporary folder(s)")
         else:

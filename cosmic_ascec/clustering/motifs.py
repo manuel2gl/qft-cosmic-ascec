@@ -488,7 +488,11 @@ def create_unique_motifs_folder(
     if openbabel_full_path:
         try:
             # Use the correct OpenBabel syntax: obabel -i<format> input_file -o<format> -O output_file
-            result = subprocess.run([openbabel_alias, "-ixyz", combined_xyz_path, "-omol", "-O", mol_output_path],
+            # Resolved path, not the bare alias: conda-forge ships obabel on
+            # Windows as a .bat shim that shutil.which finds (via PATHEXT) but
+            # subprocess cannot launch by name. The sibling call site below
+            # already used openbabel_full_path; this one did not.
+            result = subprocess.run([openbabel_full_path, "-ixyz", combined_xyz_path, "-omol", "-O", mol_output_path],
                                   capture_output=True, text=True, timeout=30)
             if result.returncode == 0:
                 vprint(f"  Successfully created MOL file: {os.path.basename(mol_output_path)}")

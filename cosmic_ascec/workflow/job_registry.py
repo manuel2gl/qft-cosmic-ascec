@@ -56,8 +56,16 @@ _LIVE_STATUSES = ("running", "holding")
 
 
 def _ascec_state_dir() -> Path:
-    """Return ~/.local/state/ascec, creating it if needed."""
-    d = Path.home() / ".local" / "state" / "ascec"
+    """Return the per-user state directory, creating it if needed.
+
+    ``~/.local/state`` is an XDG convention with no meaning on Windows, where
+    the equivalent is ``%LOCALAPPDATA%``.
+    """
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA")
+        d = (Path(base) if base else Path.home() / "AppData" / "Local") / "ascec"
+    else:
+        d = Path.home() / ".local" / "state" / "ascec"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -92,7 +100,37 @@ def _init_ascec_db(conn) -> None:
 
 
 def _is_pid_alive(pid: int) -> bool:
-    """Check whether a PID is still running (signal 0 = existence check)."""
+    """Check whether a PID is still running.
+
+    POSIX uses the classic ``kill(pid, 0)`` existence probe. Windows must NOT:
+    CPython's ``os.kill`` only treats ``CTRL_C_EVENT``/``CTRL_BREAK_EVENT`` as
+    signals and maps *every other* value onto ``TerminateProcess(handle, sig)``.
+    So ``os.kill(pid, 0)`` there does not ask whether the process is alive — it
+    kills it, with exit code 0, which downstream looks like a clean successful
+    run. That silently truncated the job being probed by the duplicate-run guard
+    in ``_atomic_claim_ascec_job`` and by the ``after <PID>`` queue wait loop.
+    On Windows we open a handle and poll it instead, which is read-only.
+    """
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            SYNCHRONIZE = 0x00100000
+            WAIT_TIMEOUT = 0x00000102
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+            if not handle:
+                # No handle: either the PID is gone or it belongs to another
+                # user. Treat both as "not ours to wait on".
+                return False
+            try:
+                # A live process never signals its handle, so it times out.
+                return kernel32.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return False
     try:
         os.kill(pid, 0)
         return True
@@ -134,7 +172,7 @@ def _register_ascec_job(input_file: str, working_dir: str, cache_file: str,
                         log_file: str, progress_file: str) -> int:
     """Insert a new running-job entry; returns the new row ID (0 on failure)."""
     try:
-        conn = _sqlite3.connect(str(_ascec_db_path()))
+        conn = _sqlite3.connect(str(_ascec_db_path()), timeout=10.0)
         _init_ascec_db(conn)
         now = time.strftime('%Y-%m-%d %H:%M:%S')
         conn.execute(
@@ -156,7 +194,7 @@ def _update_ascec_job(job_id: int, status: str) -> None:
     if not job_id:
         return
     try:
-        conn = _sqlite3.connect(str(_ascec_db_path()))
+        conn = _sqlite3.connect(str(_ascec_db_path()), timeout=10.0)
         _init_ascec_db(conn)
         conn.execute(
             "UPDATE jobs SET status=?, updated_at=? WHERE id=?",
@@ -180,7 +218,7 @@ def _set_job_holding(job_id: int, after_pid: int) -> None:
     if not job_id:
         return
     try:
-        conn = _sqlite3.connect(str(_ascec_db_path()))
+        conn = _sqlite3.connect(str(_ascec_db_path()), timeout=10.0)
         _init_ascec_db(conn)
         conn.execute(
             "UPDATE jobs SET status='holding', after_pid=?, updated_at=? WHERE id=?",
@@ -212,7 +250,7 @@ def _adopt_ascec_job(job_id: int, pid: int, log_file: str = "", progress_file: s
     if not job_id or pid <= 0:
         return False
     try:
-        conn = _sqlite3.connect(str(_ascec_db_path()))
+        conn = _sqlite3.connect(str(_ascec_db_path()), timeout=10.0)
         _init_ascec_db(conn)
         now = time.strftime('%Y-%m-%d %H:%M:%S')
         if cache_file is None:
@@ -299,8 +337,11 @@ def _kill_orphaned_job_processes(working_dir: str, input_file: str) -> None:
 
     Called when _cleanup_stale_jobs detects a job whose main PID has died, to prevent
     orphaned subprocesses from interfering with a new run of the same input file.
-    Only operates on Linux (requires /proc).
+    Only operates on Linux (requires /proc, os.getpgid and os.killpg — none of
+    which exist on Windows).
     """
+    if sys.platform != "linux":
+        return
     if not working_dir:
         return
     try:
@@ -393,7 +434,7 @@ def _cleanup_stale_jobs(conn) -> None:
 def _get_recent_jobs() -> list:
     """Return all running jobs plus recent history from the last 7 days."""
     try:
-        conn = _sqlite3.connect(str(_ascec_db_path()))
+        conn = _sqlite3.connect(str(_ascec_db_path()), timeout=10.0)
         _init_ascec_db(conn)
         _cleanup_stale_jobs(conn)
         cutoff = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')

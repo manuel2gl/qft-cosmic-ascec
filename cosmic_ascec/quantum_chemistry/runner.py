@@ -219,11 +219,11 @@ def calculate_energy(
 
     try:
         # ---- run the program (v04 3236-3265) ----------------------------- #
-        with open(output_path, "w") as out_fh:
+        with open(output_path, "w", encoding='utf-8') as out_fh:
             if adapter.uses_stdin_redirect:
                 # Gaussian: v04 ran ``g09 < input > output`` under a shell;
                 # v04 redirects the handles directly — same effect, no shell.
-                with open(input_path, "r") as in_fh:
+                with open(input_path, "r", encoding='utf-8', errors='replace') as in_fh:
                     process = subprocess.run(
                         command,
                         cwd=str(run_dir),
@@ -262,7 +262,7 @@ def calculate_energy(
             if not output_path.exists():
                 status = 0
             else:
-                content = output_path.read_text(errors="ignore")
+                content = output_path.read_text(errors="ignore", encoding='utf-8')
                 terminated = any(t in content for t in adapter.termination_strings)
                 if not terminated:
                     if logger is not None:

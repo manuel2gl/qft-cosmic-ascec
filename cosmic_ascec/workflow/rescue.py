@@ -90,7 +90,7 @@ def count_imaginary_frequencies(out_file: str) -> int:
     For xTB, also checks the vibspectrum file in the same directory.
     """
     try:
-        with open(out_file, 'r') as f:
+        with open(out_file, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
 
         content_lower = content.lower()
@@ -117,7 +117,7 @@ def count_imaginary_frequencies(out_file: str) -> int:
                 vib_path = os.path.join(out_dir, vib_name)
                 if os.path.exists(vib_path):
                     try:
-                        with open(vib_path, 'r') as vf:
+                        with open(vib_path, 'r', encoding='utf-8', errors='replace') as vf:
                             vib_content = vf.read()
                         # vibspectrum format: freq(cm^-1)  IR-intensity  ...
                         # Lines after the $vibrational spectrum header, before $end
@@ -181,7 +181,7 @@ def displace_along_imaginary_mode(out_file: str, optimization_dir_path: str, use
     """
     try:
         # Check if this is ORCA, Gaussian, or standalone xTB
-        with open(out_file, 'r') as f:
+        with open(out_file, 'r', encoding='utf-8', errors='replace') as f:
             first_lines = ''.join(f.readlines()[:50])
             first_lower = first_lines.lower()
             is_orca = 'O   R   C   A' in first_lines
@@ -244,7 +244,7 @@ def displace_orca_imaginary_mode(out_file: str, displacement_factor: float = 0.5
         List of lines in XYZ format (including header) if successful, None otherwise
     """
     try:
-        with open(out_file, 'r') as f:
+        with open(out_file, 'r', encoding='utf-8', errors='replace') as f:
             lines = f.readlines()
 
         # Step 1: Extract final geometry from last "CARTESIAN COORDINATES (ANGSTROEM)" section
@@ -419,7 +419,7 @@ def displace_gaussian_imaginary_mode(out_file: str, displacement_factor: float =
         List of lines in XYZ format (including header) if successful, None otherwise
     """
     try:
-        with open(out_file, 'r') as f:
+        with open(out_file, 'r', encoding='utf-8', errors='replace') as f:
             lines = f.readlines()
 
         # Extract final geometry (Standard orientation)
@@ -522,7 +522,7 @@ def displace_gaussian_imaginary_mode(out_file: str, displacement_factor: float =
 def extract_displaced_frame(traj_file: str, frame: int = 10) -> Optional[str]:
     """Extract a specific frame from an XYZ trajectory file."""
     try:
-        with open(traj_file, 'r') as f:
+        with open(traj_file, 'r', encoding='utf-8', errors='replace') as f:
             lines = f.readlines()
 
         # Parse XYZ format
@@ -576,7 +576,7 @@ def extract_final_geometry(out_file: str, optimization_dir_path: str):
         List of XYZ lines if successful, None otherwise
     """
     try:
-        with open(out_file, 'r') as f:
+        with open(out_file, 'r', encoding='utf-8', errors='replace') as f:
             lines = f.readlines()
 
         # Determine program type
@@ -604,7 +604,7 @@ def extract_final_geometry(out_file: str, optimization_dir_path: str):
             for xyz_path in xyz_candidates:
                 if os.path.exists(xyz_path):
                     try:
-                        with open(xyz_path, 'r') as xf:
+                        with open(xyz_path, 'r', encoding='utf-8', errors='replace') as xf:
                             xyz_lines_raw = xf.readlines()
                         if len(xyz_lines_raw) >= 3:
                             natoms = int(xyz_lines_raw[0].strip())

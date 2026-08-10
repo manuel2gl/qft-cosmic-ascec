@@ -31,11 +31,11 @@ class TvseWriter(AnnealingCallback):
 
     def on_run_start(self, event: RunStart) -> None:  # noqa: ARG002
         """Write the header block, truncating any stale file from a prior run."""
-        self.tvse_path.write_text(_HEADER + "\n" + _SEPARATOR)
+        self.tvse_path.write_text(_HEADER + "\n" + _SEPARATOR, encoding='utf-8')
 
     def on_config_accepted(self, event: ConfigAccepted) -> None:
         """Append the cumulative-QM-call ledger row for this accepted config."""
-        with self.tvse_path.open("a") as fh:
+        with self.tvse_path.open("a", encoding='utf-8') as fh:
             fh.write(
                 f"  {event.cumulative_n_eval:>14} "
                 f"{event.temperature:>10.2f} {event.energy:>15.6f}\n"

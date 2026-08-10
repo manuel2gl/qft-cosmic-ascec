@@ -36,6 +36,18 @@ from cosmic_ascec.clustering.features.geometric import (
 _SOURCE_GLOBS = ("*.log", "*.out", "*.xyz")
 
 
+def _obabel_exe() -> str:
+    """Resolved path to the obabel binary, or the bare name as a last resort.
+
+    conda-forge installs obabel on Windows as a .bat shim. ``shutil.which``
+    finds it because it consults PATHEXT; ``subprocess`` does not, so passing
+    the bare name raises FileNotFoundError. Both call sites are inside
+    try/except blocks that treat any failure as "obabel unavailable", so
+    returning the bare name when nothing is found keeps that behaviour.
+    """
+    return shutil.which("obabel") or "obabel"
+
+
 def _source_geometry(source_file, record=None):
     """Geometry for a skipped structure as ``(natoms, coords, symbols)``.
 
@@ -373,7 +385,7 @@ def filter_imaginary_freq_structures(
                     # Create combined MOL file from combined XYZ
                     combined_mol = os.path.join(need_recalc_dir, "combined_need_recalc.mol")
                     try:
-                        result = subprocess.run(['obabel', '-ixyz', combined_xyz, '-omol', '-O', combined_mol],
+                        result = subprocess.run([_obabel_exe(), '-ixyz', combined_xyz, '-omol', '-O', combined_mol],
                                               capture_output=True, check=True)
                         vprint(f"  Created combined MOL file: {combined_mol}")
                     except Exception:
@@ -384,7 +396,7 @@ def filter_imaginary_freq_structures(
                     xyz_file = os.path.join(need_recalc_dir, f"{basename}.xyz")
                     mol_file = os.path.join(need_recalc_dir, f"{basename}.mol")
                     try:
-                        result = subprocess.run(['obabel', '-ixyz', xyz_file, '-omol', '-O', mol_file],
+                        result = subprocess.run([_obabel_exe(), '-ixyz', xyz_file, '-omol', '-O', mol_file],
                                               capture_output=True, check=True)
                         vprint(f"  Single structure, created MOL file: {mol_file}")
                     except Exception:

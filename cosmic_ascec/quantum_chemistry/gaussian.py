@@ -93,7 +93,7 @@ class GaussianAdapter(QuantumChemistryAdapter):
         # absent additional-keywords block) one more — the molecule terminator.
         parts.append("\n")
         parts.append("\n")
-        input_path.write_text("".join(parts))
+        input_path.write_text("".join(parts), encoding='utf-8')
 
     def build_command(self, input_name: str, spec: QMSpec) -> list[str]:  # noqa: ARG002
         """Build the Gaussian argv — input on stdin, report on stdout (v04 3195)."""
@@ -108,7 +108,7 @@ class GaussianAdapter(QuantumChemistryAdapter):
         path = Path(output_path)
         if not path.exists():
             raise QMError(f"gaussian: output file {output_path} was not produced")
-        content = path.read_text(errors="ignore")
+        content = path.read_text(errors="ignore", encoding='utf-8')
         converged = _TERMINATION_STRING in content
 
         energy_matches = _SCF_DONE_RE.findall(content)
@@ -131,7 +131,7 @@ class GaussianAdapter(QuantumChemistryAdapter):
         path = Path(output_path)
         if not path.exists():
             return False
-        return _TERMINATION_STRING in path.read_text(errors="ignore")
+        return _TERMINATION_STRING in path.read_text(errors="ignore", encoding='utf-8')
 
 
 # --------------------------------------------------------------------------- #

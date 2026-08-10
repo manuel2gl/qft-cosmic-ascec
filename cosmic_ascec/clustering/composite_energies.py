@@ -196,10 +196,14 @@ def apply_composite_energies(
                 mol['composite_gibbs'] = e_eref + thermal_correction
                 # Retain the components so the final Boltzmann report can break
                 # down the composite into its DFT (previous-stage Gibbs) and
-                # CCSD(T) (eref electronic) contributions.
+                # CCSD(T) (eref electronic) contributions. The previous-stage
+                # electronic energy is kept too, so the report can show a
+                # relative electronic energy for the geometry-refinement level
+                # without reconstructing it as ``g_prev - thermal_correction``.
                 mol['composite_dft_gibbs'] = g_prev
                 mol['composite_ccsdt_elec'] = e_eref
                 mol['composite_thermal'] = thermal_correction
+                mol['composite_prev_elec'] = e_prev
                 n_matched += 1
 
             # Backfill the clustering features the eref single point cannot

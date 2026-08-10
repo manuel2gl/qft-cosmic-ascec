@@ -162,7 +162,7 @@ def get_cpu_count_fast():
 
     # Try /proc/cpuinfo (Linux)
     try:
-        with open('/proc/cpuinfo', 'r') as f:
+        with open('/proc/cpuinfo', 'r', encoding='utf-8', errors='replace') as f:
             cpu_count = sum(1 for line in f if line.startswith('processor'))
             if cpu_count > 0:
                 _CPU_COUNT_CACHE = cpu_count
@@ -206,9 +206,7 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     ``_sorting_energy`` globals are carried by the local :class:`EnergyMode`
     *mode* (**D-007**); ``VERBOSE`` is :data:`console.VERBOSE`.
     """
-    from sklearn.preprocessing import StandardScaler  # type: ignore # Import only when needed
     from scipy.cluster.hierarchy import dendrogram, linkage, fcluster  # type: ignore # Import only when needed
-    import matplotlib.pyplot as plt  # type: ignore # Import only when needed
 
 
     if num_cores is None:
@@ -1772,6 +1770,11 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                     'dft_gibbs': rep.get('composite_dft_gibbs'),
                     'ccsdt_elec': rep.get('composite_ccsdt_elec'),
                     'thermal': rep.get('composite_thermal'),
+                    # Informational only: the electronic energy of this stage
+                    # (the eref one in composite runs) and, for composite runs,
+                    # the electronic energy of the geometry-refinement stage.
+                    'elec': rep.get('final_electronic_energy'),
+                    'prev_elec': rep.get('composite_prev_elec'),
                     'cluster_size': len(cluster_members)
                 })
 
@@ -1796,6 +1799,8 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                 'dft_gibbs': rep.get('dft_gibbs'),
                 'ccsdt_elec': rep.get('ccsdt_elec'),
                 'thermal': rep.get('thermal'),
+                'elec': rep.get('elec'),
+                'prev_elec': rep.get('prev_elec'),
                 'filename': rep['filename'],
                 'population': factor,
                 'cluster_size': rep['cluster_size']
@@ -1826,12 +1831,32 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                                                           folder_prefix=folder_prefix,
                                                           boltzmann_data=boltzmann_final_data)
 
+    # Reference values for the informational relative energies. Each quantity
+    # gets its own zero — the lowest value among the same representatives —
+    # so the report shows whether the minimum moves when a different energy is
+    # used. These never touch the ranking or the populations above.
+    def _min_over_reps(key):
+        values = [d.get(key) for d in boltzmann_final_data.values()]
+        values = [v for v in values if is_valid_scalar(v)]
+        return min(values) if values else None
+
+    min_elec = _min_over_reps('elec')            # this stage's electronic energy
+    min_dft_gibbs = _min_over_reps('dft_gibbs')  # composite runs only
+    min_eref_elec = _min_over_reps('ccsdt_elec')  # composite runs only
+    min_prev_elec = _min_over_reps('prev_elec')  # composite runs only
+
     # --- Create separate Boltzmann Distribution Analysis file ---
     boltzmann_file_content_lines = []
     if final_global_min_energy is not None:
         # Helper function to center text within 75 characters (same as summary)
         def center_text_boltzmann(text, width=75):
             return text.center(width)
+
+        # Hartree value with its kcal/mol and eV equivalents, as used by every
+        # energy line of this report.
+        def fmt_energy(value):
+            return (f"{value:.6f} Hartree ({hartree_to_kcal_mol(value):.2f} kcal/mol, "
+                    f"{hartree_to_ev(value):.2f} eV)")
 
         # Header for Boltzmann file - using the same beautiful ASCII art as summary
         boltzmann_file_content_lines.append("=" * 75)
@@ -1887,7 +1912,28 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
         # Add section header for motif assignment
         display_name = "Unique Motif (umotif)" if output_prefix == 'umotif' else "Motif"
         boltzmann_file_content_lines.append(f"{display_name} Assignment Summary")
-        boltzmann_file_content_lines.append("(sorted by Boltzmann population)\n")
+        boltzmann_file_content_lines.append("(sorted by Boltzmann population)")
+        if mode.has_composite:
+            boltzmann_file_content_lines.append(
+                "Ordering and populations use the Composite Gibbs energy only; the other")
+            boltzmann_file_content_lines.append(
+                "relative energies are informational and referenced to their own minimum.\n")
+        else:
+            boltzmann_file_content_lines.append(
+                "Ordering and populations use the Gibbs energy only; the relative electronic")
+            boltzmann_file_content_lines.append(
+                "energy is informational and referenced to its own minimum.\n")
+
+        # Informational relative energies: each is referenced to its own minimum
+        # over the representatives, so the reader can see whether the zero stays
+        # on the same structure or moves to another one. Skipped for a
+        # representative that lacks the quantity.
+        def add_relative_energy(data, label, key, reference, stage=None):
+            value = data.get(key)
+            if reference is None or not is_valid_scalar(value):
+                return
+            suffix = f" [{stage}]" if stage else ""
+            boltzmann_file_content_lines.append(f"  {label}: {fmt_energy(value - reference)}{suffix}")
 
         for motif_rank, (cluster_id, data) in enumerate(sorted_final_data, 1):
             # Motif number is based on population rank (most populated = 01)
@@ -1902,19 +1948,31 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             # stage-based so they stay method-agnostic.
             if mode.has_composite:
                 if data.get('dft_gibbs') is not None:
-                    dft_g = data['dft_gibbs']
-                    boltzmann_file_content_lines.append(f"  Geometry Refinement Gibbs Energy: {dft_g:.6f} Hartree ({hartree_to_kcal_mol(dft_g):.2f} kcal/mol, {hartree_to_ev(dft_g):.2f} eV)")
+                    boltzmann_file_content_lines.append(f"  Geometry Refinement Gibbs Energy: {fmt_energy(data['dft_gibbs'])}")
                 if data.get('thermal') is not None:
-                    therm = data['thermal']
-                    boltzmann_file_content_lines.append(f"  Thermal Correction: {therm:.6f} Hartree ({hartree_to_kcal_mol(therm):.2f} kcal/mol, {hartree_to_ev(therm):.2f} eV)")
+                    boltzmann_file_content_lines.append(f"  Thermal Correction: {fmt_energy(data['thermal'])}")
                 if data.get('ccsdt_elec') is not None:
-                    cc_e = data['ccsdt_elec']
-                    boltzmann_file_content_lines.append(f"  Energy Refinement: {cc_e:.6f} Hartree ({hartree_to_kcal_mol(cc_e):.2f} kcal/mol, {hartree_to_ev(cc_e):.2f} eV)")
+                    boltzmann_file_content_lines.append(f"  Energy Refinement: {fmt_energy(data['ccsdt_elec'])}")
             energy_label = "Composite Gibbs Energy" if mode.has_composite else "Gibbs Energy"
-            boltzmann_file_content_lines.append(f"  {energy_label}: {data['energy']:.6f} Hartree ({hartree_to_kcal_mol(data['energy']):.2f} kcal/mol, {hartree_to_ev(data['energy']):.2f} eV)")
-            # Relative Gibbs energy (ΔG) referenced to the global minimum (umotif_01).
+            boltzmann_file_content_lines.append(f"  {energy_label}: {fmt_energy(data['energy'])}")
+            # Relative Gibbs energy (ΔG) referenced to the global minimum, the
+            # only relative energy the ranking and the populations are built on.
             delta_g = data['energy'] - final_global_min_energy
-            boltzmann_file_content_lines.append(f"  Relative Gibbs Energy (ΔG): {delta_g:.6f} Hartree ({hartree_to_kcal_mol(delta_g):.2f} kcal/mol, {hartree_to_ev(delta_g):.2f} eV)")
+            if mode.has_composite:
+                boltzmann_file_content_lines.append(
+                    f"  Relative Composite Gibbs Energy (ΔG): {fmt_energy(delta_g)} [Geometry + Energy Refinements]")
+            else:
+                boltzmann_file_content_lines.append(f"  Relative Gibbs Energy (ΔG): {fmt_energy(delta_g)}")
+
+            if mode.has_composite:
+                add_relative_energy(data, "Relative Gibbs Energy (ΔG)", 'dft_gibbs',
+                                    min_dft_gibbs, stage="Geometry Refinement")
+                add_relative_energy(data, "Relative Electronic Energy (ΔE)", 'ccsdt_elec',
+                                    min_eref_elec, stage="Energy Refinement")
+                add_relative_energy(data, "Relative Electronic Energy (ΔE)", 'prev_elec',
+                                    min_prev_elec, stage="Geometry Refinement")
+            else:
+                add_relative_energy(data, "Relative Electronic Energy (ΔE)", 'elec', min_elec)
             boltzmann_file_content_lines.append(f"  Population: {data['population']:.2f} %")
             boltzmann_file_content_lines.append("")
 

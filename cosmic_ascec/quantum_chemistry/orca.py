@@ -111,7 +111,7 @@ class ORCAAdapter(QuantumChemistryAdapter):
             symbol = Z_TO_SYMBOL.get(z, "X")
             lines.append(f"{symbol} {x:.6f} {y:.6f} {zc:.6f}")
         lines.append("*")
-        input_path.write_text("\n".join(lines) + "\n")
+        input_path.write_text("\n".join(lines) + "\n", encoding='utf-8')
 
     def build_command(self, input_name: str, spec: QMSpec) -> list[str]:
         """Build the ORCA argv — full exe path for ``%pal`` runs (v04 3182-3198)."""
@@ -143,14 +143,14 @@ class ORCAAdapter(QuantumChemistryAdapter):
         path = Path(output_path)
         if not path.exists():
             return False
-        return _TERMINATION_STRING in path.read_text(errors="ignore")
+        return _TERMINATION_STRING in path.read_text(errors="ignore", encoding='utf-8')
 
     def _parse_result_text(self, output_path: Path) -> QMResult:
         """Parse ``energy`` / ``converged`` from text, enrich ``extras`` via cclib."""
         path = Path(output_path)
         if not path.exists():
             raise QMError(f"orca: output file {output_path} was not produced")
-        content = path.read_text(errors="ignore")
+        content = path.read_text(errors="ignore", encoding='utf-8')
         converged = _TERMINATION_STRING in content
 
         energy_matches = _FINAL_SP_ENERGY_RE.findall(content)
@@ -179,7 +179,9 @@ def _resolve_orca_exe(alias: Optional[str]) -> str:
     An alias that names a different QM package is ignored (v04
     ``detect_orca_executable``, lines 7772-7777).
     """
-    if alias and "/" in alias:
+    # Either separator: on Windows an alias naming a real path uses backslashes,
+    # and testing only for '/' would misclassify it as a bare command name.
+    if alias and ("/" in alias or "\\" in alias):
         return alias
     candidates = []
     if alias and alias.lower() not in _NON_ORCA_ALIASES:

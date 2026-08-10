@@ -503,7 +503,7 @@ def parse_element_overrides(spec: str) -> Dict[str, str]:
         path = Path(spec[1:]).expanduser()
         if not path.is_file():
             raise TrajectoryError(f"--elements=@{path}: no such file")
-        for lineno, raw in enumerate(path.read_text().splitlines(), start=1):
+        for lineno, raw in enumerate(path.read_text(encoding='utf-8', errors='replace').splitlines(), start=1):
             line = raw.split("#", 1)[0].strip()
             if not line:
                 continue
@@ -562,7 +562,7 @@ class PdbReader(TrajectoryReader):
         self.fallback_box = fallback_box
         self._first_atoms: List[str] = []
         self._first_box: Optional[Box] = None
-        self._handle = path.open()
+        self._handle = path.open(encoding='utf-8', errors='replace')
         self._read_first_frame()
 
     def _read_first_frame(self) -> None:
@@ -677,7 +677,7 @@ class GroReader(TrajectoryReader):
     def __init__(self, path: Path, overrides: Dict[str, str]):
         self.path = path
         self.overrides = overrides
-        self._handle = path.open()
+        self._handle = path.open(encoding='utf-8', errors='replace')
         self._first: Optional[Tuple[np.ndarray, Optional[Box]]] = None
         self._read_first_frame()
 
@@ -768,7 +768,7 @@ class XyzReader(TrajectoryReader):
     def __init__(self, path: Path, box: Optional[Box]):
         self.path = path
         self.box = box
-        self._handle = path.open()
+        self._handle = path.open(encoding='utf-8', errors='replace')
 
         header = self._handle.readline()
         if not header.strip():
@@ -1220,7 +1220,7 @@ def _stream(reader: TrajectoryReader, topology: Topology, solute: np.ndarray,
     worst_distance = 0.0 if spec.verify else None
     written = 0
 
-    with spec.output.open("w") as out:
+    with spec.output.open("w", encoding='utf-8') as out:
         for frame in reader.frames():
             if frame.index < spec.first:
                 continue

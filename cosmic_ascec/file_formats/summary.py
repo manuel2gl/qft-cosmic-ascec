@@ -249,7 +249,7 @@ class SummaryWriter(AnnealingCallback):
     def on_run_start(self, event: RunStart) -> None:
         """Write the banner and the system / QM / schedule preamble."""
         lines = _banner() + _preamble(event.config, self.seed)
-        self.out_path.write_text("\n".join(lines) + "\n")
+        self.out_path.write_text("\n".join(lines) + "\n", encoding='utf-8')
 
     def on_config_accepted(self, event: ConfigAccepted) -> None:
         """Append one history line for this accepted configuration."""
@@ -286,7 +286,7 @@ class SummaryWriter(AnnealingCallback):
             "",
             _INNER_DIVIDER,
         ]
-        with self.out_path.open("a") as fh:
+        with self.out_path.open("a", encoding='utf-8') as fh:
             fh.write("\n".join(lines) + "\n")
 
     # ------------------------------------------------------------------ #
@@ -296,7 +296,7 @@ class SummaryWriter(AnnealingCallback):
     def _append_history(
         self, temperature: float, energy: float, n_eval: int, criterion: str
     ) -> None:
-        with self.out_path.open("a") as fh:
+        with self.out_path.open("a", encoding='utf-8') as fh:
             fh.write(
                 f"  {temperature:>8.2f} {energy:>12.6f} "
                 f"{n_eval:>7} {criterion:>8}\n"

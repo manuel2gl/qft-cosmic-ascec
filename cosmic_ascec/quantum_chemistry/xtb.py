@@ -93,7 +93,7 @@ class XTBAdapter(QuantumChemistryAdapter):
         for z, (x, y, zc) in zip(cluster.atomic_numbers, coords):
             symbol = Z_TO_SYMBOL.get(z, "X")
             lines.append(f"{symbol} {x:.6f} {y:.6f} {zc:.6f}")
-        input_path.write_text("\n".join(lines) + "\n")
+        input_path.write_text("\n".join(lines) + "\n", encoding='utf-8')
 
     def build_command(self, input_name: str, spec: QMSpec) -> list[str]:
         """Build ``xtb <input> --gfn N [--chrg C] [--uhf 2S] [--parallel N]``."""
@@ -121,7 +121,7 @@ class XTBAdapter(QuantumChemistryAdapter):
 
     def parse_result(self, output_path: Path) -> QMResult:
         """Parse method, energy, HOMO/LUMO, dipole, rotational constants."""
-        content = Path(output_path).read_text(errors="ignore")
+        content = Path(output_path).read_text(errors="ignore", encoding='utf-8')
         converged = _TERMINATION_STRING in content
 
         extras: Dict[str, Any] = {"method": _detect_method(content)}
@@ -161,7 +161,7 @@ class XTBAdapter(QuantumChemistryAdapter):
         path = Path(output_path)
         if not path.exists():
             return False
-        return _TERMINATION_STRING in path.read_text(errors="ignore")
+        return _TERMINATION_STRING in path.read_text(errors="ignore", encoding='utf-8')
 
 
 # --------------------------------------------------------------------------- #
