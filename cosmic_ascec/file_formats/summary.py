@@ -31,7 +31,7 @@ from cosmic_ascec.annealing.engine import (
     RunStart,
     TemperatureComplete,
 )
-from cosmic_ascec.elements import ELECTRONEGATIVITY, Z_TO_SYMBOL
+from cosmic_ascec.elements import Z_TO_SYMBOL, molecular_formula
 from cosmic_ascec.file_formats.asc_schema import (
     AscConfig,
     QMProgram,
@@ -108,29 +108,6 @@ def _banner() -> list[str]:
     return lines
 
 
-def _molecular_formula(atomic_numbers: tuple[int, ...]) -> str:
-    """v04 ``get_molecular_formula_string`` (ascec-v04.py lines 858-890).
-
-    Element order: Carbon first, then Hydrogen, then the rest by ascending
-    electronegativity; a count of 1 is omitted.
-    """
-    counts = Counter(Z_TO_SYMBOL.get(z, "X") for z in atomic_numbers)
-
-    def sort_key(symbol: str):
-        if symbol == "C":
-            return (-2, 0.0)
-        if symbol == "H":
-            return (-1, 0.0)
-        return (0, ELECTRONEGATIVITY.get(symbol, float("inf")))
-
-    parts: list[str] = []
-    for symbol in sorted(counts, key=sort_key):
-        parts.append(symbol)
-        if counts[symbol] > 1:
-            parts.append(str(counts[symbol]))
-    return "".join(parts)
-
-
 def _preamble(config: AscConfig, seed: int) -> list[str]:
     """The system / QM / schedule block — verbatim v04 lines 1057-1099."""
     # v04 line 1057 — a blank line between the banner rule and the preamble.
@@ -181,7 +158,7 @@ def _preamble(config: AscConfig, seed: int) -> list[str]:
     )
     for molecule in config.molecules:
         zs = tuple(atom[0] for atom in molecule.atoms)
-        lines.append(f"  {molecule.label:<{max_label_len}} {_molecular_formula(zs)}")
+        lines.append(f"  {molecule.label:<{max_label_len}} {molecular_formula(zs)}")
 
     # --- Move caps (v04 lines 1077-1078) ----------------------------------- #
     lines.append("")

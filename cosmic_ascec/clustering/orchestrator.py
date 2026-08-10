@@ -103,6 +103,7 @@ from cosmic_ascec.clustering.scaling import (
     zscore_scale,
 )
 from cosmic_ascec.file_formats.provenance import describe, load_mapping
+from cosmic_ascec.clustering.stoichiometry import check_stoichiometry, format_report
 from cosmic_ascec.clustering.thresholds import (
     attach_pearson_to_rep,
     compute_knee_threshold,
@@ -110,6 +111,7 @@ from cosmic_ascec.clustering.thresholds import (
     resolve_clustering_threshold,
     threshold_entry,
 )
+from cosmic_ascec.exceptions import ClusteringError
 
 
 def _stage_xyz_selection(paths, workdir):
@@ -194,7 +196,7 @@ def get_cpu_count_fast():
 
 
 # Modified to accept rmsd_threshold and output_base_dir
-def perform_clustering_and_analysis(input_source, threshold="auto", file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None, partialweights=False, rmsd_only=False, rmsd_heavy=False, sp_method=None, sp_charge=None, sp_uhf=None):
+def perform_clustering_and_analysis(input_source, threshold="auto", file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None, partialweights=False, rmsd_only=False, rmsd_heavy=False, sp_method=None, sp_charge=None, sp_uhf=None, allow_mixed_stoichiometry=False):
     """
     Performs hierarchical clustering and comprehensive analysis on molecular structures.
     This is the main analysis function that orchestrates the entire clustering workflow.
@@ -222,6 +224,11 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                                  Features with std dev below this are treated as constant (0.0).
     `abs_tolerances` (dict): Dictionary of feature_name: absolute_tolerance. If the max difference
                              for a feature within a group is less than its tolerance, it's zeroed out.
+    `allow_mixed_stoichiometry` (bool): Skip the composition check. Set by the CLI for
+                             --shell / --nearest runs, where the number of solvent molecules
+                             varies from frame to frame by design. A mapping.dat in
+                             output_base_dir has the same effect and covers the two-step
+                             --extract-only workflow, where the flag is long gone.
     """
     # Default weights for all clustering features
     # These can be adjusted using the --weights flag, e.g., --weights "(first_vib_freq=1.0)(homo_lumo_gap=1.5)"
@@ -595,6 +602,28 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
         print_step("No data was successfully extracted from files. Skipping clustering.")
         return
 
+    # --- One run, one system -----------------------------------------------
+    # Checked here rather than further down because below this point are the
+    # xTB single points — one QM call per structure — and past them the output
+    # tree. A pool that cannot be clustered should cost one pass over the
+    # records, not that. What has been written so far is the descriptor cache,
+    # which the corrected re-run will happily reuse.
+    #
+    # mapping.dat is the second half of the exemption, and the reason it is
+    # read here instead of at its old site further down: it exists only in a
+    # trajectory work directory, so the two-step workflow
+    #     cosmic traj.pdb --nearest=5 --extract-only -o shell.xyz
+    #     cosmic shell.xyz
+    # is still recognised as a shell run even though the flag is long gone.
+    md_provenance = load_mapping(output_base_dir)
+    if not allow_mixed_stoichiometry and md_provenance is None:
+        stoichiometry = check_stoichiometry(all_extracted_data)
+        if stoichiometry.unchecked:
+            vprint(f"  Composition check: {len(stoichiometry.unchecked)} record(s) "
+                   f"carry no geometry and were not checked.")
+        if not stoichiometry.ok:
+            raise ClusteringError(format_report(stoichiometry))
+
     # --- Optional xTB single points on geometry-only records ---------------
     # A plain XYZ determines 7 of the 15 clustering columns; one single point
     # per structure adds the electronic energy, HOMO, gap and dipole, taking
@@ -732,11 +761,11 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     extracted_data_folder = os.path.join(output_base_dir, "extracted_data")
     extracted_clusters_folder = os.path.join(output_base_dir, "extracted_clusters")
 
-    # Trajectory provenance for this run, or None. mapping.dat is written by the
-    # MD pre-filter and exists nowhere else, so an ordinary clustering run gets
-    # None here and every comment and summary line below is built as it always
-    # was. This is the whole of the MD/non-MD distinction.
-    md_provenance = load_mapping(output_base_dir)
+    # `md_provenance` was loaded above, beside the composition check that shares
+    # it. mapping.dat is written by the MD pre-filter and exists nowhere else,
+    # so an ordinary clustering run has None there and every comment and summary
+    # line below is built as it always was. This is the whole of the MD/non-MD
+    # distinction.
 
 
 

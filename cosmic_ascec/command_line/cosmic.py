@@ -69,6 +69,7 @@ from cosmic_ascec.clustering.orchestrator import (
     perform_clustering_and_analysis,
 )
 from cosmic_ascec.clustering.thresholds import resolve_opt_params_from_sibling_cosmic
+from cosmic_ascec.exceptions import ClusteringError
 
 
 # Optional-value flags: `--rmsd`/`--rmsd-only` take a float, or none at all
@@ -438,14 +439,19 @@ def main(argv=None):
   under KEY OPTIONS.
 
 HOW IT WORKS:
-  1. Parse QM outputs (.log/.out) or coordinates (.xyz) into the feature vector
-  2. Z-standardize each feature (drop near-constant columns)
-  3. Build a UPGMA tree (SciPy average linkage, Euclidean distance)
-  4. Cut it at the threshold (default 'auto' = knee of the merge-height curve,
+  1. Check every input has the same composition — same elements, same counts —
+     and stop if not, naming the files that differ. Descriptors and RMSD are
+     only defined within one system; mixing two would cluster molecules rather
+     than conformers. Skipped for --shell / --nearest, where the number of
+     solvent molecules varies by design.
+  2. Parse QM outputs (.log/.out) or coordinates (.xyz) into the feature vector
+  3. Z-standardize each feature (drop near-constant columns)
+  4. Build a UPGMA tree (SciPy average linkage, Euclidean distance)
+  5. Cut it at the threshold (default 'auto' = knee of the merge-height curve,
      capped at the empirical 2.0 — '--th=knee' lifts that cap; Mojena is
      plotted only as a diagnostic)
-  5. Optional RMSD pass to split geometric look-alikes within a family
-  6. Flag imaginary frequencies and convergence failures
+  6. Optional RMSD pass to split geometric look-alikes within a family
+  7. Flag imaginary frequencies and convergence failures
 
 KEY OPTIONS:
   --th=auto|knee|opt|FLOAT
@@ -504,7 +510,11 @@ MD TRAJECTORY PRE-FILTER (--shell / --nearest):
                         conformations across the trajectory. No cell needed,
                         since no distance is measured across one.
   --shell R             Keep every solvent molecule within R Å. Physically
-                        honest, but frames vary in size and composition.
+                        honest, but frames vary in size and composition — so
+                        the composition check under HOW IT WORKS does not apply
+                        to --shell or --nearest runs, including an
+                        --extract-only file clustered later (mapping.dat in the
+                        work directory is what marks it).
   --solute-resname NAMES  Residue name(s) of the solute: BPA, or LIG,HEM.
   --solvent-resname NAMES Residue name(s) allowed into the shell. Keeps
                         counter-ions out; everything unnamed is ignored.
@@ -839,11 +849,20 @@ CITATION:
     # setup, and simply re-points input_source at the directory it filled — so
     # every clustering flag below applies unchanged and there is still only one
     # call into the orchestrator.
+    #
+    # A trajectory shell is also the one input whose composition legitimately
+    # varies from frame to frame, so it is exempt from the composition check the
+    # orchestrator runs. That exemption needs both halves: the orchestrator also
+    # detects it from mapping.dat, which covers an --extract-only file clustered
+    # later, and this flag covers `-od elsewhere`, where mapping.dat is not in
+    # the directory the orchestrator looks in.
+    from_md_shell = False
     if args.shell is not None or args.nearest is not None:
         outcome = run_shell_extraction(args, parser)
         if isinstance(outcome, int):
             return outcome
         args.input_source = outcome
+        from_md_shell = True
         # Keep the clustering output beside the frames it came from rather than
         # scattering it through the user's working directory.
         if args.output_dir is None:
@@ -995,27 +1014,32 @@ CITATION:
 
         file_names = [os.path.basename(f) for f in compare_files]
         print(f"\n--- Comparing {len(compare_files)} files: {', '.join(file_names)} ---\n")
-        perform_clustering_and_analysis(
-            input_source=compare_files,
-            threshold=clustering_threshold,
-            file_extension_pattern=file_extension_pattern_for_compare, # Pass for consistency, though not used for glob
-            rmsd_threshold=rmsd_validation_threshold,
-            output_base_dir=output_directory,
-            force_reprocess_cache=True, # Always reprocess for comparison
-            weights=weights_dict,
-            is_compare_mode=True,
-            min_std_threshold=min_std_threshold_val,
-            abs_tolerances=abs_tolerances_dict,
-            num_cores=num_cores,
-            temperature_k=temperature_k,
-            group_hb=args.group_hb,
-            partialweights=args.partialweights,
-            rmsd_only=rmsd_only_mode,
-            rmsd_heavy=args.rmsd_heavy,
-            sp_method=sp_method if file_extension_pattern_for_compare == XYZ_EXTENSION else None,
-            sp_charge=args.charge,
-            sp_uhf=args.uhf,
-        )
+        try:
+            perform_clustering_and_analysis(
+                input_source=compare_files,
+                threshold=clustering_threshold,
+                file_extension_pattern=file_extension_pattern_for_compare, # Pass for consistency, though not used for glob
+                rmsd_threshold=rmsd_validation_threshold,
+                output_base_dir=output_directory,
+                force_reprocess_cache=True, # Always reprocess for comparison
+                weights=weights_dict,
+                is_compare_mode=True,
+                min_std_threshold=min_std_threshold_val,
+                abs_tolerances=abs_tolerances_dict,
+                num_cores=num_cores,
+                temperature_k=temperature_k,
+                group_hb=args.group_hb,
+                partialweights=args.partialweights,
+                rmsd_only=rmsd_only_mode,
+                rmsd_heavy=args.rmsd_heavy,
+                sp_method=sp_method if file_extension_pattern_for_compare == XYZ_EXTENSION else None,
+                sp_charge=args.charge,
+                sp_uhf=args.uhf,
+                allow_mixed_stoichiometry=from_md_shell,
+            )
+        except ClusteringError as exc:
+            print(f"\nERROR: {exc}", file=sys.stderr)
+            return 1
         print(f"\n--- Finished comparing {len(compare_files)} files: {', '.join(file_names)} ---\n")
 
     else: # Normal mode (folder processing)
@@ -1151,7 +1175,15 @@ CITATION:
                 display_name = "./"
             print(f"\nProcessing folder: {display_name}\n")
 
-            perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir, partialweights=args.partialweights, rmsd_only=rmsd_only_mode, rmsd_heavy=args.rmsd_heavy, sp_method=sp_method, sp_charge=args.charge, sp_uhf=args.uhf)
+            try:
+                perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir, partialweights=args.partialweights, rmsd_only=rmsd_only_mode, rmsd_heavy=args.rmsd_heavy, sp_method=sp_method, sp_charge=args.charge, sp_uhf=args.uhf, allow_mixed_stoichiometry=from_md_shell)
+            except ClusteringError as exc:
+                # Stop the run rather than skipping the folder: the exit status
+                # has to mean "this did not do what you asked", and a batch that
+                # kept going would print "all analyses complete" over the top of
+                # a failure and leave nothing but the code to tell them apart.
+                print(f"\nERROR: {exc}", file=sys.stderr)
+                return 1
 
             print(f"\nFinished processing folder: {display_name}\n")
 
