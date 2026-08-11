@@ -2881,11 +2881,11 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group" style="flex:1; min-width:70px; margin-bottom:0;">
                             <label>Charge</label>
-                            <input type="number" id="adv-opt-nprocs" value="1" min="1" oninput="updateAllPreviews()">
+                            <input type="number" id="smart-charge" value="0" oninput="autofillGroundStateMultiplicity('smart-charge'); updateAllPreviews()">
                         </div>
                         <div class="form-group" style="flex:1; min-width:70px; margin-bottom:0;">
                             <label>Mult.</label>
-                            <input type="number" id="smart-multiplicity" value="1" min="1">
+                            <input type="number" id="smart-multiplicity" value="1" min="1" oninput="updateAllPreviews()">
                         </div>
                     </div>
                 </div>
@@ -3395,7 +3395,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </div>
                         <div class="form-group">
                             <label>Charge</label>
-                            <input type="number" id="adv-charge" value="0" oninput="autofillGroundStateMultiplicity(); updateAllPreviews()">
+                            <input type="number" id="adv-charge" value="0" oninput="autofillGroundStateMultiplicity('adv-charge'); updateAllPreviews()">
                         </div>
                         <div class="form-group">
                             <label>Multiplicity</label>
@@ -6677,9 +6677,11 @@ H  -0.757000  0.586000  0.000000"></textarea>
         // Parity of total electrons (after charge) gives the ground-state multiplicity
         // for most closed/open-shell species: even → singlet (1), odd → doublet (2).
         // O2-like triplets remain user-overridable after autofill.
-        function autofillGroundStateMultiplicity() {
+        function autofillGroundStateMultiplicity(preferredChargeId) {
             if (molecules.length === 0) return;
-            const chargeRaw = document.getElementById('adv-charge')?.value
+            // Prefer the field the user just edited; both charge boxes are kept in sync afterwards.
+            const chargeRaw = (preferredChargeId ? document.getElementById(preferredChargeId)?.value : undefined)
+                ?? document.getElementById('adv-charge')?.value
                 ?? document.getElementById('smart-charge')?.value
                 ?? '0';
             const charge = parseInt(chargeRaw, 10);
