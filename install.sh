@@ -22,8 +22,11 @@ set -e  # Stop immediately if any command fails
 #   - Install orca-pi via pip (for ORCA 6.1+ output parsing)
 #   - Set up `ascec` and `cosmic` shell aliases pointing at the root scripts
 #
-# git is NOT a prerequisite: if it is missing the script installs it from
-# conda-forge, and failing that falls back to downloading a source tarball.
+# The install is a git checkout, always. If git is missing the script installs
+# it from conda-forge; if that fails it STOPS and tells you to install git
+# yourself, rather than silently unpacking a tarball you cannot 'git pull' or
+# 'git status' later. Machines that genuinely cannot have git can opt out with
+# ALLOW_TARBALL=TRUE, which prints what it is giving up.
 #
 # Default annealing backend is xTB (installed from conda-forge). ORCA and
 # Gaussian are optional and need to be installed separately if you want them.
@@ -40,7 +43,14 @@ TARGET_DIR="$HOME/software/ascec04"
 ENV_NAME="py11"
 PY_VERSION="3.11"
 REPO_URL="https://github.com/manuel2gl/qft-cosmic-ascec.git"
-REPO_TARBALL="https://github.com/manuel2gl/qft-cosmic-ascec/archive/refs/heads/main.tar.gz"
+REPO_BRANCH="main"
+REPO_TARBALL="https://github.com/manuel2gl/qft-cosmic-ascec/archive/refs/heads/${REPO_BRANCH}.tar.gz"
+
+# TRUE -> allow the no-git tarball install (a plain directory: no 'git pull',
+#         no 'git status', updates re-download the whole tree). Off by default
+#         and meant only for machines with no way to get git at all. Can also
+#         be passed per-run:  ALLOW_TARBALL=TRUE bash install.sh
+ALLOW_TARBALL="${ALLOW_TARBALL:-FALSE}"
 
 # Miniconda installer. To pin a reproducible version, replace the URL with a
 # versioned installer from https://repo.anaconda.com/miniconda/ and set
@@ -233,17 +243,110 @@ ensure_git() {
     # force a full base re-solve and is hard to undo.
     local target_env="$ENV_NAME"
     [ "$INSTALL_PY11" = "TRUE" ] || target_env="base"
-    conda install -n "$target_env" -c conda-forge git -y >/dev/null 2>&1 || return 1
-    if [ "$INSTALL_PY11" = "TRUE" ]; then
-        export PATH="$CONDA_BASE/envs/$ENV_NAME/bin:$PATH"
-    else
-        export PATH="$CONDA_BASE/bin:$PATH"
+    # That env does not exist yet — this runs BEFORE step 4 creates it. Without
+    # creating it here, `conda install -n py11` fails on every fresh machine and
+    # the script used to drop silently to the tarball. Step 4 finds the env
+    # already present and just activates it.
+    if [ "$target_env" != "base" ] \
+       && ! conda env list | awk '{print $1}' | grep -qx "$target_env"; then
+        info "Creating the '$target_env' environment early so git can go into it..."
+        conda create -n "$target_env" python="$PY_VERSION" -y >/dev/null 2>&1 \
+            || target_env="base"
     fi
-    have git
+    conda install -n "$target_env" -c conda-forge git -y >/dev/null 2>&1 || return 1
+    if [ "$target_env" = "base" ]; then
+        export PATH="$CONDA_BASE/bin:$PATH"
+    else
+        export PATH="$CONDA_BASE/envs/$target_env/bin:$PATH"
+    fi
+    have git || return 1
+    # This git lives inside the conda env, so it is on PATH here but NOT in the
+    # user's normal shell. Say so, or `git status` in the install dir later
+    # reports "command not found" and the checkout looks broken.
+    warn "git was installed into the '$target_env' conda env, so it is only on"
+    warn "PATH after 'conda activate $target_env'. For everyday use install it"
+    warn "system-wide too:  $(git_install_hint)"
+    return 0
+}
+
+# The command to install git by hand on this machine. Used in the error path:
+# when git cannot be obtained we tell the user exactly what to type.
+git_install_hint() {
+    if   have apt-get; then echo "sudo apt install git"
+    elif have dnf;     then echo "sudo dnf install git"
+    elif have yum;     then echo "sudo yum install git"
+    elif have pacman;  then echo "sudo pacman -S git"
+    elif have zypper;  then echo "sudo zypper install git"
+    elif have brew;    then echo "brew install git"
+    else                    echo "install git using your system's package manager"
+    fi
+}
+
+# git is a hard requirement unless the user explicitly opted into the tarball.
+# Returning instead of dying lets callers that can still do something useful
+# (a local copy already on disk) degrade to a warning.
+require_git() {
+    ensure_git && return 0
+    # Explicit if, not `[ ... ] && return`: under `set -e` a compound list that
+    # ends up false aborts the whole script when the caller is not a condition.
+    if [ "$ALLOW_TARBALL" = "TRUE" ]; then
+        return 1
+    fi
+    die "git is required, and installing it from conda-forge failed." \
+        "" \
+        "Install git yourself, then re-run this script:" \
+        "  $(git_install_hint)" \
+        "" \
+        "Without git the install cannot be a repository: no 'git pull' to" \
+        "update, no 'git status' to see your local edits." \
+        "" \
+        "If this machine truly cannot have git, opt into the plain-directory" \
+        "install explicitly:" \
+        "  ALLOW_TARBALL=TRUE bash $0"
+}
+
+# Turn a plain directory (tarball unpack, ZIP download, rsync copy) into a real
+# checkout WITHOUT touching the files in it. The reset is the default --mixed
+# kind: it writes .git/ and the index only, so local edits survive and simply
+# show up as ordinary unstaged changes.
+adopt_as_checkout() {
+    if [ -d "$TARGET_DIR/.git" ]; then
+        return 0
+    fi
+    have git || return 1
+    info "$TARGET_DIR is not a checkout — adopting it as one (files untouched)..."
+    if git -C "$TARGET_DIR" init -q \
+        && git -C "$TARGET_DIR" remote add origin "$REPO_URL" \
+        && git -C "$TARGET_DIR" fetch -q origin \
+        && git -C "$TARGET_DIR" symbolic-ref HEAD "refs/heads/$REPO_BRANCH" \
+        && git -C "$TARGET_DIR" reset -q "origin/$REPO_BRANCH" \
+        && git -C "$TARGET_DIR" branch --set-upstream-to="origin/$REPO_BRANCH" \
+               "$REPO_BRANCH" >/dev/null 2>&1; then
+        info "Adopted — 'git status' and 'git pull' now work in $TARGET_DIR."
+        info "Files that differ from origin/$REPO_BRANCH show as modifications."
+        return 0
+    fi
+    # A half-built .git is worse than none: the next run would take the
+    # "existing checkout" path and fail on 'git pull'.
+    rm -rf "$TARGET_DIR/.git"
+    warn "Could not adopt $TARGET_DIR as a checkout (no network for the fetch?)."
+    return 1
+}
+
+# Single place that reports a non-repo install, so every path says the same
+# thing instead of leaving the user to discover it from a git error.
+warn_not_a_checkout() {
+    warn "$TARGET_DIR is NOT a git checkout."
+    warn "'git status' and 'git pull' will not work there, and this script will"
+    warn "re-download instead of updating. To fix it later, install git"
+    warn "($(git_install_hint)) and re-run this script — it will adopt the"
+    warn "directory as a checkout without touching your files."
 }
 
 # Fetch a source tarball instead of cloning. Needs neither git nor a package
-# manager, which matters on locked-down HPC and corporate machines.
+# manager, which matters on locked-down HPC and corporate machines. NOT a
+# fallback any more: reachable only via ALLOW_TARBALL=TRUE, because what it
+# leaves behind is a plain directory that no git command can work with.
 fetch_tarball() {
     have tar || return 1
     local tmp
@@ -263,8 +366,8 @@ fetch_tarball() {
     mkdir -p "$TARGET_DIR"
     cp -a "$extracted/." "$TARGET_DIR/"
     rm -rf "$tmp"
-    warn "Installed from a tarball, so $TARGET_DIR is not a git checkout."
-    warn "Future updates will re-download rather than 'git pull'."
+    warn "Installed from a tarball (ALLOW_TARBALL=TRUE)."
+    warn_not_a_checkout
     return 0
 }
 
@@ -273,17 +376,39 @@ info "Setting up directories at $TARGET_DIR..."
 if [ "$LOCAL_MODE" = "TRUE" ] && [ "$SCRIPT_DIR" = "$TARGET_DIR" ]; then
     info "Installing in place at $TARGET_DIR (no copy needed)..."
     mkdir -p "$TARGET_DIR"
+    # A ZIP download or an older tarball install lands here: the code runs, but
+    # the directory is not a repo. Repair that instead of leaving the user to
+    # find out from `git status` months later. Only a warning if it cannot be
+    # done — the tree is already on disk and working, so aborting helps nobody.
+    if [ ! -d "$TARGET_DIR/.git" ]; then
+        if ensure_git; then
+            adopt_as_checkout || warn_not_a_checkout
+        else
+            warn "git is not available and could not be installed from conda-forge."
+            warn_not_a_checkout
+        fi
+    fi
 
 elif [ "$LOCAL_MODE" = "TRUE" ]; then
     info "Local checkout detected at $SCRIPT_DIR — copying into $TARGET_DIR..."
     mkdir -p "$TARGET_DIR"
     # rsync preserves perms and skips junk; fall back to cp -a if rsync missing.
+    # rsync leaves any .git/ in the target alone (excluded, so --delete cannot
+    # eat a real checkout); when there is none, one is created below.
     if have rsync; then
         rsync -a --delete \
             --exclude '.git/' --exclude '__pycache__/' --exclude '*.pyc' \
             "$SCRIPT_DIR/" "$TARGET_DIR/"
     else
         cp -a "$SCRIPT_DIR/." "$TARGET_DIR/"
+    fi
+    if [ ! -d "$TARGET_DIR/.git" ]; then
+        if ensure_git; then
+            adopt_as_checkout || warn_not_a_checkout
+        else
+            warn "git is not available and could not be installed from conda-forge."
+            warn_not_a_checkout
+        fi
     fi
 
 elif [ -d "$TARGET_DIR/.git" ]; then
@@ -312,29 +437,40 @@ else
     # directory fails with a raw git fatal, which is a confusing way to learn
     # that you unpacked a tarball here last month.
     if [ -d "$TARGET_DIR" ] && [ -n "$(ls -A "$TARGET_DIR" 2>/dev/null)" ]; then
-        die "$TARGET_DIR already exists, is not empty, and is not a git checkout." \
-            "" \
-            "SOLUTIONS:" \
-            "  - Move or delete it, then re-run this script, OR" \
-            "  - Run install.sh from a local checkout (a directory containing" \
-            "    both ascec-v04.py and cosmic_ascec/), which copies the source" \
-            "    instead of cloning."
-    fi
-    if ensure_git; then
+        # A non-empty, non-repo target is almost always an earlier tarball or
+        # ZIP install. That is repairable in place, so try that before giving
+        # up: adoption rewrites no working file.
+        if ensure_git && adopt_as_checkout; then
+            info "Continuing with the adopted checkout at $TARGET_DIR."
+        else
+            die "$TARGET_DIR already exists, is not empty, and is not a git checkout." \
+                "" \
+                "It could not be adopted as one either (git unavailable, or the" \
+                "fetch from GitHub failed)." \
+                "" \
+                "SOLUTIONS:" \
+                "  - Install git, then re-run this script — it will convert the" \
+                "    directory into a checkout without touching your files:" \
+                "      $(git_install_hint)" \
+                "  - Or move/delete $TARGET_DIR, then re-run this script."
+        fi
+    # require_git dies with instructions unless ALLOW_TARBALL=TRUE, in which
+    # case it returns 1 and the tarball path below runs.
+    elif require_git; then
         info "Cloning repository..."
         git clone "$REPO_URL" "$TARGET_DIR"
     elif fetch_tarball; then
         info "Source installed without git."
     else
         die "Could not obtain the source." \
-            "git is unavailable, could not be installed from conda-forge, and" \
-            "the source tarball could not be downloaded." \
+            "git is unavailable and the source tarball could not be downloaded." \
             "" \
             "SOLUTIONS:" \
-            "  - Install git with your package manager, then re-run, OR" \
-            "  - Download the repository manually from" \
+            "  - Install git, then re-run this script:" \
+            "      $(git_install_hint)" \
+            "  - Or download the repository manually from" \
             "    https://github.com/manuel2gl/qft-cosmic-ascec and run" \
-            "    install.sh from inside it (local-checkout mode needs no git)."
+            "    install.sh from inside it."
     fi
 fi
 
