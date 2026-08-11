@@ -1488,6 +1488,43 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             flex-shrink: 0;
         }
 
+        /* Must not shrink: the truncation budget belongs to .smart-type-name,
+           otherwise the toggle wraps onto its own line inside the chip. */
+        .smart-type-fixed {
+            flex: 0 0 auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            white-space: nowrap;
+            font-family: inherit;
+            font-size: 0.92em;
+            line-height: 1;
+            padding: 1px 5px;
+            border: 1px solid transparent;
+            border-radius: 999px;
+            background: transparent;
+            color: #a3b0bd;
+            cursor: pointer;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .smart-type-fixed:hover:not(:disabled) {
+            background: #f6ead4;
+            color: #7a5c1e;
+        }
+
+        .smart-type-fixed.is-fixed {
+            background: #f3e4c8;
+            border-color: #e8d5b5;
+            color: #7a5c1e;
+            font-weight: 600;
+        }
+
+        .smart-type-fixed:disabled {
+            cursor: not-allowed;
+            opacity: 0.35;
+        }
+
         .smart-type-count {
             color: #4d6376;
             font-variant-numeric: tabular-nums;
@@ -1557,28 +1594,6 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
         .smart-box-controls .btn-sm {
             height: 30px;
             font-size: 12px;
-        }
-
-        .smart-box-controls #smart-sim-name {
-            background: #ffffff !important;
-            font-size: 13px !important;
-            padding: 5px 10px !important;
-            height: 30px !important;
-            border: 2px solid #3498db !important;
-            border-radius: 3px !important;
-            transition: border-color 0.2s, box-shadow 0.2s;
-        }
-
-        .smart-box-controls #smart-sim-name::placeholder {
-            color: #3498db;
-            font-weight: 600;
-            opacity: 1;
-        }
-
-        .smart-box-controls #smart-sim-name:focus {
-            border-color: #2980b9 !important;
-            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2) !important;
-            outline: none !important;
         }
 
         .mol-preview-card {
@@ -1862,6 +1877,92 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             #advanced-tab .form-row-5 {
                 grid-template-columns: repeat(3, 1fr);
             }
+        }
+
+        .adv-fixed-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-top: 12px;
+        }
+
+        .adv-fixed-group .adv-fixed-toggle {
+            margin-top: 0;
+        }
+
+        .adv-fixed-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+            padding: 7px 10px;
+            background: #fdf6ec;
+            border: 1px solid #e8d5b5;
+            border-radius: 6px;
+            font-size: 0.85em;
+            color: #7a5c1e;
+            cursor: pointer;
+        }
+
+        .adv-fixed-toggle input[type="checkbox"] {
+            margin: 0;
+            flex-shrink: 0;
+        }
+
+        .adv-fixed-toggle code {
+            background: #f3e4c8;
+            padding: 0 4px;
+            border-radius: 3px;
+        }
+
+        .mol-fixed-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            white-space: nowrap;
+            margin-left: 6px;
+            padding: 1px 6px;
+            border: 1px solid transparent;
+            border-radius: 999px;
+            background: transparent;
+            color: #a3b0bd;
+            font-family: inherit;
+            font-size: 0.75em;
+            font-weight: 600;
+            vertical-align: middle;
+            cursor: pointer;
+        }
+
+        .mol-fixed-badge:hover {
+            background: #f6ead4;
+            color: #7a5c1e;
+        }
+
+        .mol-fixed-badge.is-fixed {
+            background: #e8d5b5;
+            border-color: #d9c3a0;
+            color: #7a5c1e;
+        }
+
+        .adv-box-info {
+            flex: 0 0 auto;
+            margin-top: 10px;
+            padding: 8px 10px;
+            background: #f8f9fa;
+            border: 1px solid #e3e7ec;
+            border-radius: 6px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 11.5px;
+            line-height: 1.55;
+            color: #3f5b77;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            overflow-x: auto;
+        }
+
+        .adv-box-info b {
+            color: #2c3e50;
         }
 
         .adv-name-actions {
@@ -2629,9 +2730,6 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                                     <button id="smart-box-visual-test-btn" class="btn btn-sm btn-secondary" onclick="randomizeBoxView()" style="background:#8e6fad; color:#fff; border-color:#8e6fad;">Visual Test</button>
                                     <button class="btn btn-sm btn-primary" onclick="downloadMoleculesXYZ()">Download XYZ</button>
                                     <button class="btn btn-sm btn-primary" onclick="downloadBoxXYZ()">Download Box XYZ</button>
-                                    <div class="form-group" style="flex: 1; margin: 0; min-width: 200px;">
-                                        <input type="text" id="smart-sim-name" value="" placeholder="Enter simulation name" oninput="syncSmartToAdvanced()">
-                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -2643,22 +2741,28 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             <div class="smart-center-row">
                 <!-- Box 7: Molecule → XYZ -->
                 <div class="card" style="position: relative;">
-                    <h2>Molecule → XYZ Converter</h2>
-
-                    <div class="alert alert-info">
-                        <strong>Enter any PubChem identifier</strong> (name, SMILES, CAS, InChI) to generate 3D coordinates.
+                    <div class="card-title-row">
+                        <h2 style="margin-bottom:0;">Molecule → XYZ Converter</h2>
+                        <button type="button" id="smart-xyz-toggle-btn" class="btn btn-sm btn-secondary"
+                            style="white-space: nowrap;" onclick="toggleSmartXyzInput()"
+                            title="Switch between PubChem lookup and pasting XYZ coordinates directly">⌨ Enter XYZ</button>
                     </div>
 
-                    <div class="inline-group" style="align-items: flex-end; margin-bottom: 10px;">
-                        <div class="form-group" style="flex: 1; margin-bottom: 0;">
-                            <label>Name, SMILES, CAS, or InChI</label>
-                            <input type="text" id="basic-smiles-input" placeholder="e.g., water, 64-17-5, CCO, paclitaxel"
-                                onkeypress="if(event.key === 'Enter') basicConvertToXYZ()">
+                    <div id="smart-pubchem-panel">
+                        <div class="alert alert-info">
+                            <strong>Enter any PubChem identifier</strong> (name, SMILES, CAS, InChI) to generate 3D coordinates.
                         </div>
-                        <button id="btn-basic-generate" class="btn btn-primary"
-                            style="height: 42px; min-width: 140px; flex-shrink: 0; white-space: nowrap;" onclick="basicConvertToXYZ()">🔄
-                            Generate</button>
-                    </div>
+
+                        <div class="inline-group" style="align-items: flex-end; margin-bottom: 10px;">
+                            <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                                <label>Name, SMILES, CAS, or InChI</label>
+                                <input type="text" id="basic-smiles-input" placeholder="e.g., water, 64-17-5, CCO, paclitaxel"
+                                    onkeypress="if(event.key === 'Enter') basicConvertToXYZ()">
+                            </div>
+                            <button id="btn-basic-generate" class="btn btn-primary"
+                                style="height: 42px; min-width: 140px; flex-shrink: 0; white-space: nowrap;" onclick="basicConvertToXYZ()">🔄
+                                Generate</button>
+                        </div>
 
                     <div class="quick-mol-buttons" style="margin-top: 5px;">
                         <button class="quick-mol-btn" onclick="basicLoadSmiles('O', 'water')">Water</button>
@@ -2683,6 +2787,35 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                             onclick="basicLoadSmiles('C1=CC=NC=C1', 'pyridine')">Pyridine</button>
                         <button class="quick-mol-btn" onclick="basicLoadSmiles('C1CCOC1', 'thf')">THF</button>
                         <button class="quick-mol-btn" onclick="basicLoadSmiles('CCCCCC', 'hexane')">Hexane</button>
+                    </div>
+                    </div>
+
+                    <div id="smart-manual-panel" style="display: none;">
+                        <div class="alert alert-info">
+                            <strong>Paste XYZ coordinates</strong> (one <code>element x y z</code> per line) and load them into the preview.
+                        </div>
+
+                        <div class="inline-group" style="align-items: flex-end; margin-bottom: 10px;">
+                            <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                                <label>Molecule Label</label>
+                                <input type="text" id="smart-manual-mol-name" placeholder="e.g., water1">
+                            </div>
+                            <button class="btn btn-primary"
+                                style="height: 42px; min-width: 140px; flex-shrink: 0; white-space: nowrap;"
+                                onclick="smartLoadManualXyz()">⤵ Load Preview</button>
+                        </div>
+
+                        <div class="form-group" style="margin-bottom: 10px;">
+                            <label>XYZ Coordinates</label>
+                            <textarea class="xyz-input" id="smart-manual-xyz" rows="7" placeholder="O   0.000000  0.000000  0.000000
+H   0.757000  0.586000  0.000000
+H  -0.757000  0.586000  0.000000"></textarea>
+                        </div>
+
+                        <div class="quick-mol-buttons" style="margin-top: 5px;">
+                            <button class="quick-mol-btn" onclick="smartLoadExampleXyz('water')">Water</button>
+                            <button class="quick-mol-btn" onclick="smartLoadExampleXyz('ethanol')">Ethanol</button>
+                        </div>
                     </div>
                     <div style="margin-top: 12px; background: #f8f9fa; border-radius: 6px; padding: 12px 14px; font-size: 0.85em;">
                         <div class="mol-info-bar" style="display: flex; gap: 0; align-items: flex-start;">
@@ -2770,7 +2903,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                 <div class="sampling-mode-title-row">
                     <h2>Sampling Mode</h2>
                     <label class="auto-box-compact smart-maxprint-toggle" title="Maxprint saves all QM output files and can consume significant disk space." onmouseenter="showMaxprintDiskAlert()">
-                        <input type="checkbox" id="smart-maxprint" onchange="toggleMaxprintFromSmart()">
+                        <input type="checkbox" id="smart-maxprint" onchange="toggleMaxprintFromSmart(this)">
                         <span>maxprint</span>
                     </label>
                 </div>
@@ -3238,13 +3371,23 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <span class="pipeline-step-theory">Final PES</span>
                     </div>
                 </div>
-                <div style="text-align: center; margin-top: 15px;">
-                    <button class="btn btn-smart-primary" onclick="generateSmartFiles()">
-                        Download .asc
-                    </button>
-                    <button class="btn btn-smart-secondary" onclick="previewSmartProtocol()" style="margin-left: 10px;">
-                        Preview / Edit
-                    </button>
+                <div class="adv-name-actions">
+                    <div class="form-group">
+                        <label>Simulation Name</label>
+                        <input type="text" id="smart-sim-name" value="" placeholder="Enter simulation name" oninput="syncSmartToAdvanced()">
+                    </div>
+                    <div class="toggle-row" style="justify-content:center; margin-top: 0;">
+                        <input type="checkbox" id="smart-maxprint-pipeline" onchange="toggleMaxprintFromSmart(this)">
+                        <label for="smart-maxprint-pipeline" style="margin:0;">Maxprint</label>
+                    </div>
+                    <div class="adv-name-actions-buttons">
+                        <button class="btn btn-smart-primary" onclick="generateSmartFiles()">
+                            Download .asc
+                        </button>
+                        <button class="btn btn-smart-secondary" onclick="previewSmartProtocol()">
+                            Preview / Edit
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -3307,7 +3450,7 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <input type="text" id="sim-name" value="" placeholder="cluster" oninput="updatePreview()">
                     </div>
                     <div class="toggle-row" style="justify-content:center; margin-top: 0;">
-                        <input type="checkbox" id="adv-maxprint" onchange="toggleMaxprintFromAdvanced()">
+                        <input type="checkbox" id="adv-maxprint" onchange="toggleMaxprintFromAdvanced(this)">
                         <label for="adv-maxprint" style="margin:0;">Maxprint (--maxprint)</label>
                     </div>
                     <div class="adv-name-actions-buttons">
@@ -4128,6 +4271,17 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         </button>
                     </div>
 
+                    <div class="adv-fixed-group">
+                        <label class="adv-fixed-toggle" title="Write this fragment between *$ delimiters, using exactly the coordinates shown. ASCEC never translates or rotates it, and Visual Test leaves it alone too.">
+                            <input type="checkbox" id="adv-mol-fixed" onchange="toggleAdvMolFixed('adv-mol-fixed')">
+                            <span>Fix these coordinates as they are (<code>*$</code>)</span>
+                        </label>
+                        <label class="adv-fixed-toggle" title="Shift the fragment so its centroid sits on the box centre (0, 0, 0), then pin it there. Same *$ block, but the coordinates written out are the centred ones.">
+                            <input type="checkbox" id="adv-mol-center-fix" onchange="toggleAdvMolFixed('adv-mol-center-fix')">
+                            <span>Center at (0, 0, 0) and fix (<code>*$</code>)</span>
+                        </label>
+                    </div>
+
                     <!-- Manual Mode -->
                     <div id="manual-mode" class="tab-content active">
                         <div class="inline-group" style="margin-bottom: 10px; margin-top: 15px;">
@@ -4221,8 +4375,10 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 <div class="card" id="advanced-sim-box-card">
                     <h2>Simulation Box</h2>
                     <div id="box-viewer" class="viewer-3d"></div>
+                    <div id="adv-box-info" class="adv-box-info"></div>
                     <div class="btn-group" style="margin-top: 15px;">
                         <button class="btn btn-sm btn-secondary" onclick="updateBoxViewer()">🔄 Refresh</button>
+                        <button class="btn btn-sm btn-secondary" style="background:#8e6fad; color:#fff; border-color:#8e6fad;" onclick="randomizeBoxView('advanced')">Visual Test</button>
                         <button class="btn btn-sm btn-primary" onclick="downloadBoxXYZ()">⬇️ Download XYZ</button>
                     </div>
                 </div>
@@ -4563,6 +4719,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             notifyCOSMICRMSDChange('adv-sim2-rmsd');
             toggleAdvUsePacking();
             toggleAdvAutoNmo();
+            updateAdvancedBoxInfo(getAdvancedBoxSize());
             updateSimModeUI();
             updateQmCommandFromProgram();
             toggleCustomInput('adv-annealing-basis', 'adv-annealing-basis-custom');
@@ -4585,7 +4742,11 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
             // Add change listeners for smart mode tab
             // Exclude top Simulation Box controls; they have dedicated handlers.
-            const topSmartControlIds = new Set(['smart-use-packing-top', 'smart-packing-top-input', 'smart-box-size-top']);
+            const topSmartControlIds = new Set([
+                'smart-use-packing-top', 'smart-packing-top-input', 'smart-box-size-top',
+                // Dedicated onchange handlers; a blanket sync here would fight them.
+                'smart-maxprint', 'smart-maxprint-pipeline'
+            ]);
             document.querySelectorAll('#basic-tab input, #basic-tab select').forEach(el => {
                 el.addEventListener('change', () => {
                     if (topSmartControlIds.has(el.id)) return;
@@ -4601,12 +4762,15 @@ H  -0.757000  0.586000  0.000000"></textarea>
             });
             
             // Add change listeners for advanced tab
+            const dedicatedAdvancedControlIds = new Set(['adv-maxprint']);
             document.querySelectorAll('#advanced-tab input, #advanced-tab select').forEach(el => {
                 el.addEventListener('change', () => {
+                    if (dedicatedAdvancedControlIds.has(el.id)) return;
                     syncAdvancedToSmart();
                     updatePreview();
                 });
                 el.addEventListener('input', () => {
+                    if (dedicatedAdvancedControlIds.has(el.id)) return;
                     syncAdvancedToSmart();
                     updatePreview();
                 });
@@ -5002,6 +5166,17 @@ H  -0.757000  0.586000  0.000000"></textarea>
             animationFrameId = requestAnimationFrame(animate);
         }
 
+        // Use smart-box-size (Smart Mode), basic-box-size (legacy), or box-size (Advanced)
+        function getSmartBoxSize() {
+            return parseFloat(document.getElementById('smart-box-size')?.value) ||
+                   parseFloat(document.getElementById('basic-box-size')?.value) ||
+                   parseFloat(document.getElementById('box-size')?.value) || 7;
+        }
+
+        function getAdvancedBoxSize() {
+            return parseFloat(document.getElementById('box-size')?.value) || 7;
+        }
+
         // Update basic box viewer (Smart Mode - elegant, animated)
         function updateBasicBoxViewer() {
             // Recreate viewer from scratch to fully reset camera position, rotation & zoom
@@ -5029,65 +5204,21 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 if (typeof basicBoxViewer.enableFog === 'function') basicBoxViewer.enableFog(false);
                 basicBoxViewer.removeAllModels();
                 basicBoxViewer.removeAllShapes();
+                // Labels are not covered by removeAllModels/removeAllShapes; without
+                // this the coordinate callouts stack up on every redraw.
+                if (typeof basicBoxViewer.removeAllLabels === 'function') basicBoxViewer.removeAllLabels();
 
-                // Use smart-box-size (Smart Mode), basic-box-size (legacy), or box-size (Advanced)
-                const boxSize = parseFloat(document.getElementById('smart-box-size')?.value) ||
-                                parseFloat(document.getElementById('basic-box-size')?.value) ||
-                                parseFloat(document.getElementById('box-size')?.value) || 7;
+                const boxSize = getSmartBoxSize();
                 const half = boxSize / 2;
-                const smartBoxColor = 0x7f8c8d;
 
                 // Fixed display radii keep edge thickness identical between empty/full views.
-                const edgeRadius = 0.1;
-                const cornerRadius = 0.078;
-
-                // Draw box edges at real coordinates
-                const edges = [
-                    [[-half, -half, -half], [half, -half, -half]], [[half, -half, -half], [half, half, -half]],
-                    [[half, half, -half], [-half, half, -half]], [[-half, half, -half], [-half, -half, -half]],
-                    [[-half, -half, half], [half, -half, half]], [[half, -half, half], [half, half, half]],
-                    [[half, half, half], [-half, half, half]], [[-half, half, half], [-half, -half, half]],
-                    [[-half, -half, -half], [-half, -half, half]], [[half, -half, -half], [half, -half, half]],
-                    [[half, half, -half], [half, half, half]], [[-half, half, -half], [-half, half, half]]
-                ];
-                edges.forEach(([s, e]) => {
-                    basicBoxViewer.addCylinder({
-                        start: { x: s[0], y: s[1], z: s[2] },
-                        end: { x: e[0], y: e[1], z: e[2] },
-                        radius: edgeRadius, color: smartBoxColor, fromCap: true, toCap: true
-                    });
-                });
-
-                // Corner spheres at real coordinates
-                const corners = [
-                    [-half, -half, -half], [half, -half, -half], [half, half, -half], [-half, half, -half],
-                    [-half, -half, half], [half, -half, half], [half, half, half], [-half, half, half]
-                ];
-                corners.forEach(c => {
-                    basicBoxViewer.addSphere({
-                        center: { x: c[0], y: c[1], z: c[2] },
-                        radius: cornerRadius, color: smartBoxColor
-                    });
-                });
-
-                // Add invisible corner atoms for zoomTo() to work with
-                let cornerXyz = '8\nBox corners\n';
-                corners.forEach(c => {
-                    cornerXyz += `X ${c[0]} ${c[1]} ${c[2]}\n`;
-                });
-                const cornerModel = basicBoxViewer.addModel(cornerXyz, 'xyz');
-                const cornerModelId = (cornerModel && typeof cornerModel.getID === 'function') ? cornerModel.getID() : null;
-                basicBoxViewer.setStyle({elem: 'X'}, {sphere: {radius: 0.001, opacity: 0}});
+                const cornerModelId = drawBoxFrame(basicBoxViewer, half, SMART_BOX_STYLE);
 
                 // Add molecules at their real XYZ coordinates (no scaling)
                 // Each fragment is a separate model so 3Dmol won't bond across fragments
                 if (molecules.length > 0) {
                     console.log('Displaying', molecules.length, 'molecules in Smart Mode box');
 
-                    const molStyle = {
-                        stick: { radius: 0.12, colorscheme: 'Jmol' },
-                        sphere: { radius: 0.25, colorscheme: 'Jmol' }
-                    };
                     molecules.forEach(mol => {
                         if (mol.atoms.length === 0) return;
                         let xyzString = `${mol.atoms.length}\nFragment\n`;
@@ -5096,7 +5227,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                             xyzString += `${atom} ${x.toFixed(6)} ${y.toFixed(6)} ${z.toFixed(6)}\n`;
                         });
                         const fragModel = basicBoxViewer.addModel(xyzString, 'xyz');
-                        fragModel.setStyle({}, molStyle);
+                        fragModel.setStyle({}, BOX_MOL_STYLE);
                     });
                     basicBoxViewer.setStyle({elem: 'X'}, {sphere: {radius: 0.001, opacity: 0}});
                 }
@@ -5120,145 +5251,249 @@ H  -0.757000  0.586000  0.000000"></textarea>
             }
         }
 
-        // Random visual displacement — purely cosmetic, never modifies molecules[] or any downloadable data
-        function randomizeBoxView() {
-            if (!basicBoxViewer) {
-                initSmartModeBoxViewer();
-                if (!basicBoxViewer) return;
+        // The eight cube corners at +/-L/2 — the GUI's origin-centred convention
+        // matches the engine (trajectory_writer._box_corner_coords).
+        function boxCornerCoords(half) {
+            return [
+                [-half, -half, -half], [half, -half, -half], [half, half, -half], [-half, half, -half],
+                [-half, -half, half], [half, -half, half], [half, half, half], [-half, half, half]
+            ];
+        }
+
+        // The twelve cube edges as [start, end] corner pairs.
+        function boxEdgeCoords(half) {
+            return [
+                [[-half, -half, -half], [half, -half, -half]], [[half, -half, -half], [half, half, -half]],
+                [[half, half, -half], [-half, half, -half]], [[-half, half, -half], [-half, -half, -half]],
+                [[-half, -half, half], [half, -half, half]], [[half, -half, half], [half, half, half]],
+                [[half, half, half], [-half, half, half]], [[-half, half, half], [-half, -half, half]],
+                [[-half, -half, -half], [-half, -half, half]], [[half, -half, -half], [half, -half, half]],
+                [[half, half, -half], [half, half, half]], [[-half, half, -half], [-half, half, half]]
+            ];
+        }
+
+        // Draw the wireframe cube plus eight invisible "X" marker atoms (3Dmol
+        // needs real atoms to zoomTo). Returns the marker model's id, or null.
+        function drawBoxFrame(viewer, half, style) {
+            boxEdgeCoords(half).forEach(([a, b]) => {
+                viewer.addCylinder({
+                    start: { x: a[0], y: a[1], z: a[2] },
+                    end: { x: b[0], y: b[1], z: b[2] },
+                    radius: style.edgeRadius, color: style.edgeColor, fromCap: true, toCap: true
+                });
+            });
+
+            const corners = boxCornerCoords(half);
+            corners.forEach(c => {
+                viewer.addSphere({
+                    center: { x: c[0], y: c[1], z: c[2] },
+                    radius: style.cornerRadius, color: style.cornerColor
+                });
+            });
+
+            if (style.originRadius) {
+                viewer.addSphere({
+                    center: { x: 0, y: 0, z: 0 },
+                    radius: style.originRadius, color: style.originColor
+                });
             }
+
+            // Read the numbers straight off the box: centre plus the two
+            // opposite corners, so the extent is obvious without measuring.
+            if (style.labels && typeof viewer.addLabel === 'function') {
+                const fmt = (v) => v.toFixed(3);
+                const point = (c) => `(${fmt(c[0])}, ${fmt(c[1])}, ${fmt(c[2])})`;
+                const addPointLabel = (text, pos, color) => {
+                    viewer.addLabel(text, {
+                        position: { x: pos[0], y: pos[1], z: pos[2] },
+                        fontSize: 11,
+                        fontColor: color,
+                        backgroundColor: 'white',
+                        backgroundOpacity: 0.72,
+                        borderThickness: 0.5,
+                        borderColor: color,
+                        inFront: true,
+                        alignment: 'center'
+                    });
+                };
+                addPointLabel(point([0, 0, 0]), [0, 0, 0], '#00805f');
+                addPointLabel(point(corners[0]), corners[0], '#b0009c');
+                addPointLabel(point(corners[6]), corners[6], '#b0009c');
+            }
+
+            let cornerXyz = '8\nBox corners\n';
+            corners.forEach(c => { cornerXyz += `X ${c[0]} ${c[1]} ${c[2]}\n`; });
+            const cornerModel = viewer.addModel(cornerXyz, 'xyz');
+            viewer.setStyle({ elem: 'X' }, { sphere: { radius: 0.001, opacity: 0 } });
+            return (cornerModel && typeof cornerModel.getID === 'function') ? cornerModel.getID() : null;
+        }
+
+        // Random rotation matrix from three uniform Euler angles.
+        function randRotMatrix() {
+            const a = Math.random() * 2 * Math.PI;
+            const b = Math.random() * 2 * Math.PI;
+            const g = Math.random() * 2 * Math.PI;
+            const ca = Math.cos(a), sa = Math.sin(a);
+            const cb = Math.cos(b), sb = Math.sin(b);
+            const cg = Math.cos(g), sg = Math.sin(g);
+            return [
+                [ ca*cb*cg - sa*sg,  -ca*cb*sg - sa*cg,  ca*sb ],
+                [ sa*cb*cg + ca*sg,  -sa*cb*sg + ca*cg,  sa*sb ],
+                [ -sb*cg,             sb*sg,              cb    ]
+            ];
+        }
+
+        // Apply a 3x3 matrix to [x, y, z].
+        function applyRot(R, v) {
+            return [
+                R[0][0]*v[0] + R[0][1]*v[1] + R[0][2]*v[2],
+                R[1][0]*v[0] + R[1][1]*v[1] + R[1][2]*v[2],
+                R[2][0]*v[0] + R[2][1]*v[1] + R[2][2]*v[2]
+            ];
+        }
+
+        // Smart mode stays a clean preview: no origin dot, no coordinate labels.
+        const SMART_BOX_STYLE = {
+            edgeColor: 0x7f8c8d, edgeRadius: 0.1,
+            cornerColor: 0x7f8c8d, cornerRadius: 0.078
+        };
+
+        // Advanced mode is the technical view: origin marker plus in-box
+        // coordinates for the centre and two opposite vertices.
+        const ADVANCED_BOX_STYLE = {
+            edgeColor: 0x6666ff, edgeRadius: 0.08,
+            cornerColor: 0xff00ff, cornerRadius: 0.06,
+            originColor: 0x00b894, originRadius: 0.05,
+            labels: true
+        };
+
+        const BOX_MOL_STYLE = {
+            stick: { radius: 0.12, colorscheme: 'Jmol' },
+            sphere: { radius: 0.25, colorscheme: 'Jmol' }
+        };
+
+        // Random visual displacement — purely cosmetic, never modifies molecules[] or any downloadable data.
+        // Fragments flagged ``fixed`` are drawn at their exact input coordinates,
+        // matching what the engine does with a ``*$``-delimited block.
+        function randomizeBoxView(mode = 'smart') {
+            const advanced = mode === 'advanced';
+
+            let viewer;
+            if (advanced) {
+                if (!boxViewer) initAdvancedModeBoxViewer();
+                viewer = boxViewer;
+            } else {
+                if (!basicBoxViewer) initSmartModeBoxViewer();
+                viewer = basicBoxViewer;
+            }
+            if (!viewer) return;
+
             if (molecules.length === 0) {
                 toast('Add molecules first', 'warning');
                 return;
             }
 
-            startAutoRotate();
+            if (!advanced) startAutoRotate();
 
             try {
-                if (typeof basicBoxViewer.enableFog === 'function') basicBoxViewer.enableFog(false);
-                basicBoxViewer.removeAllModels();
-                basicBoxViewer.removeAllShapes();
+                if (typeof viewer.enableFog === 'function') viewer.enableFog(false);
+                viewer.removeAllModels();
+                viewer.removeAllShapes();
+                // Labels are not covered by removeAllModels/removeAllShapes; without
+                // this the coordinate callouts stack up on every redraw.
+                if (typeof viewer.removeAllLabels === 'function') viewer.removeAllLabels();
 
-                const boxSize = parseFloat(document.getElementById('smart-box-size')?.value) ||
-                                parseFloat(document.getElementById('basic-box-size')?.value) ||
-                                parseFloat(document.getElementById('box-size')?.value) || 7;
+                const boxSize = advanced ? getAdvancedBoxSize() : getSmartBoxSize();
                 const half = boxSize / 2;
-                const smartBoxColor = 0x7f8c8d;
-                const edgeRadius = 0.1;
-                const cornerRadius = 0.078;
-
-                // Draw box edges
-                const edges = [
-                    [[-half, -half, -half], [half, -half, -half]], [[half, -half, -half], [half, half, -half]],
-                    [[half, half, -half], [-half, half, -half]], [[-half, half, -half], [-half, -half, -half]],
-                    [[-half, -half, half], [half, -half, half]], [[half, -half, half], [half, half, half]],
-                    [[half, half, half], [-half, half, half]], [[-half, half, half], [-half, -half, half]],
-                    [[-half, -half, -half], [-half, -half, half]], [[half, -half, -half], [half, -half, half]],
-                    [[half, half, -half], [half, half, half]], [[-half, half, -half], [-half, half, half]]
-                ];
-                edges.forEach(([s, e]) => {
-                    basicBoxViewer.addCylinder({
-                        start: { x: s[0], y: s[1], z: s[2] },
-                        end: { x: e[0], y: e[1], z: e[2] },
-                        radius: edgeRadius, color: smartBoxColor, fromCap: true, toCap: true
-                    });
-                });
-                const corners = [
-                    [-half, -half, -half], [half, -half, -half], [half, half, -half], [-half, half, -half],
-                    [-half, -half, half], [half, -half, half], [half, half, half], [-half, half, half]
-                ];
-                corners.forEach(c => {
-                    basicBoxViewer.addSphere({
-                        center: { x: c[0], y: c[1], z: c[2] },
-                        radius: cornerRadius, color: smartBoxColor
-                    });
-                });
-                let cornerXyz = '8\nBox corners\n';
-                corners.forEach(c => { cornerXyz += `X ${c[0]} ${c[1]} ${c[2]}\n`; });
-                const cornerModel = basicBoxViewer.addModel(cornerXyz, 'xyz');
-                const cornerModelId = (cornerModel && typeof cornerModel.getID === 'function') ? cornerModel.getID() : null;
-                basicBoxViewer.setStyle({elem: 'X'}, {sphere: {radius: 0.001, opacity: 0}});
-
-                // Helper: random rotation matrix from three Euler angles
-                function randRotMatrix() {
-                    const a = Math.random() * 2 * Math.PI;
-                    const b = Math.random() * 2 * Math.PI;
-                    const g = Math.random() * 2 * Math.PI;
-                    const ca = Math.cos(a), sa = Math.sin(a);
-                    const cb = Math.cos(b), sb = Math.sin(b);
-                    const cg = Math.cos(g), sg = Math.sin(g);
-                    return [
-                        [ ca*cb*cg - sa*sg,  -ca*cb*sg - sa*cg,  ca*sb ],
-                        [ sa*cb*cg + ca*sg,  -sa*cb*sg + ca*cg,  sa*sb ],
-                        [ -sb*cg,             sb*sg,              cb    ]
-                    ];
-                }
-
-                // Helper: apply 3x3 matrix to [x,y,z]
-                function applyRot(R, v) {
-                    return [
-                        R[0][0]*v[0] + R[0][1]*v[1] + R[0][2]*v[2],
-                        R[1][0]*v[0] + R[1][1]*v[1] + R[1][2]*v[2],
-                        R[2][0]*v[0] + R[2][1]*v[1] + R[2][2]*v[2]
-                    ];
-                }
+                const cornerModelId = drawBoxFrame(
+                    viewer, half, advanced ? ADVANCED_BOX_STYLE : SMART_BOX_STYLE
+                );
+                if (advanced) updateAdvancedBoxInfo(boxSize);
 
                 // Each fragment gets its own model (prevents inter-fragment bonding),
                 // a random 3D rotation about its centroid, then placed at a random
                 // position inside the box — like ASCEC's random generation.
                 const margin = 0.3; // small margin so atoms don't clip box edges
-                const molStyle = {
-                    stick: { radius: 0.12, colorscheme: 'Jmol' },
-                    sphere: { radius: 0.25, colorscheme: 'Jmol' }
-                };
 
                 molecules.forEach(mol => {
                     const n = mol.atoms.length;
                     if (n === 0) return;
 
-                    // Compute centroid
-                    let cx = 0, cy = 0, cz = 0;
-                    mol.coords.forEach(([x, y, z]) => { cx += x; cy += y; cz += z; });
-                    cx /= n; cy /= n; cz /= n;
-
-                    // Random rotation matrix
-                    const R = randRotMatrix();
-
-                    // Place centroid at a uniformly random position inside the box
-                    const range = half - margin;
-                    const tx = (Math.random() - 0.5) * 2 * range;
-                    const ty = (Math.random() - 0.5) * 2 * range;
-                    const tz = (Math.random() - 0.5) * 2 * range;
-
                     let xyzString = `${n}\nFragment\n`;
-                    mol.atoms.forEach((atom, i) => {
-                        const [x, y, z] = mol.coords[i];
-                        // Center on origin, rotate, then place at random box position
-                        const rotated = applyRot(R, [x - cx, y - cy, z - cz]);
-                        xyzString += `${atom} ${(rotated[0] + tx).toFixed(6)} ${(rotated[1] + ty).toFixed(6)} ${(rotated[2] + tz).toFixed(6)}\n`;
-                    });
 
-                    const fragModel = basicBoxViewer.addModel(xyzString, 'xyz');
-                    fragModel.setStyle({}, molStyle);
+                    if (mol.fixed) {
+                        // Pinned: the whole point is that these never move.
+                        mol.atoms.forEach((atom, i) => {
+                            const [x, y, z] = mol.coords[i];
+                            xyzString += `${atom} ${x.toFixed(6)} ${y.toFixed(6)} ${z.toFixed(6)}\n`;
+                        });
+                    } else {
+                        // Compute centroid
+                        let cx = 0, cy = 0, cz = 0;
+                        mol.coords.forEach(([x, y, z]) => { cx += x; cy += y; cz += z; });
+                        cx /= n; cy /= n; cz /= n;
+
+                        const R = randRotMatrix();
+
+                        // Place centroid at a uniformly random position inside the box
+                        const range = half - margin;
+                        const tx = (Math.random() - 0.5) * 2 * range;
+                        const ty = (Math.random() - 0.5) * 2 * range;
+                        const tz = (Math.random() - 0.5) * 2 * range;
+
+                        mol.atoms.forEach((atom, i) => {
+                            const [x, y, z] = mol.coords[i];
+                            // Center on origin, rotate, then place at random box position
+                            const rotated = applyRot(R, [x - cx, y - cy, z - cz]);
+                            xyzString += `${atom} ${(rotated[0] + tx).toFixed(6)} ${(rotated[1] + ty).toFixed(6)} ${(rotated[2] + tz).toFixed(6)}\n`;
+                        });
+                    }
+
+                    const fragModel = viewer.addModel(xyzString, 'xyz');
+                    fragModel.setStyle({}, BOX_MOL_STYLE);
                 });
 
-                basicBoxViewer.setStyle({elem: 'X'}, {sphere: {radius: 0.001, opacity: 0}});
+                viewer.setStyle({elem: 'X'}, {sphere: {radius: 0.001, opacity: 0}});
 
-                basicBoxViewer.resize();
+                viewer.resize();
                 if (cornerModelId !== null) {
-                    basicBoxViewer.zoomTo({model: cornerModelId});
+                    viewer.zoomTo({model: cornerModelId});
                 } else {
-                    basicBoxViewer.zoomTo({elem: 'X'});
+                    viewer.zoomTo({elem: 'X'});
                 }
-                basicBoxViewer.zoom(1.3, 0);
-                smartViewFramed = true;
-                basicBoxViewer.render();
+                // Advanced mode reuses updateBoxViewer's framing convention.
+                viewer.zoom(advanced && inputMode === 'manual' ? 1.18 : 1.3, 0);
+                if (advanced) advancedViewFramed = true;
+                else smartViewFramed = true;
+                viewer.render();
             } catch (e) {
                 console.error('Error in random generation:', e);
             }
         }
 
+        // Numeric readout under the Advanced box: where the cube actually sits.
+        // The engine uses the same origin-centred convention (moves.py half_xbox,
+        // ascec.py half_box), so these numbers describe the real simulation cell.
+        function updateAdvancedBoxInfo(boxSize) {
+            const el = document.getElementById('adv-box-info');
+            if (!el) return;
+            const size = Number.isFinite(boxSize) ? boxSize : getAdvancedBoxSize();
+            const half = size / 2;
+            const h = half.toFixed(3);
+            // Mirrors the three labels drawn inside the box.
+            el.innerHTML =
+                `<span><b>Center</b> (0.000, 0.000, 0.000)</span>` +
+                `<span><b>Vertex</b> (-${h}, -${h}, -${h}) &nbsp; <b>Vertex</b> (${h}, ${h}, ${h})</span>` +
+                `<span><b>Length</b> ${size.toFixed(3)} &Aring; &nbsp; <b>Half</b> ${h} &Aring; ` +
+                `&nbsp; all 8 vertices are (&plusmn;${h}, &plusmn;${h}, &plusmn;${h})</span>`;
+        }
+
         // Advanced box viewer (technical, no animation)
         function updateBoxViewer() {
+            // Refresh the readout first: it must stay correct even when the
+            // viewer cannot be created yet (Advanced tab not shown).
+            updateAdvancedBoxInfo(getAdvancedBoxSize());
+
             // Create viewer if it doesn't exist
             if (!boxViewer) {
                 initAdvancedModeBoxViewer();
@@ -5269,50 +5504,16 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 if (typeof boxViewer.enableFog === 'function') boxViewer.enableFog(false);
                 boxViewer.removeAllModels();
                 boxViewer.removeAllShapes();
+                // Labels are not covered by removeAllModels/removeAllShapes; without
+                // this the coordinate callouts stack up on every redraw.
+                if (typeof boxViewer.removeAllLabels === 'function') boxViewer.removeAllLabels();
 
-                const boxSize = parseFloat(document.getElementById('box-size')?.value) || 7;
+                const boxSize = getAdvancedBoxSize();
                 const half = boxSize / 2;
-                
-                // Keep edge/corner thickness visually stable.
-                const edgeRadius = 0.08;
-                const cornerRadius = 0.06;
 
-                // Draw technical box edges (blue for Advanced Mode)
-                const edges = [
-                    [[-half, -half, -half], [half, -half, -half]], [[half, -half, -half], [half, half, -half]],
-                    [[half, half, -half], [-half, half, -half]], [[-half, half, -half], [-half, -half, -half]],
-                    [[-half, -half, half], [half, -half, half]], [[half, -half, half], [half, half, half]],
-                    [[half, half, half], [-half, half, half]], [[-half, half, half], [-half, -half, half]],
-                    [[-half, -half, -half], [-half, -half, half]], [[half, -half, -half], [half, -half, half]],
-                    [[half, half, -half], [half, half, half]], [[-half, half, -half], [-half, half, half]]
-                ];
-                edges.forEach(([s, e]) => {
-                    boxViewer.addCylinder({
-                        start: { x: s[0], y: s[1], z: s[2] },
-                        end: { x: e[0], y: e[1], z: e[2] },
-                        radius: edgeRadius, color: 0x6666ff, fromCap: true, toCap: true
-                    });
-                });
-
-                // Technical corner markers (magenta for visibility)
-                const corners = [
-                    [-half, -half, -half], [half, -half, -half], [half, half, -half], [-half, half, -half],
-                    [-half, -half, half], [half, -half, half], [half, half, half], [-half, half, half]
-                ];
-                corners.forEach(c => {
-                    boxViewer.addSphere({
-                        center: { x: c[0], y: c[1], z: c[2] },
-                        radius: cornerRadius, color: 0xff00ff // Magenta markers
-                    });
-                });
-
-                // Add invisible corner atoms for zoomTo() to work with
-                let cornerXyz = '8\nBox corners\n';
-                corners.forEach(c => {
-                    cornerXyz += `X ${c[0]} ${c[1]} ${c[2]}\n`;
-                });
-                boxViewer.addModel(cornerXyz, 'xyz');
-                boxViewer.setStyle({elem: 'X'}, {sphere: {radius: 0.001, opacity: 0}});
+                // Technical look: blue edges, magenta corner markers, green origin.
+                // Radii are fixed so thickness stays stable between empty/full views.
+                drawBoxFrame(boxViewer, half, ADVANCED_BOX_STYLE);
 
                 // Add molecules if any
                 if (molecules.length > 0) {
@@ -6480,6 +6681,83 @@ H  -0.757000  0.586000  0.000000"></textarea>
             }
         }
 
+        // Smart mode: swap the PubChem lookup for a paste-your-own-XYZ panel.
+        // Both feed the same preview, so the count + Add controls are unchanged.
+        let smartXyzInputMode = 'pubchem';
+
+        function toggleSmartXyzInput() {
+            smartXyzInputMode = smartXyzInputMode === 'pubchem' ? 'manual' : 'pubchem';
+            const manual = smartXyzInputMode === 'manual';
+            const pubchemPanel = document.getElementById('smart-pubchem-panel');
+            const manualPanel = document.getElementById('smart-manual-panel');
+            const btn = document.getElementById('smart-xyz-toggle-btn');
+            if (pubchemPanel) pubchemPanel.style.display = manual ? 'none' : '';
+            if (manualPanel) manualPanel.style.display = manual ? '' : 'none';
+            if (btn) {
+                btn.textContent = manual ? '🔍 PubChem' : '⌨ Enter XYZ';
+                btn.title = manual
+                    ? 'Switch back to PubChem lookup'
+                    : 'Switch between PubChem lookup and pasting XYZ coordinates directly';
+            }
+            const focusId = manual ? 'smart-manual-xyz' : 'basic-smiles-input';
+            document.getElementById(focusId)?.focus();
+        }
+
+        const SMART_XYZ_EXAMPLES = {
+            water: {
+                name: 'water',
+                xyz: `O   0.000000  0.000000  0.117300
+H   0.756950  0.000000 -0.469200
+H  -0.756950  0.000000 -0.469200`
+            },
+            ethanol: {
+                name: 'ethanol',
+                xyz: `C  -0.748100  0.015500  0.000000
+C   0.746900 -0.033900  0.000000
+O   1.259400  1.294900  0.000000
+H  -1.150300 -0.998900  0.000000
+H  -1.124300  0.535900  0.885000
+H  -1.124300  0.535900 -0.885000
+H   1.140500 -0.559200  0.881000
+H   1.140500 -0.559200 -0.881000
+H   2.219500  1.213600  0.000000`
+            }
+        };
+
+        function smartLoadExampleXyz(key) {
+            const example = SMART_XYZ_EXAMPLES[key];
+            if (!example) return;
+            const nameInput = document.getElementById('smart-manual-mol-name');
+            const xyzInput = document.getElementById('smart-manual-xyz');
+            if (nameInput) nameInput.value = example.name;
+            if (xyzInput) xyzInput.value = example.xyz;
+            smartLoadManualXyz();
+        }
+
+        // Parse the pasted block into the shared preview. Coordinates are centred
+        // the same way the Advanced manual path centres them; pin-at-exact-
+        // coordinates lives in Advanced mode, and the list chips can pin after the fact.
+        function smartLoadManualXyz() {
+            const xyzText = (document.getElementById('smart-manual-xyz')?.value || '').trim();
+            if (!xyzText) { toast('Enter XYZ coordinates', 'warning'); return; }
+
+            const { atoms, coords } = parseXyzText(xyzText);
+            if (atoms.length === 0) { toast('Could not parse coordinates', 'error'); return; }
+
+            const centered = centerMolecule(atoms, coords);
+            currentMolData = { atoms: centered.atoms, coords: centered.coords };
+
+            const name = (document.getElementById('smart-manual-mol-name')?.value || '').trim() || 'molecule';
+            const nameField = document.getElementById('basic-mol-name');
+            if (nameField) nameField.value = name;
+            const smilesField = document.getElementById('basic-mol-smiles');
+            if (smilesField) smilesField.value = '';
+            hideNovoprolabsLink();
+
+            showBasicMolViewer(currentMolData);
+            toast(`${atoms.length} atoms loaded into the preview`, 'success');
+        }
+
         function basicAddMolecule() {
             if (!currentMolData || currentMolData.atoms.length === 0) {
                 toast('Generate coordinates first', 'warning');
@@ -6604,24 +6882,18 @@ H  -0.757000  0.586000  0.000000"></textarea>
             return basis ? `${methodValue} ${basis}` : methodValue;
         }
 
-        function hasExplicitAuxiliaryBasis(methodLine) {
-            const value = String(methodLine || '').toUpperCase();
-            return (
-                value.includes('AUTOAUX') ||
-                value.includes('DEF2/J') ||
-                value.includes('JKFIT') ||
-                value.includes('MP2FIT') ||
-                value.includes('CABS') ||
-                value.includes('AUXBASIS')
-            );
-        }
+        // DLPNO runs need a Coulomb fitting set plus a correlation fitting set.
+        // Append only the tokens the user has not already supplied, so a custom
+        // basis of "def2/J AutoAux" is not duplicated.
+        const DLPNO_AUX_TOKENS = ['def2/J', 'AutoAux'];
 
         function buildSmartEnergyRefMethodLine(method, basis, theory) {
             const methodLine = buildSmartMethodWithBasis(method, basis, theory);
             const isDlpnofamily = theory === 'post-hf' && /^DLPNO/i.test(String(method || '').trim());
             if (!isDlpnofamily) return methodLine;
-            if (hasExplicitAuxiliaryBasis(methodLine)) return methodLine;
-            return `${methodLine} AutoAux`;
+            const present = String(methodLine || '').toUpperCase().split(/\s+/);
+            const missing = DLPNO_AUX_TOKENS.filter(t => !present.includes(t.toUpperCase()));
+            return missing.length ? `${methodLine} ${missing.join(' ')}` : methodLine;
         }
 
         function formatOrcaMethodLine(method) {
@@ -7370,16 +7642,32 @@ H  -0.757000  0.586000  0.000000"></textarea>
             syncSmartToAdvanced();
         }
 
+        // Three checkboxes drive the same flag: the Sampling Mode header pill,
+        // the one beside the Smart simulation name, and the Advanced one.
+        const MAXPRINT_CHECKBOX_IDS = ['smart-maxprint', 'smart-maxprint-pipeline', 'adv-maxprint'];
+
+        // The flag lives here rather than in one designated checkbox. Reading it
+        // back off a specific checkbox would break the others: the blanket
+        // #basic-tab "input" listener runs syncSmartToAdvanced() *before* the
+        // checkbox's own "change" handler, so a sync that re-derived the value
+        // from one box would undo a click on any of the others.
+        let maxprintEnabled = false;
+
         function isMaxprintEnabled() {
-            return document.getElementById('smart-maxprint')?.checked === true
-                || document.getElementById('adv-maxprint')?.checked === true;
+            return maxprintEnabled === true;
         }
 
         function syncMaxprintState(enabled) {
-            const smartMaxprint = document.getElementById('smart-maxprint');
-            const advMaxprint = document.getElementById('adv-maxprint');
-            if (smartMaxprint) smartMaxprint.checked = enabled;
-            if (advMaxprint) advMaxprint.checked = enabled;
+            maxprintEnabled = enabled === true;
+            MAXPRINT_CHECKBOX_IDS.forEach(id => {
+                const cb = document.getElementById(id);
+                if (cb) cb.checked = maxprintEnabled;
+            });
+        }
+
+        // Push the stored flag back onto the checkboxes without re-deriving it.
+        function reassertMaxprintState() {
+            syncMaxprintState(maxprintEnabled);
         }
 
         function getSamplingPresetFromState() {
@@ -7502,15 +7790,22 @@ H  -0.757000  0.586000  0.000000"></textarea>
             updatePreview();
         }
 
-        function toggleMaxprintFromSmart() {
-            const enabled = document.getElementById('smart-maxprint')?.checked === true;
+        // ``source`` is the checkbox the user just clicked. Reading it directly
+        // (rather than OR-ing the smart checkboxes) is what makes unchecking work
+        // when more than one box drives the same flag.
+        function toggleMaxprintFromSmart(source) {
+            const enabled = source
+                ? source.checked === true
+                : document.getElementById('smart-maxprint')?.checked === true;
             syncMaxprintState(enabled);
             updateProtocolPreview();
             updatePreview();
         }
 
-        function toggleMaxprintFromAdvanced() {
-            const enabled = document.getElementById('adv-maxprint')?.checked === true;
+        function toggleMaxprintFromAdvanced(source) {
+            const enabled = source
+                ? source.checked === true
+                : document.getElementById('adv-maxprint')?.checked === true;
             syncMaxprintState(enabled);
             updateProtocolPreview();
             updatePreview();
@@ -7521,6 +7816,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             'smart-box-refresh-btn': 'Refresh the 3D simulation box view with current values',
             'smart-box-visual-test-btn': 'Place random test molecules to quickly inspect box occupancy',
             'smart-maxprint': 'Stores all QM outputs; high disk usage',
+            'smart-maxprint-pipeline': 'Stores all QM outputs; high disk usage',
             'smart-annealing-theory': 'Annealing theory family',
             'smart-annealing-method': 'Annealing method',
             'smart-annealing-method-custom': 'Custom annealing method',
@@ -7595,7 +7891,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
             'basic-molecule-preview-heading',
             'basic-clear-molecules-btn',
             'basic-molecule-menu-btn',
-            'smart-maxprint'
+            'smart-maxprint',
+            'smart-maxprint-pipeline'
         ]);
 
         let smartHelpToastTimer = null;
@@ -8004,7 +8301,7 @@ end
 
             if (isStandaloneXtbTheory(theory)) {
                 const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
-                const xtbJob = /(FREQ|HESS)/i.test(jobRaw) ? 'SP Freq' : 'SP';
+                const xtbJob = xtbFreqToken(jobRaw) ? `SP ${xtbFreqToken(jobRaw)}` : 'SP';
                 const xtbUhf = parseInt(mult) - 1;
                 const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
                 const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
@@ -8522,7 +8819,7 @@ end
                 updateAdvEnergyRefPreview();
             }
 
-            syncMaxprintState(document.getElementById('smart-maxprint')?.checked === true);
+            reassertMaxprintState();
 
             // Done syncing
             isSyncing = false;
@@ -8560,7 +8857,7 @@ end
                 smartUsePacking.checked = advUsePacking;
             }
 
-            syncMaxprintState(document.getElementById('adv-maxprint')?.checked === true);
+            reassertMaxprintState();
 
             // Annealing settings
             const annealingTheory = document.getElementById('adv-annealing-theory')?.value;
@@ -9092,6 +9389,16 @@ end
             return cleaned;
         }
 
+        // Which frequency keyword a job string asks for. Kept verbatim (NumFreq vs
+        // Freq) so the template mirrors the Job Type selection; xTB maps both to
+        // --hess (parse_xtb_options_from_template matches the substring "FREQ").
+        function xtbFreqToken(job) {
+            const value = String(job || '');
+            if (/NUMFREQ/i.test(value)) return 'NumFreq';
+            if (/(FREQ|HESS)/i.test(value)) return 'Freq';
+            return '';
+        }
+
         function formatXtbOptLevel(level) {
             const normalized = normalizeXtbOptLevel(level);
             if (normalized === 'vtight') return 'VTight';
@@ -9179,7 +9486,7 @@ end
 
             if (isStandaloneXtbTheory(theory)) {
                 const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
-                const xtbJob = /(FREQ|HESS)/i.test(jobRaw) ? 'SP Freq' : 'SP';
+                const xtbJob = xtbFreqToken(jobRaw) ? `SP ${xtbFreqToken(jobRaw)}` : 'SP';
                 const xtbUhf = parseInt(mult) - 1;
                 const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
                 const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
@@ -9477,6 +9784,9 @@ end
                 && document.getElementById('smart-ref-enabled')?.checked !== false;
             if (refEnabled) updateAdvOrcaInput2();
             else { const t = document.getElementById('orca-input2'); if (t) t.value = ''; }
+            // orca-input3 otherwise only refreshes from its own handlers, so a
+            // charge/multiplicity change elsewhere would leave it stale.
+            if (document.getElementById('adv-energy-ref-enabled')?.checked) updateAdvEnergyRefPreview();
             updatePipelineVisual();
             buildProtocolFromSettings();
             updatePreview();
@@ -9513,7 +9823,8 @@ end
                 const xtbRescue = String(rescueMethod || xtbMethod).replace(/^(Native-)+/, '');
                 const xtbRescueHess = rescueHess;
                 const xtbOptLevel = formatXtbOptLevel(getXtbOptLevelValue('adv-opt'));
-                const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? `Opt ${xtbOptLevel} Freq` : `Opt ${xtbOptLevel}`;
+                const xtbFreq = xtbFreqToken(job);
+                const xtbJob = xtbFreq ? `Opt ${xtbOptLevel} ${xtbFreq}` : `Opt ${xtbOptLevel}`;
                 const xtbUhf = parseInt(mult) - 1;
                 const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
                 const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
@@ -9583,7 +9894,8 @@ end
                             const xtbRescue = String(rescueMethod || xtbMethod).replace(/^(Native-)+/, '');
                             const xtbRescueHess = rescueHess;
                             const xtbOptLevel = formatXtbOptLevel(getXtbOptLevelValue('adv-ref'));
-                            const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? `Opt ${xtbOptLevel} Freq` : `Opt ${xtbOptLevel}`;
+                            const xtbFreq = xtbFreqToken(job);
+                            const xtbJob = xtbFreq ? `Opt ${xtbOptLevel} ${xtbFreq}` : `Opt ${xtbOptLevel}`;
                             const xtbUhf = parseInt(mult) - 1;
                             const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
                             const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
@@ -9852,7 +10164,7 @@ end
 
             if (isStandaloneXtbTheory(theory)) {
                 const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
-                const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? 'Opt Freq' : 'Opt';
+                const xtbJob = xtbFreqToken(job) ? `Opt ${xtbFreqToken(job)}` : 'Opt';
                 const xtbUhf = parseInt(mult) - 1;
                 const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
                 const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
@@ -9892,7 +10204,7 @@ end
 
             if (isStandaloneXtbTheory(theory)) {
                 const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
-                const xtbJob = /(NUMFREQ|FREQ|HESS)/i.test(job) ? 'Opt Freq' : 'Opt';
+                const xtbJob = xtbFreqToken(job) ? `Opt ${xtbFreqToken(job)}` : 'Opt';
                 const xtbUhf = parseInt(mult) - 1;
                 const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
                 const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
@@ -10324,14 +10636,56 @@ end
             return cleaned || String(name).trim() || 'molecule';
         }
 
+        // Pin/unpin from the lists. Fixing more than one copy of a type would
+        // stack identical molecules on the same coordinates, so fixing is only
+        // offered when a type has a single member; unfixing is always allowed.
+        function canFixMoleculeType(info) {
+            return info.fixed > 0 || info.count === 1;
+        }
+
+        function toggleMoleculeTypeFixed(commonName) {
+            const members = molecules.filter(m => getCommonMoleculeName(m.name) === commonName);
+            if (members.length === 0) return;
+            const anyFixed = members.some(m => m.fixed);
+            if (!anyFixed && members.length > 1) {
+                toast('Only a single copy can be fixed \u2014 remove the extras first', 'warning');
+                return;
+            }
+            members.forEach(m => { m.fixed = !anyFixed; });
+            toast(anyFixed ? `${commonName} released` : `${commonName} fixed`, 'success');
+            refreshAfterFixedChange();
+        }
+
+        function toggleMoleculeFixed(index) {
+            const mol = molecules[index];
+            if (!mol) return;
+            mol.fixed = !mol.fixed;
+            refreshAfterFixedChange();
+        }
+
+        function refreshAfterFixedChange() {
+            updateMoleculeList();   // re-renders every list and the Smart box
+            updatePreview();        // rewrites the *$ delimiters in the .asc
+            updateBoxViewer();
+        }
+
+        // A pill that reads "fixed" when active and is a faint pin when not.
+        function fixedToggleMarkup({ onclick, active, label, title, disabled, className }) {
+            const cls = `${className}${active ? ' is-fixed' : ''}`;
+            return `<button type="button" class="${cls}"${disabled ? ' disabled' : ''}`
+                + ` title="${title}" aria-pressed="${active ? 'true' : 'false'}"`
+                + ` onclick="${onclick}">&#128204;${label ? ` ${label}` : ''}</button>`;
+        }
+
         function getMoleculeTypeSummary() {
             const summary = {};
             molecules.forEach((mol) => {
                 const common = getCommonMoleculeName(mol.name);
                 if (!summary[common]) {
-                    summary[common] = { count: 0, atoms: mol.atoms.length };
+                    summary[common] = { count: 0, atoms: mol.atoms.length, fixed: 0 };
                 }
                 summary[common].count += 1;
+                if (mol.fixed) summary[common].fixed += 1;
             });
             return summary;
         }
@@ -10350,7 +10704,10 @@ end
             listEl.style.display = '';
 
             const summary = getMoleculeTypeSummary();
-            const labels = Object.entries(summary).map(([name, info]) => `${name} (${info.count})`);
+            const labels = Object.entries(summary).map(
+                ([name, info]) => `${name} (${info.count})`
+                    + (info.fixed ? (info.fixed === info.count ? '  x fixed' : `  x ${info.fixed} fixed`) : '  x')
+            );
             const longestLabelChars = labels.reduce((max, label) => Math.max(max, label.length), 0);
             const clampedWidthCh = Math.min(30, Math.max(20, longestLabelChars + 2));
             listEl.style.setProperty('--type-chip-width', `${clampedWidthCh}ch`);
@@ -10358,11 +10715,30 @@ end
             const rows = Object.entries(summary).map(([name, info]) => {
                 const escaped = name.replace(/'/g, "\\'");
                 const titleSafe = name.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                const allFixed = info.fixed === info.count;
+                const fixedLabel = info.fixed
+                    ? (allFixed ? 'fixed' : `${info.fixed} fixed`)
+                    : '';
+                const canFix = canFixMoleculeType(info);
+                const fixedTitle = info.fixed
+                    ? `${fixedLabel} &mdash; never moved during annealing. Click to release.`
+                    : (canFix
+                        ? 'Click to fix this molecule at its current coordinates'
+                        : 'Only a single copy can be fixed &mdash; remove the extras first');
+                const fixedBadge = fixedToggleMarkup({
+                    className: 'smart-type-fixed',
+                    active: info.fixed > 0,
+                    label: fixedLabel,
+                    title: fixedTitle,
+                    disabled: !canFix,
+                    onclick: `toggleMoleculeTypeFixed('${escaped}'); event.stopPropagation();`
+                });
                 return `
                     <div class="smart-type-item" title="${titleSafe}">
                         <div class="smart-type-main">
                             <div class="smart-type-name">${name}</div>
                             <div class="smart-type-count-inline">(${info.count})</div>
+                            ${fixedBadge}
                         </div>
                         <button class="btn-type-remove" title="Remove ${name}" onclick="removeMoleculeType('${escaped}')">X</button>
                     </div>
@@ -10388,11 +10764,21 @@ end
                 const common = getCommonMoleculeName(mol.name);
                 commonCount[common] = (commonCount[common] || 0) + 1;
                 const number = commonCount[common];
+                const fixedBadge = fixedToggleMarkup({
+                    className: 'mol-fixed-badge',
+                    active: !!mol.fixed,
+                    label: mol.fixed ? 'fixed' : '',
+                    title: mol.fixed
+                        ? 'Fixed &mdash; never moved during annealing. Click to release.'
+                        : 'Click to fix this molecule at its current coordinates',
+                    disabled: false,
+                    onclick: `toggleMoleculeFixed(${idx}); event.stopPropagation();`
+                });
                 return `
                     <div class="molecule-menu-item">
                         <div>
-                            <div class="molecule-menu-name">${common} ${number}</div>
-                            <div class="molecule-menu-meta">${mol.atoms.length} atoms</div>
+                            <div class="molecule-menu-name">${common} ${number}${fixedBadge}</div>
+                            <div class="molecule-menu-meta">${mol.atoms.length} atoms${mol.fixed ? ' &middot; pinned coordinates' : ''}</div>
                         </div>
                         <button class="btn btn-danger btn-sm" onclick="removeMolecule(${idx}); event.stopPropagation();">Remove</button>
                     </div>
@@ -10434,11 +10820,21 @@ end
                 const common = getCommonMoleculeName(mol.name);
                 commonCount[common] = (commonCount[common] || 0) + 1;
                 const number = commonCount[common];
+                const fixedBadge = fixedToggleMarkup({
+                    className: 'mol-fixed-badge',
+                    active: !!mol.fixed,
+                    label: mol.fixed ? 'fixed' : '',
+                    title: mol.fixed
+                        ? 'Fixed &mdash; never moved during annealing. Click to release.'
+                        : 'Click to fix this molecule at its current coordinates',
+                    disabled: false,
+                    onclick: `toggleMoleculeFixed(${idx}); event.stopPropagation();`
+                });
                 return `
                     <div class="molecule-menu-item">
                         <div>
-                            <div class="molecule-menu-name">${common} ${number}</div>
-                            <div class="molecule-menu-meta">${mol.atoms.length} atoms</div>
+                            <div class="molecule-menu-name">${common} ${number}${fixedBadge}</div>
+                            <div class="molecule-menu-meta">${mol.atoms.length} atoms${mol.fixed ? ' &middot; pinned coordinates' : ''}</div>
                         </div>
                         <button class="btn btn-danger btn-sm" onclick="removeMolecule(${idx}); event.stopPropagation();">Remove</button>
                     </div>
@@ -10727,29 +11123,110 @@ end
             }
         }
 
+        // --- Fixed (frozen) fragments -------------------------------------------
+        // A fragment added with the "Fix these coordinates" box ticked is written
+        // between *$ delimiters and is never moved by the annealing engine. The
+        // checkbox is a one-shot: it clears itself after each add so the next
+        // molecule is mobile unless deliberately re-ticked.
+
+        // The two pin checkboxes are one setting with three states. Both write a
+        // *$ block; they differ only in which coordinates get written.
+        const ADV_FIXED_CHECKBOX_IDS = ['adv-mol-fixed', 'adv-mol-center-fix'];
+
+        // 'none' | 'as-is' (coordinates verbatim) | 'centered' (centroid moved to 0,0,0 first)
+        function getAdvFixedMode() {
+            if (document.getElementById('adv-mol-center-fix')?.checked === true) return 'centered';
+            if (document.getElementById('adv-mol-fixed')?.checked === true) return 'as-is';
+            return 'none';
+        }
+
+        function isAdvMolFixedChecked() {
+            return getAdvFixedMode() !== 'none';
+        }
+
+        function clearAdvMolFixed() {
+            let changed = false;
+            ADV_FIXED_CHECKBOX_IDS.forEach(id => {
+                const cb = document.getElementById(id);
+                if (cb && cb.checked) { cb.checked = false; changed = true; }
+            });
+            if (changed) syncAdvMolFixedCountLimit();
+        }
+
+        // N identical copies pinned at one set of coordinates would be N molecules
+        // sitting on top of each other, so a fixed fragment is always a single copy.
+        function syncAdvMolFixedCountLimit() {
+            const fixed = isAdvMolFixedChecked();
+            ['mol-count', 'sketcher-mol-count'].forEach(id => {
+                const input = document.getElementById(id);
+                if (!input) return;
+                if (fixed) {
+                    input.value = '1';
+                    input.max = '1';
+                    input.disabled = true;
+                    input.title = 'A fixed fragment is always added once';
+                } else {
+                    input.max = '20';
+                    input.disabled = false;
+                    input.title = '';
+                }
+            });
+        }
+
+        function advFixedToastMessage(mode) {
+            return mode === 'centered'
+                ? 'Fragment centred on (0, 0, 0) and pinned there'
+                : 'Fragment pinned at its exact coordinates';
+        }
+
+        // Mutually exclusive: ticking one clears the other, so there is never an
+        // ambiguous "fix as-is AND center" state.
+        function toggleAdvMolFixed(sourceId) {
+            if (document.getElementById(sourceId)?.checked === true) {
+                ADV_FIXED_CHECKBOX_IDS.forEach(id => {
+                    if (id !== sourceId) {
+                        const cb = document.getElementById(id);
+                        if (cb) cb.checked = false;
+                    }
+                });
+            }
+            syncAdvMolFixedCountLimit();
+        }
+
         function addMoleculeManual() {
             const baseName = document.getElementById('manual-mol-name').value.trim() || 'molecule';
             const xyzText = document.getElementById('manual-xyz').value.trim();
-            const count = parseInt(document.getElementById('mol-count').value) || 1;
+            const fixedMode = getAdvFixedMode();
+            const fixed = fixedMode !== 'none';
+            const count = fixed ? 1 : (parseInt(document.getElementById('mol-count').value) || 1);
 
             if (!xyzText) { toast('Enter XYZ coordinates', 'warning'); return; }
 
             let { atoms, coords } = parseXyzText(xyzText);
             if (atoms.length === 0) { toast('Could not parse coordinates', 'error'); return; }
 
-            const centered = centerMolecule(atoms, coords);
+            // 'as-is' must keep the coordinates exactly as typed — re-centering on
+            // the centroid would silently move a fragment the user pinned on
+            // purpose. 'centered' and the unpinned default both centre first.
+            const source = fixedMode === 'as-is'
+                ? { atoms, coords }
+                : centerMolecule(atoms, coords);
 
             for (let i = 0; i < count; i++) {
                 const molName = count > 1 ? `${baseName}${molecules.length + 1}` : baseName;
                 molecules.push({
                     name: molName,
-                    atoms: [...centered.atoms],
-                    coords: centered.coords.map(c => [...c])
+                    atoms: [...source.atoms],
+                    coords: source.coords.map(c => [...c]),
+                    fixed: fixed
                 });
             }
 
             document.getElementById('manual-mol-name').value = '';
+            clearAdvMolFixed();
             document.getElementById('mol-count').value = '1';
+
+            if (fixed) toast(advFixedToastMessage(fixedMode), 'success');
 
             updateMoleculeList();
             updatePreview();
@@ -10764,16 +11241,27 @@ end
             }
 
             const baseName = document.getElementById('sketcher-mol-name').value.trim() || 'molecule';
-            const count = parseInt(document.getElementById('sketcher-mol-count').value) || 1;
+            const fixedMode = getAdvFixedMode();
+            const fixed = fixedMode !== 'none';
+            const count = fixed ? 1 : (parseInt(document.getElementById('sketcher-mol-count').value) || 1);
+
+            // PubChem coordinates arrive uncentred, so only 'centered' shifts them.
+            const source = fixedMode === 'centered'
+                ? centerMolecule(currentMolData.atoms, currentMolData.coords)
+                : currentMolData;
 
             for (let i = 0; i < count; i++) {
                 const molName = count > 1 ? `${baseName}${molecules.length + 1}` : baseName;
                 molecules.push({
                     name: molName,
-                    atoms: [...currentMolData.atoms],
-                    coords: currentMolData.coords.map(c => [...c])
+                    atoms: [...source.atoms],
+                    coords: source.coords.map(c => [...c]),
+                    fixed: fixed
                 });
             }
+
+            clearAdvMolFixed();
+            if (fixed) toast(advFixedToastMessage(fixedMode), 'success');
 
             updateMoleculeList();
             updatePreview();
@@ -11006,10 +11494,25 @@ H   1.981282  0.134064  0.000000`;
             content += formatLineWithComment(`${nmo}`, '# Line 13: Number of Molecules (nmo)');
             content += `\n`;
             content += `# Lines below: Molecule Definition\n`;
-            content += `# (Num Atoms, Label, followed by xyz coordinates, separated by *)\n\n`;
+            content += `# (Num Atoms, Label, followed by xyz coordinates, separated by *)\n`;
+            if (molecules.some(mol => mol.fixed)) {
+                content += `# (A block delimited by *$ on BOTH sides is frozen: ASCEC keeps it\n`;
+                content += `#  at exactly these coordinates and never moves it.)\n`;
+            }
+            content += `\n`;
 
-            molecules.forEach((mol) => {
-                content += `*\n`;
+            // Delimiter i sits between block i-1 and block i. It is written as *$
+            // when either neighbour is frozen, so a frozen block always ends up
+            // with *$ above and below it while its mobile neighbours keep a plain
+            // * on their far side.
+            const delimiterAt = (index) => {
+                const before = index > 0 ? molecules[index - 1] : null;
+                const after = index < molecules.length ? molecules[index] : null;
+                return (before?.fixed || after?.fixed) ? '*$' : '*';
+            };
+
+            molecules.forEach((mol, molIdx) => {
+                content += `${delimiterAt(molIdx)}\n`;
                 content += `${mol.atoms.length}\n`;
                 content += `${mol.name}\n`;
 
@@ -11020,7 +11523,7 @@ H   1.981282  0.134064  0.000000`;
             });
 
             if (molecules.length > 0) {
-                content += `*\n`;
+                content += `${delimiterAt(molecules.length)}\n`;
             }
 
             // Add protocol
