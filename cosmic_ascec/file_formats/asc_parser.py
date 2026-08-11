@@ -361,6 +361,17 @@ def _parse_molecules(
 ) -> Tuple[List[MoleculeSpec], int]:
     """Parse the ``*``-delimited molecule blocks (v04 phase 2).
 
+    Two delimiters are recognised. ``*`` is the v04 separator. ``*$`` marks a
+    *frozen* boundary: a block is frozen when the delimiter above it **and**
+    the delimiter below it are both ``*$``. That rule keeps the shared-delimiter
+    chain unambiguous — a mobile block next to a frozen one still has a plain
+    ``*`` on its far side, so it is not mistaken for frozen::
+
+        *      -> opens "water"          (water: *, *$   -> mobile)
+        *$     -> closes "water", opens "site"
+        *$     -> closes "site"          (site:  *$, *$  -> FROZEN)
+        *      -> closes "water2"        (water2: *$, *  -> mobile)
+
     Returns the molecules plus the index of the line where parsing stopped
     (the protocol-marker line, or ``len(raw_lines)`` if none was found).
     """
@@ -370,6 +381,8 @@ def _parse_molecules(
     label = ""
     atoms: List[AtomRow] = []
     end_idx = len(raw_lines)
+    # The delimiter that opened the block currently being read ("*" or "*$").
+    open_delim = ""
 
     for idx in range(first_idx, len(raw_lines)):
         raw_line = raw_lines[idx]
@@ -385,7 +398,8 @@ def _parse_molecules(
         if not line:
             continue
         parts = line.split()
-        if parts[0] == "*":
+        if parts[0] in ("*", "*$"):
+            delim = parts[0]
             if reading:
                 if expected_atoms != len(atoms):
                     raise AscParseError(
@@ -393,11 +407,16 @@ def _parse_molecules(
                         f"got {len(atoms)}",
                         line=line_no, path=path,
                     )
-                molecules.append(MoleculeSpec(label=label, atoms=tuple(atoms)))
+                molecules.append(MoleculeSpec(
+                    label=label,
+                    atoms=tuple(atoms),
+                    frozen=(open_delim == "*$" and delim == "*$"),
+                ))
                 expected_atoms = 0
                 label = ""
                 atoms = []
             reading = True
+            open_delim = delim
             continue
 
         if not reading:
@@ -433,12 +452,20 @@ def _parse_molecules(
             z = _to_float(parts[3], line_no, path, "z coordinate")
             atoms.append((atomic_num, x, y, z))
 
-    # Trailing molecule without a closing ``*`` (v04 also handles this).
+    # Trailing molecule without a closing ``*`` (v04 also handles this). It has
+    # no closing delimiter, so by the both-sides rule it is never frozen — an
+    # unterminated ``*$`` block is a typo we refuse rather than guess at.
     if reading and expected_atoms > 0:
         if expected_atoms != len(atoms):
             raise AscParseError(
                 f"final molecule '{label}' declared {expected_atoms} atoms but got "
                 f"{len(atoms)}; block not properly closed",
+                path=path,
+            )
+        if open_delim == "*$":
+            raise AscParseError(
+                f"molecule '{label}' opens with '*$' but is never closed; a frozen "
+                f"block needs '*$' on both sides",
                 path=path,
             )
         molecules.append(MoleculeSpec(label=label, atoms=tuple(atoms)))

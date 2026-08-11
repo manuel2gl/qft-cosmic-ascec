@@ -323,7 +323,7 @@ def propose_unified_move(
 ) -> UnifiedMoveResult:
     """Propose a new full-system configuration — verbatim v04 ``propose_unified_move``.
 
-    Every molecule is moved. For each, with probability
+    Every molecule that is not frozen is moved. For each, with probability
     ``params.conformational_move_prob`` (and a rotatable bond available) a
     dihedral rotation is attempted; if it is skipped or produces an
     intramolecular clash, a rigid-body translation+rotation is applied instead.
@@ -343,6 +343,14 @@ def propose_unified_move(
     with_rb = cache.molecules_with_rotatable_bonds
 
     for molecule_idx in range(cluster.num_molecules):
+        # A frozen molecule (``*$`` block in the .asc file) is never proposed
+        # for a move — neither rigid-body nor conformational — so it keeps the
+        # exact coordinates it was given. Skipping shifts the RNG draw order
+        # relative to v04, but only for inputs that contain ``*$``, a construct
+        # v04 cannot express; runs without it are bit-identical to before.
+        if getattr(cluster.molecules[molecule_idx], "frozen", False):
+            continue
+
         start = int(offsets[molecule_idx])
         end = int(offsets[molecule_idx + 1])
 

@@ -183,10 +183,38 @@ def initialize_cluster(
 
     # v04 ``placed_atoms_data`` — list of (Z, x, y, z) for every committed atom.
     placed_atoms_data: list = []
-    per_molecule_blocks: list[np.ndarray] = []
-    outcomes: list[PlacementOutcome] = []
+    # Indexed by molecule so the frozen-first commit order below does not
+    # reorder the cluster: entry ``i`` always belongs to ``molecules[i]``.
+    per_molecule_blocks: list = [None] * len(molecules)
+    outcomes: list = [None] * len(molecules)
+
+    # Frozen molecules (``*$`` blocks) are committed first, at exactly the
+    # coordinates from the file. Doing them up front puts their atoms into
+    # ``placed_atoms_data`` before any mobile molecule searches for a
+    # clash-free spot, so the mobile ones place themselves around the pinned
+    # geometry rather than through it.
+    for mol_idx, mol in enumerate(molecules):
+        if not getattr(mol, "frozen", False):
+            continue
+        block = np.array(mol.coords, dtype=np.float64, copy=True)
+        for atom_idx in range(mol.num_atoms):
+            placed_atoms_data.append((
+                mol.atomic_numbers[atom_idx],
+                block[atom_idx][0], block[atom_idx][1], block[atom_idx][2],
+            ))
+        per_molecule_blocks[mol_idx] = block
+        outcomes[mol_idx] = PlacementOutcome(
+            molecule_index=mol_idx,
+            label=mol.label,
+            attempts=0,
+            succeeded=True,
+            final_translation_scale=1.0,
+            final_rotation_scale=1.0,
+        )
 
     for mol_idx, mol in enumerate(molecules):
+        if getattr(mol, "frozen", False):
+            continue
         overlap_found = True
         attempts = 0
         proposed_mol_atoms: list = []  # [(Z, abs_coords ndarray), ...]
@@ -258,16 +286,16 @@ def initialize_cluster(
             [abs_coords for _, abs_coords in proposed_mol_atoms],
             dtype=np.float64,
         )
-        per_molecule_blocks.append(proposed_block)
+        per_molecule_blocks[mol_idx] = proposed_block
 
-        outcomes.append(PlacementOutcome(
+        outcomes[mol_idx] = PlacementOutcome(
             molecule_index=mol_idx,
             label=mol.label,
             attempts=attempts,
             succeeded=not overlap_found,
             final_translation_scale=local_translation_range_factor,
             final_rotation_scale=local_rotation_range_factor,
-        ))
+        )
 
     cluster = Cluster.from_blocks(
         molecules=molecules,

@@ -39,11 +39,17 @@ class Molecule:
     ``is_monatomic`` is the same flag v04 inferred from
     ``len(mol_def.atoms_coords) == 1`` (ascec-v04.py line 383); plumbing it
     through here lets the radius lookup stay agnostic of the dataclass.
+
+    ``frozen`` comes from a ``*$``-delimited block in the ``.asc`` file. A
+    frozen molecule is placed at ``coords`` verbatim and is skipped by every
+    Monte Carlo move, so it holds still while the rest of the system anneals
+    around it.
     """
 
     label: str
     atomic_numbers: Tuple[int, ...]
     coords: np.ndarray  # (N, 3) float64, read-only
+    frozen: bool = False
 
     def __post_init__(self) -> None:
         # Mutating the write-flag is in-place, so it works on a frozen dataclass.
@@ -58,7 +64,12 @@ class Molecule:
             [[atom[1], atom[2], atom[3]] for atom in spec.atoms],
             dtype=np.float64,
         )
-        return cls(label=spec.label, atomic_numbers=zs, coords=coords)
+        return cls(
+            label=spec.label,
+            atomic_numbers=zs,
+            coords=coords,
+            frozen=getattr(spec, "frozen", False),
+        )
 
     @property
     def num_atoms(self) -> int:

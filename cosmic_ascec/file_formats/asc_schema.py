@@ -144,10 +144,18 @@ class MoleculeSpec:
     Captures the explicit atom count (v04 cross-checks it), the human-facing
     label (``water1``, ``Glycolaldehyde``, …), and the coordinates exactly as
     they appear in the file.
+
+    ``frozen`` marks a block written between ``*$`` delimiters on *both* sides.
+    Such a fragment is placed at exactly the coordinates in the file and is
+    never translated or rotated during annealing — see
+    :func:`cosmic_ascec.geometry.placement.initialize_cluster` and
+    :func:`cosmic_ascec.monte_carlo.moves.propose_unified_move`. v04 has no
+    equivalent, so an input without ``*$`` behaves exactly as before.
     """
 
     label: str
     atoms: Tuple[AtomRow, ...]
+    frozen: bool = False
 
     @property
     def num_atoms(self) -> int:
