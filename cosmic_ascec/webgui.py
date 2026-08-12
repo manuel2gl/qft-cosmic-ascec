@@ -13,6 +13,11 @@ there per the v04 release layout), an optional port argument shifts off the
 default 8080, the browser is opened to ``http://localhost:<port>/index.html``,
 and ``serve_forever`` blocks until Ctrl-C.
 
+The page stays a single static file on purpose. Its ASE tab runs the real
+``ase.build`` client-side through Pyodide (fetched from a CDN only when the user
+presses the load button), rather than calling a backend — so neither serving
+mode here needs request routing, and ASE is *not* a dependency of this project.
+
 The decomposition is **mechanical only** (D-039): the port-argument
 default-fallback, the ``index.html`` discovery via ``script_dir``, the
 ``OSError("Address already in use")`` message, and the ``KeyboardInterrupt``
