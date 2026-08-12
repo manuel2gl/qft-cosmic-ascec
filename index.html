@@ -7067,20 +7067,41 @@ H   2.219500  1.213600  0.000000`
         const ASE_LOAD_LABEL = '⬇ Load ASE';
         let asePyodide = null;
 
+        // `nz` names what the third size field means for this builder, or is
+        // null when the builder has no third dimension - the field is then
+        // disabled rather than silently ignored. `xy` false: no in-plane
+        // repeat. `a` false: no lattice/bond constant. There is no vacuum
+        // field: vacuum only pads the ASE cell, and the cell is dropped on the
+        // way out to XYZ, so it could never change anything you see here.
         const ASE_STRUCTURES = {
-            graphene: { label: 'graphene — monolayer sheet', el: 'C' },
-            graphene_nanoribbon: { label: 'graphene_nanoribbon — ribbon (n, m)', el: 'C' },
-            nanotube: { label: 'nanotube — single-walled (n, m)', el: 'C' },
-            fcc111: { label: 'fcc111 — close-packed metal surface', el: 'Pt' },
-            fcc100: { label: 'fcc100 — metal surface', el: 'Pt' },
-            fcc110: { label: 'fcc110 — metal surface', el: 'Pt' },
-            bcc100: { label: 'bcc100 — metal surface', el: 'Fe' },
-            bcc110: { label: 'bcc110 — metal surface', el: 'Fe' },
-            hcp0001: { label: 'hcp0001 — metal surface', el: 'Ru' },
-            mx2: { label: 'mx2 — MoS2-type monolayer', el: 'MoS2' },
-            bulk: { label: 'bulk — crystal unit cell', el: 'Si' },
-            molecule: { label: 'molecule — G2 database', el: 'H2O' }
+            graphene: { label: 'graphene — sheet (nz stacks AB layers)', el: 'C', nz: 'layers' },
+            graphene_nanoribbon: {
+                label: 'graphene_nanoribbon — ribbon (n, m)', el: 'C', nz: null,
+                note: 'One element throughout. A non-carbon ribbon keeps graphene geometry '
+                    + 'unless you set the bond length yourself.'
+            },
+            nanotube: { label: 'nanotube — single-walled (n, m)', el: 'C', nz: 'length' },
+            fcc111: { label: 'fcc111 — close-packed metal surface', el: 'Pt', nz: 'layers',
+                family: 'fcc' },
+            fcc100: { label: 'fcc100 — metal surface', el: 'Pt', nz: 'layers',
+                family: 'fcc' },
+            fcc110: { label: 'fcc110 — metal surface', el: 'Pt', nz: 'layers',
+                family: 'fcc' },
+            bcc100: { label: 'bcc100 — metal surface', el: 'Fe', nz: 'layers',
+                family: 'bcc' },
+            bcc110: { label: 'bcc110 — metal surface', el: 'Fe', nz: 'layers',
+                family: 'bcc' },
+            hcp0001: { label: 'hcp0001 — metal surface', el: 'Ru', nz: 'layers',
+                family: 'hcp' },
+            mx2: { label: 'mx2 — MoS2-type monolayer', el: 'MoS2', nz: null,
+                note: 'A single 2H layer — ASE has no multilayer form here.' },
+            bulk: { label: 'bulk — crystal unit cell', el: 'Si', nz: 'repeat' },
+            molecule: { label: 'molecule — G2 database', el: 'H2O', nz: null, xy: false, a: false }
         };
+
+        // Interlayer separation used when stacking a builder ASE only makes one
+        // layer of. Graphite, experimental c/2.
+        const ASE_GRAPHENE_INTERLAYER = 3.35;
 
         // Where each instance sends the structure it built.
         const ASE_PANELS = {
@@ -7111,7 +7132,8 @@ H   2.219500  1.213600  0.000000`
             const options = Object.entries(ASE_STRUCTURES)
                 .map(([k, m]) => `<option value="${k}">${m.label}</option>`).join('');
             const field = (id, label, extra) =>
-                `<div class="form-group" style="flex: 1; margin-bottom: 0;"><label>${label}</label>`
+                `<div class="form-group" id="${prefix}-${id}-group" style="flex: 1; margin-bottom: 0;">`
+                + `<label id="${prefix}-${id}-label">${label}</label>`
                 + `<input id="${prefix}-${id}" ${extra}></div>`;
 
             host.innerHTML = `
@@ -7139,10 +7161,11 @@ H   2.219500  1.213600  0.000000`
                     <div class="inline-group" style="align-items: flex-end; margin-bottom: 10px;">
                         ${field('nx', 'nx', 'type="number" value="4" min="1"')}
                         ${field('ny', 'ny', 'type="number" value="4" min="1"')}
-                        ${field('nz', 'nz / layers', 'type="number" value="1" min="1"')}
-                        ${field('a', 'a (Å)', 'type="text" placeholder="default"')}
-                        ${field('vacuum', 'vacuum (Å)', 'type="text" placeholder="none"')}
+                        ${field('nz', 'layers', 'type="number" value="1" min="1"')}
+                        ${field('a', 'a / bond (Å)', 'type="text" placeholder="default"')}
                     </div>
+
+                    <div id="${prefix}-note" style="color: #666; font-size: 0.85em; margin: -4px 0 10px;"></div>
 
                     <div style="margin-bottom: 10px;">
                         <label style="display: flex; align-items: center; gap: 8px; font-weight: 500;">
@@ -7171,7 +7194,7 @@ H   2.219500  1.213600  0.000000`
 
             document.getElementById(`${prefix}-load-btn`).addEventListener('click', () => aseLoadRuntime(prefix));
             document.getElementById(`${prefix}-run-btn`).addEventListener('click', () => aseRun(prefix));
-            for (const id of ['structure', 'element', 'nx', 'ny', 'nz', 'a', 'vacuum']) {
+            for (const id of ['structure', 'element', 'nx', 'ny', 'nz', 'a']) {
                 document.getElementById(`${prefix}-${id}`)
                     .addEventListener('input', () => aseSyncScript(prefix));
             }
@@ -7184,32 +7207,94 @@ H   2.219500  1.213600  0.000000`
         function aseScriptFromForm(prefix) {
             const val = (id) => (document.getElementById(`${prefix}-${id}`)?.value || '').trim();
             const kind = val('structure') || 'graphene';
-            const el = val('element') || ASE_STRUCTURES[kind].el;
+            const spec = ASE_STRUCTURES[kind];
+            const el = val('element') || spec.el;
             const nx = parseInt(val('nx'), 10) || 1;
             const ny = parseInt(val('ny'), 10) || 1;
-            const nz = parseInt(val('nz'), 10) || 1;
-            const a = val('a') ? `, a=${val('a')}` : '';
-            const vac = val('vacuum') ? `, vacuum=${val('vacuum')}` : '';
+            // Only read nz where the builder has a third dimension, so a stale
+            // value left in the box cannot leak into a call that ignores it.
+            const nz = spec.nz ? (parseInt(val('nz'), 10) || 1) : 1;
+            const c = val('a');
+            const a = c ? `, a=${c}` : '';
 
             switch (kind) {
                 case 'graphene':
-                    return `from ase.build import graphene\natoms = graphene(formula='${el}2'${a}, size=(${nx}, ${ny}, 1)${vac})`;
+                    // ase.build.graphene is a single layer: size=(nx, ny, n>1)
+                    // raises "Cannot repeat along undefined lattice vector",
+                    // because the sheet has no c vector. Stack it by hand
+                    // instead, offsetting every other layer by one C-C bond
+                    // (the A->B sublattice vector, read off the primitive cell)
+                    // so the result is graphite, not eclipsed AA.
+                    if (nz <= 1) {
+                        return `from ase.build import graphene\n`
+                            + `atoms = graphene(formula='${el}2'${a}, size=(${nx}, ${ny}, 1))`;
+                    }
+                    return `from ase.build import graphene\n`
+                        + `\n`
+                        + `prim = graphene(formula='${el}2'${a})\n`
+                        + `shift = prim.positions[1] - prim.positions[0]   # one C-C bond\n`
+                        + `shift[2] = 0.0\n`
+                        + `\n`
+                        + `layer = graphene(formula='${el}2'${a}, size=(${nx}, ${ny}, 1))\n`
+                        + `layer.set_pbc(False)\n`
+                        + `atoms = layer.copy()\n`
+                        + `for i in range(1, ${nz}):\n`
+                        + `    up = layer.copy()\n`
+                        + `    up.translate(shift * (i % 2) + [0.0, 0.0, ${ASE_GRAPHENE_INTERLAYER.toFixed(2)} * i])\n`
+                        + `    atoms += up`;
                 case 'graphene_nanoribbon':
-                    return `from ase.build import graphene_nanoribbon\natoms = graphene_nanoribbon(${nx}, ${ny}, type='armchair', saturated=False${vac})`;
+                    return `from ase.build import graphene_nanoribbon\n`
+                        + `atoms = graphene_nanoribbon(${nx}, ${ny}, type='armchair', saturated=False, `
+                        + `main_element='${el}'${c ? `, C_C=${c}` : ''})`;
                 case 'nanotube':
-                    return `from ase.build import nanotube\natoms = nanotube(${nx}, ${ny}, length=${nz}, symbol='${el}'${vac})`;
+                    return `from ase.build import nanotube\n`
+                        + `atoms = nanotube(${nx}, ${ny}, length=${nz}, symbol='${el}'${c ? `, bond=${c}` : ''})`;
                 case 'mx2':
-                    return `from ase.build import mx2\natoms = mx2(formula='${el}'${a}, size=(${nx}, ${ny}, 1)${vac})`;
+                    return `from ase.build import mx2\natoms = mx2(formula='${el}'${a}, size=(${nx}, ${ny}, 1))`;
                 case 'bulk':
                     return `from ase.build import bulk\natoms = bulk('${el}'${a}).repeat((${nx}, ${ny}, ${nz}))`;
                 case 'molecule':
-                    return `from ase.build import molecule\natoms = molecule('${el}'${vac})`;
+                    return `from ase.build import molecule\natoms = molecule('${el}')`;
                 default:
-                    return `from ase.build import ${kind}\natoms = ${kind}('${el}', size=(${nx}, ${ny}, ${nz})${a}${vac})`;
+                    return `from ase.build import ${kind}\natoms = ${kind}('${el}', size=(${nx}, ${ny}, ${nz})${a})`;
+            }
+        }
+
+        // Grey out the fields the selected builder has no use for, and rename
+        // nz to what it actually controls there. A field that does nothing is
+        // worse than a missing one: it looks like it worked.
+        function aseSyncFields(prefix) {
+            const kind = document.getElementById(`${prefix}-structure`)?.value || 'graphene';
+            const spec = ASE_STRUCTURES[kind] || {};
+            const NZ_LABEL = { layers: 'layers', length: 'length (cells)', repeat: 'nz (repeat)' };
+            const apply = (id, on, label) => {
+                const box = document.getElementById(`${prefix}-${id}`);
+                const lab = document.getElementById(`${prefix}-${id}-label`);
+                const grp = document.getElementById(`${prefix}-${id}-group`);
+                if (!box) return;
+                box.disabled = !on;
+                box.title = on ? '' : `${kind}() takes no ${id}`;
+                if (lab && label) lab.textContent = on ? label : `${label} — n/a`;
+                if (grp) grp.style.opacity = on ? '' : '0.45';
+            };
+            const xy = spec.xy !== false;
+            apply('nx', xy, 'nx');
+            apply('ny', xy, 'ny');
+            apply('nz', !!spec.nz, NZ_LABEL[spec.nz] || 'layers');
+            apply('a', spec.a !== false, 'a / bond (Å)');
+            const elBox = document.getElementById(`${prefix}-element`);
+            if (elBox) elBox.placeholder = spec.el || 'C';
+            const note = document.getElementById(`${prefix}-note`);
+            if (note) {
+                note.textContent = spec.note
+                    || (spec.family ? `ASE knows a only for elements whose reference state is ${spec.family}`
+                        + ' — for any other element, fill in a.' : '');
+                note.style.display = note.textContent ? '' : 'none';
             }
         }
 
         function aseSyncScript(prefix) {
+            aseSyncFields(prefix);
             const box = document.getElementById(`${prefix}-code`);
             if (box) box.value = aseScriptFromForm(prefix);
         }
@@ -7265,6 +7350,36 @@ _ascec_xyz = "\\n".join(
 )
 `;
 
+        // ASE's own lattice-constant error names neither the cause nor the way
+        // out. It fires whenever the element's reference state is not the
+        // lattice the builder makes - bcc100('Au') has nothing to look up,
+        // because Au is fcc. ASE already knows the reference state, so ask it
+        // and say which builder would have worked.
+        const ASE_FAMILY_BUILDERS = {
+            fcc: 'fcc100 / fcc110 / fcc111',
+            bcc: 'bcc100 / bcc110',
+            hcp: 'hcp0001',
+            diamond: 'bulk'
+        };
+
+        async function aseExplain(message) {
+            const m = /Can't guess lattice constant for ([a-z]+)-([A-Za-z]+)/.exec(message);
+            if (!m || !asePyodide) return message;
+            const [, wanted, el] = m;
+            let actual = null;
+            try {
+                actual = await asePyodide.runPythonAsync(
+                    'from ase.data import atomic_numbers, reference_states\n'
+                    + `_r = reference_states[atomic_numbers[${JSON.stringify(el)}]] or {}\n`
+                    + '_r.get("symmetry")\n');
+            } catch (_) { /* fall through to the generic half of the message */ }
+            const via = actual && ASE_FAMILY_BUILDERS[actual];
+            const head = `${el} is ${actual || 'not ' + wanted}, so ASE has no ${wanted} lattice constant for it`;
+            return via
+                ? `${head} — use ${via}, or type a value into "a / bond (Å)".`
+                : `${head} — type a value into "a / bond (Å)".`;
+        }
+
         async function aseRun(prefix) {
             if (!asePyodide) { toast('Load ASE first', 'warning'); return; }
             const btn = document.getElementById(`${prefix}-run-btn`);
@@ -7297,7 +7412,7 @@ _ascec_xyz = "\\n".join(
                 ASE_PANELS[prefix].deliver(kind, xyz);
             } catch (e) {
                 const lines = String(e.message).trim().split('\n');
-                say(`Failed: ${lines[lines.length - 1]}`);
+                say(`Failed: ${await aseExplain(lines[lines.length - 1])}`);
                 toast('ASE build failed', 'error');
             } finally {
                 if (btn) { btn.disabled = false; btn.textContent = '⚛ Build & Load'; }
