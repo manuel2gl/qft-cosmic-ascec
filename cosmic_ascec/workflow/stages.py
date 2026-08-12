@@ -128,6 +128,7 @@ from cosmic_ascec.workflow.rescue import (
     displace_along_imaginary_mode,
     extract_final_geometry,
 )
+from cosmic_ascec.workflow.supervisor import fork_detachable_worker
 
 # v04 lines 29-45 (verbatim): optional / conditional imports. matplotlib backs
 # the annealing-diagram plotters (R6c ``plot_annealing_diagrams`` /
@@ -6382,6 +6383,79 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 pass
             _set_output_streams(log_only=True)
 
+        # ── Detachable worker: fork before anything is spawned ───────────────
+        # Every replica / QM child is armed with PR_SET_PDEATHSIG, so whichever
+        # process owns them dies with them. Fork the real run into its own
+        # session *now*, while it still owns nothing, and keep this process in
+        # the foreground only as a terminal relay. Detaching then costs nothing:
+        # the relay exits, the worker and its whole tree keep running. Without
+        # this, Ctrl+D killed every in-flight replica and the stage restarted
+        # from zero (see the fallback ``_do_detach`` below).
+        _supervised = False
+        if (os.environ.get("ASCEC_DETACHED_CHILD") != "1"
+                and os.environ.get("ASCEC_NO_SUPERVISOR") != "1"
+                and not _background_tty_launch):
+
+            def _on_supervisor(_worker_pid: int) -> None:
+                """Supervisor side: hand the log and the run over to the worker.
+
+                Both processes hold the same log file description after the
+                fork; the worker owns it from here on, so this side drops it
+                and goes back to writing to the terminal only.
+                """
+                sys.stdout = _orig_stdout
+                sys.stderr = _orig_stderr
+                if _log_fh is not None:
+                    try:
+                        _log_fh.close()
+                    except Exception:
+                        pass
+
+            def _handle_detached(_signum, _frame) -> None:
+                """Worker side: the supervisor detached, the terminal is gone.
+
+                Sent by the supervisor just before it closes the pty. Swap the
+                Python streams to log-only and point fds 1/2 at /dev/null, so
+                neither this process nor anything that inherits its fds writes
+                into a terminal it no longer owns — or dies on EIO trying.
+                """
+                _set_output_streams(log_only=True)
+                try:
+                    _devnull_fd = os.open(os.devnull, os.O_WRONLY)
+                    os.dup2(_devnull_fd, 1)
+                    os.dup2(_devnull_fd, 2)
+                    if _devnull_fd > 2:
+                        os.close(_devnull_fd)
+                except OSError:
+                    pass
+
+            # Installed before the fork: SIGUSR1 is fatal by default, and the
+            # user can detach at any moment after it.
+            if hasattr(_signal, 'SIGUSR1'):
+                try:
+                    _signal.signal(_signal.SIGUSR1, _handle_detached)
+                except (ValueError, OSError):
+                    pass
+
+            def _on_detach(_worker_pid: int) -> None:
+                _orig_stdout.write(
+                    f"\n  ASCEC detaching (PID {_worker_pid}) — job keeps running.\n"
+                    f"  Use 'ascec status' to monitor or kill.\n\n"
+                )
+                _orig_stdout.flush()
+
+            _supervised = fork_detachable_worker(
+                on_supervisor=_on_supervisor,
+                on_detach=_on_detach,
+            )
+
+            if _supervised:
+                # Worker side. The progress file is process-tied (/proc/<pid>/fd),
+                # so it has to be re-pointed at this pid's fd table — the fd
+                # itself survived the fork, only the pid in the path changed.
+                if _progress_stream is not None and _progress_file != _progress_legacy_file:
+                    _progress_file = f"/proc/{os.getpid()}/fd/{_progress_stream.fileno()}"
+
         # Register (or rebind) job in the status database. Priority order:
         #   1. ASCEC_REUSE_JOB_ID — set by Ctrl+D detach handoff from a parent ascec
         #   2. _early_claimed_job_id — placeholder row from atomic claim above
@@ -6431,7 +6505,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         import subprocess as _subprocess
 
         def _do_detach():
-            """Detach by spawning a fully detached child and exiting this process."""
+            """Detach by spawning a fully detached child and exiting this process.
+
+            Lossy fallback, reached only when the supervisor fork above did not
+            happen. Exiting this process trips PR_SET_PDEATHSIG on every child
+            it owns, so any in-flight replica or QM job is killed and the
+            relaunched run restarts the current stage from its last cached
+            checkpoint. The notice below says so.
+            """
             # Flush current log stream before handoff.
             if _log_fh is not None:
                 try:
@@ -6487,6 +6568,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                 # Print detach notice with the real background PID.
                 _orig_stdout.write(
                     f"\n  ASCEC detaching (PID {_child_pid}) — job keeps running.\n"
+                    f"  The current stage restarts: in-flight calculations do not\n"
+                    f"  survive this handoff.\n"
                     f"  Use 'ascec status' to monitor or kill.\n\n"
                 )
                 _orig_stdout.flush()
@@ -6538,7 +6621,11 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             except Exception:
                 pass
 
-        if sys.platform != 'win32' and sys.stdin.isatty() and not _background_tty_launch:
+        # Only needed when the supervisor fork above did not happen (no pty, no
+        # tty, or a platform without fork). Under supervision the relay owns the
+        # keyboard and detaching never reaches this process.
+        if (sys.platform != 'win32' and sys.stdin.isatty()
+                and not _background_tty_launch and not _supervised):
             _watcher = _threading.Thread(target=_stdin_ctrl_d_watcher, daemon=True)
             _watcher.start()
     # ──────────────────────────────────────────────────────────────────────────
