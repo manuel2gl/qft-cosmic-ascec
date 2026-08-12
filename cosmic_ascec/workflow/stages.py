@@ -214,6 +214,7 @@ __all__ = [
     "has_primary_hydrogen_bonds",
     "calculate_hydrogen_bond_potential",
     "calculate_input_files",
+    "parse_xtb_extra_flags_from_template",
     "parse_xtb_options_from_template",
     "parse_xtb_options_from_launcher",
     "build_xtb_runtime_options",
@@ -2397,13 +2398,113 @@ def extract_qm_executable_from_launcher(launcher_content: str, qm_program_idx: i
     return default_exe
 
 
+# --- generic "# <flag> [args]" pass-through for standalone xTB templates ---
+
+# Directives that must never be re-emitted as raw xtb flags: either an explicit
+# branch of parse_xtb_options_from_template() already handles them, or they are
+# block bookkeeping (``#name``, ``#rescue(...)``, the ``#xtb <label>`` header),
+# or they are injected by the command builders (``--namespace``).
+_XTB_RESERVED_DIRECTIVES = frozenset({
+    'name', 'rescue', 'namespace',
+    'nprocs', 'maxiter', 'maxcycle', 'maxcycles',
+    'charge', 'chrg', 'uhf', 'mult', 'multiplicity',
+    'freq', 'num',                      # spelled --hess by the keyword scan
+    'xtb', 'orca', 'gaussian',          # stray template headers
+})
+
+# Flags that decide what kind of job xtb runs. The rescue-Hessian path drops
+# these from the user extras so a solvated ``--opt`` template cannot turn the
+# Hessian job into a second optimisation.
+_XTB_JOB_TYPE_DIRECTIVES = frozenset({
+    'opt', 'ohess', 'bhess', 'hess', 'md', 'omd', 'metadyn', 'path', 'scan',
+    'modef', 'sp', 'scc', 'grad', 'vip', 'vea', 'vipea', 'vomega', 'vfukui',
+    'esp', 'stm', 'thermo', 'dipro', 'gfn', 'gfnff', 'gfn0', 'gfn1', 'gfn2',
+})
+
+# One directive line: optional leading dashes, a flag name, then its arguments.
+_XTB_DIRECTIVE_RE = re.compile(r'^\s*#\s*(-{0,2})([A-Za-z][A-Za-z0-9_+-]*)\s*(.*?)\s*$')
+
+# The flags end up inside a generated bash launcher, so anything that could
+# break out of the command line disqualifies the directive.
+_XTB_UNSAFE_CHARS = set(';&|<>$`\'"\\(){}[]!*?~\n\r')
+
+
+def parse_xtb_extra_flags_from_template(template_content: str,
+                                        exclude: Iterable[str] = (),
+                                        drop_job_types: bool = False) -> List[str]:
+    """Collect arbitrary ``# <flag> [args]`` directives as xtb command-line flags.
+
+    Any xtb option can be written in a ``#xtb`` template block as a comment
+    line — ``# alpb water``, ``# etemp 500``, ``# acc 0.5``, ``# json`` — and is
+    passed straight through to the command line as ``--alpb water`` etc. This
+    keeps the whole xtb flag surface reachable without a branch per flag.
+
+    Directives already consumed elsewhere (:data:`_XTB_RESERVED_DIRECTIVES`),
+    flags listed in ``exclude``, and anything carrying shell metacharacters are
+    skipped. A leading dash count written by the user is preserved, so short
+    options (``# -P 4``) stay short.
+
+    Args:
+        template_content: Raw text of the ``#xtb <label>`` block.
+        exclude: Flag names (with or without dashes) already emitted by the
+            caller — used to keep ``# opt tight`` from duplicating ``--opt``.
+        drop_job_types: If True, also skip job-type flags (``opt``, ``hess``,
+            ``md``, ``gfn*``, …). Used by the rescue-Hessian path, which sets
+            its own job type.
+
+    Returns:
+        Flat list of command-line tokens, in template order.
+    """
+    excluded = {name.lstrip('-').lower() for name in exclude}
+    flags: List[str] = []
+    seen: set = set()
+
+    for raw_line in (template_content or '').splitlines():
+        match = _XTB_DIRECTIVE_RE.match(raw_line)
+        if not match:
+            continue
+        dashes, token, args = match.group(1), match.group(2), match.group(3)
+        key = token.lower()
+
+        if key in _XTB_RESERVED_DIRECTIVES or key in excluded or key in seen:
+            continue
+        # The method/keyword line ("# GFN2-xTB Opt Tight") is parsed by the
+        # keyword scan, not here.
+        if key.startswith('gfn'):
+            continue
+        if drop_job_types and key in _XTB_JOB_TYPE_DIRECTIVES:
+            continue
+        if any(ch in _XTB_UNSAFE_CHARS for ch in raw_line):
+            continue
+
+        # Preserve an explicit short-option dash; default to the long form.
+        prefix = dashes if dashes else ('-' if len(token) == 1 else '--')
+        seen.add(key)
+        flags.append(f'{prefix}{token}')
+        flags.extend(args.split())
+
+    return flags
+
+
 # --- def parse_xtb_options_from_template  (ascec-v04.py 6016-6076) ---
 def parse_xtb_options_from_template(template_content: str) -> str:
     """
     Parse xTB options from a standalone xTB metadata/template block.
 
-    The parser is intentionally permissive and only extracts the minimum
-    flags needed for geometry optimization workflows.
+    Two layers, in this order:
+
+    1. The keyword line and the named metadata directives the web generator
+       writes -- ``# GFN2-xTB Opt VTight Freq``, ``# nprocs``, ``# maxiter``,
+       ``# charge``, ``# uhf`` -- which map onto ``--gfn``/``--gfnff``,
+       ``--opt <level>``, ``--hess``, ``--parallel``, ``--cycles``,
+       ``--chrg`` and ``--uhf``.
+    2. Every other ``# <flag> [args]`` line, passed through verbatim as
+       ``--flag args`` by :func:`parse_xtb_extra_flags_from_template`. This is
+       what makes the rest of the xtb command line reachable from a template,
+       e.g. ``# alpb water``, ``# gbsa toluene``, ``# etemp 500``, ``# acc 0.5``.
+
+    ``#rescue(...)`` is stripped before the keyword scan so rescue parameters
+    cannot leak into the normal-opt flags.
     """
     # Strip #rescue(...) directives before keyword scanning — those describe
     # rescue-mode parameters (e.g. "#rescue(GFN2-xTB/freq)") and must not
@@ -2427,7 +2528,12 @@ def parse_xtb_options_from_template(template_content: str) -> str:
     else:
         flags.extend(['--gfn', '2'])
 
-    opt_level_match = re.search(r'\bOPT\b(?:\s+(NORMAL|TIGHT|VTIGHT|VERY\s+TIGHT))?', template_for_keywords, re.IGNORECASE)
+    # xtb's full optimisation-level ladder; "very tight" is accepted with or
+    # without the space (the web generator writes "VTight", hand-written blocks
+    # tend to say "VeryTight").
+    opt_level_match = re.search(
+        r'\bOPT\b(?:\s+(CRUDE|SLOPPY|LOOSE|LAX|NORMAL|TIGHT|VERY\s*TIGHT|VTIGHT|EXTREME))?',
+        template_for_keywords, re.IGNORECASE)
     if opt_level_match:
         opt_level = opt_level_match.group(1)
         if opt_level:
@@ -2462,6 +2568,12 @@ def parse_xtb_options_from_template(template_content: str) -> str:
         uhf_val = int(uhf_match.group(1))
         if uhf_val > 0:
             flags.extend(['--uhf', str(uhf_val)])
+
+    # Everything else the user wrote as "# <flag> [args]" (e.g. "# alpb water")
+    # is passed straight through, so the full xtb flag surface stays reachable.
+    flags.extend(parse_xtb_extra_flags_from_template(
+        template_content, exclude=[f for f in flags if f.startswith('-')]
+    ))
 
     return ' '.join(flags).strip()
 
@@ -9090,6 +9202,14 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
         if nprocs_match:
             nprocs_val = int(nprocs_match.group(1))
 
+    # Extra xtb flags the user wrote as "# <flag>" in the template (e.g.
+    # "# alpb water"). Job-type flags are dropped: the rescue run sets --hess
+    # itself. Non-xTB programs get their extras from the .inp/.com template.
+    xtb_rescue_extra_opts = (
+        parse_xtb_extra_flags_from_template(template_content, drop_job_types=True)
+        if qm_program == 'xtb' else None
+    )
+
     # Track structures needing rescue Hessian (2+ imaginary freqs)
     rescue_hessian_tasks = []  # List of (basename, hess_file)
     # Pending rescue Hessian tasks to run concurrently after geometry processing
@@ -9228,6 +9348,7 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                                 'basename': basename,
                                 'use_numfreq': rescue_use_numfreq,
                                 'qm_program': qm_program,
+                                'xtb_extra_opts': xtb_rescue_extra_opts,
                             })
                             _redo_log(f"    {basename}: non-converged (max iter), rescue Hessian queued")
                         except Exception as e:
@@ -9293,6 +9414,7 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                             'basename': basename,
                             'use_numfreq': rescue_use_numfreq,
                             'qm_program': qm_program,
+                            'xtb_extra_opts': xtb_rescue_extra_opts,
                         })
                         _redo_log(f"    {basename}: critical non-converged, rescue Hessian queued")
                     except Exception as e:
@@ -9406,7 +9528,8 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                         charge=task['charge'], multiplicity=task['multiplicity'],
                         nprocs=task['nprocs'], output_basename=task['basename'],
                         use_numfreq=task['use_numfreq'],
-                        qm_program=task.get('qm_program')
+                        qm_program=task.get('qm_program'),
+                        xtb_extra_opts=task.get('xtb_extra_opts')
                     )
                     futures[future] = task
                 for future in as_completed(futures):
@@ -9435,7 +9558,8 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
                         charge=task['charge'], multiplicity=task['multiplicity'],
                         nprocs=task['nprocs'], output_basename=task['basename'],
                         use_numfreq=task['use_numfreq'],
-                        qm_program=task.get('qm_program')
+                        qm_program=task.get('qm_program'),
+                        xtb_extra_opts=task.get('xtb_extra_opts')
                     )
                     if hess_file and os.path.exists(hess_file):
                         rescue_hessian_tasks.append((task['basename'], hess_file))
@@ -9692,6 +9816,14 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
         if nprocs_match:
             nprocs_val = int(nprocs_match.group(1))
 
+    # Extra xtb flags the user wrote as "# <flag>" in the template (e.g.
+    # "# alpb water"). Job-type flags are dropped: the rescue run sets --hess
+    # itself. Non-xTB programs get their extras from the .inp/.com template.
+    xtb_rescue_extra_opts = (
+        parse_xtb_extra_flags_from_template(template_content, drop_job_types=True)
+        if qm_program == 'xtb' else None
+    )
+
     # Track structures needing rescue Hessian (2+ imaginary freqs)
     rescue_hessian_tasks = []  # List of (basename, hess_file)
     # Pending rescue Hessian tasks to run concurrently after geometry processing
@@ -9801,6 +9933,7 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
                                 'basename': basename,
                                 'use_numfreq': rescue_use_numfreq,
                                 'qm_program': qm_program,
+                                'xtb_extra_opts': xtb_rescue_extra_opts,
                             })
                             _redo_log(f"    {basename}: non-converged (max iter), rescue Hessian queued")
                         except Exception as e:
@@ -9847,6 +9980,7 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
                             'basename': basename,
                             'use_numfreq': rescue_use_numfreq,
                             'qm_program': qm_program,
+                            'xtb_extra_opts': xtb_rescue_extra_opts,
                         })
                         _redo_log(f"    {basename}: critical non-converged, rescue Hessian queued")
                     except Exception as e:
@@ -9934,7 +10068,8 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
                         charge=task['charge'], multiplicity=task['multiplicity'],
                         nprocs=task['nprocs'], output_basename=task['basename'],
                         use_numfreq=task['use_numfreq'],
-                        qm_program=task.get('qm_program')
+                        qm_program=task.get('qm_program'),
+                        xtb_extra_opts=task.get('xtb_extra_opts')
                     )
                     futures[future] = task
                 for future in as_completed(futures):
@@ -9963,7 +10098,8 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
                         charge=task['charge'], multiplicity=task['multiplicity'],
                         nprocs=task['nprocs'], output_basename=task['basename'],
                         use_numfreq=task['use_numfreq'],
-                        qm_program=task.get('qm_program')
+                        qm_program=task.get('qm_program'),
+                        xtb_extra_opts=task.get('xtb_extra_opts')
                     )
                     if hess_file and os.path.exists(hess_file):
                         rescue_hessian_tasks.append((task['basename'], hess_file))
@@ -11817,7 +11953,8 @@ def enable_hessian_restart(input_path: str, hessian_path: str) -> bool:
 
 def _run_xtb_rescue_hessian(xyz_file: str, rescue_method: str, working_dir: str,
                             basename: str, charge: int, multiplicity: int,
-                            _rescue_log, verbose: bool) -> Optional[str]:
+                            _rescue_log, verbose: bool,
+                            extra_opts: Optional[List[str]] = None) -> Optional[str]:
     """
     Run a standalone xTB rescue Hessian calculation.
 
@@ -11858,6 +11995,11 @@ def _run_xtb_rescue_hessian(xyz_file: str, rescue_method: str, working_dir: str,
         cmd_parts.append(charge_flag)
     if uhf_flag:
         cmd_parts.append(uhf_flag)
+    # User extras from the template's "# <flag>" directives (e.g. "--alpb
+    # water"): the Hessian must see the same environment as the optimisation
+    # it rescues, or the frequencies belong to a different potential surface.
+    if extra_opts:
+        cmd_parts.extend(extra_opts)
 
     xtb_cmd = ' '.join(cmd_parts)
 
@@ -11943,7 +12085,8 @@ def run_rescue_hessian_calculation(xyz_file: str, rescue_method: str, launcher_p
                                      nprocs: int = 8, verbose: bool = False,
                                      output_basename: Optional[str] = None,
                                      use_numfreq: Optional[bool] = None,
-                                     qm_program: Optional[str] = None) -> Optional[str]:
+                                     qm_program: Optional[str] = None,
+                                     xtb_extra_opts: Optional[List[str]] = None) -> Optional[str]:
     """
     Run a rescue Hessian calculation for a structure that failed to converge.
 
@@ -11962,6 +12105,9 @@ def run_rescue_hessian_calculation(xyz_file: str, rescue_method: str, launcher_p
                         If None, derives from xyz_file name
         use_numfreq: If True, use NumFreq; if False, use Freq; if None, auto-detect
         qm_program: QM program ('orca', 'xtb', 'gaussian'). If None, defaults to 'orca'.
+        xtb_extra_opts: Extra xtb flags from the template's "# <flag>" directives
+                        (standalone-xTB path only), so the rescue Hessian keeps
+                        the solvation/electronic settings of the optimisation.
 
     Returns:
         Path to the generated Hessian file, or None if failed
@@ -11995,7 +12141,8 @@ def run_rescue_hessian_calculation(xyz_file: str, rescue_method: str, launcher_p
     if qm_program == 'xtb':
         return _run_xtb_rescue_hessian(
             xyz_file, rescue_method, working_dir, basename,
-            charge, multiplicity, _rescue_log, verbose
+            charge, multiplicity, _rescue_log, verbose,
+            extra_opts=xtb_extra_opts
         )
 
     # --- ORCA rescue path (default) ---
