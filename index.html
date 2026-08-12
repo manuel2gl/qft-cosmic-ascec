@@ -3821,6 +3821,33 @@ H  -0.757000  0.586000  0.000000"></textarea>
                             </label>
                         </div>
                     </div>
+                    <div class="form-row-3" id="adv-opt-xtb-extras-group" style="display:none;">
+                        <div class="form-group">
+                            <label>Implicit Solvent</label>
+                            <select id="adv-opt-xtb-solvmodel" onchange="updateAllPreviews()">
+                                <option value="" selected>(gas phase)</option>
+                                <option value="alpb">ALPB</option>
+                                <option value="gbsa">GBSA</option>
+                                <option value="cpcmx">CPCM-X</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Solvent</label>
+                            <div class="custom-inline-control">
+                                <select id="adv-opt-xtb-solvent" onchange="toggleCustomInput('adv-opt-xtb-solvent', 'adv-opt-xtb-solvent-custom'); updateAllPreviews()">
+                                    <option value="Other">Other...</option>
+                                </select>
+                                <div id="adv-opt-xtb-solvent-custom-wrap" class="custom-inline-editor">
+                                    <input type="text" id="adv-opt-xtb-solvent-custom" placeholder="Solvent name" oninput="updateAllPreviews()">
+                                    <button type="button" class="custom-inline-reset" onclick="resetCustomControl('adv-opt-xtb-solvent', 'adv-opt-xtb-solvent-custom')">▾</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Extra xTB flags</label>
+                            <input type="text" id="adv-opt-xtb-extra" placeholder="e.g. etemp 400, acc 0.5" title="Any xTB command-line options, comma separated, without the leading dashes. Written as '# flag args' lines in the template." oninput="updateAllPreviews()">
+                        </div>
+                    </div>
                     <div class="form-row">
                         <div class="form-group">
                             <label>Rescue Method</label>
@@ -3940,6 +3967,33 @@ H  -0.757000  0.586000  0.000000"></textarea>
                             </select>
                         </div>
                     </div>
+                    <div class="form-row-3" id="adv-ref-xtb-extras-group" style="display:none;">
+                        <div class="form-group">
+                            <label>Implicit Solvent</label>
+                            <select id="adv-ref-xtb-solvmodel" onchange="updateAllPreviews()">
+                                <option value="" selected>(gas phase)</option>
+                                <option value="alpb">ALPB</option>
+                                <option value="gbsa">GBSA</option>
+                                <option value="cpcmx">CPCM-X</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Solvent</label>
+                            <div class="custom-inline-control">
+                                <select id="adv-ref-xtb-solvent" onchange="toggleCustomInput('adv-ref-xtb-solvent', 'adv-ref-xtb-solvent-custom'); updateAllPreviews()">
+                                    <option value="Other">Other...</option>
+                                </select>
+                                <div id="adv-ref-xtb-solvent-custom-wrap" class="custom-inline-editor">
+                                    <input type="text" id="adv-ref-xtb-solvent-custom" placeholder="Solvent name" oninput="updateAllPreviews()">
+                                    <button type="button" class="custom-inline-reset" onclick="resetCustomControl('adv-ref-xtb-solvent', 'adv-ref-xtb-solvent-custom')">▾</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Extra xTB flags</label>
+                            <input type="text" id="adv-ref-xtb-extra" placeholder="e.g. etemp 400, acc 0.5" title="Any xTB command-line options, comma separated, without the leading dashes. Written as '# flag args' lines in the template." oninput="updateAllPreviews()">
+                        </div>
+                    </div>
                     <div class="form-row">
                         <div class="form-group">
                             <label>Rescue Method</label>
@@ -4040,6 +4094,33 @@ H  -0.757000  0.586000  0.000000"></textarea>
                                     <option value="SP Freq">SP + Freq</option>
                                     <option value="SP NumFreq">SP + NumFreq</option>
                                 </select>
+                            </div>
+                        </div>
+                        <div class="form-row-3" id="adv-eref-xtb-extras-group" style="display:none;">
+                            <div class="form-group">
+                                <label>Implicit Solvent</label>
+                                <select id="adv-eref-xtb-solvmodel" onchange="updateAdvEnergyRefPreview(); updateAllPreviews();">
+                                    <option value="" selected>(gas phase)</option>
+                                    <option value="alpb">ALPB</option>
+                                    <option value="gbsa">GBSA</option>
+                                    <option value="cpcmx">CPCM-X</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Solvent</label>
+                                <div class="custom-inline-control">
+                                    <select id="adv-eref-xtb-solvent" onchange="toggleCustomInput('adv-eref-xtb-solvent', 'adv-eref-xtb-solvent-custom'); updateAdvEnergyRefPreview(); updateAllPreviews();">
+                                        <option value="Other">Other...</option>
+                                    </select>
+                                    <div id="adv-eref-xtb-solvent-custom-wrap" class="custom-inline-editor">
+                                        <input type="text" id="adv-eref-xtb-solvent-custom" placeholder="Solvent name" oninput="updateAdvEnergyRefPreview(); updateAllPreviews();">
+                                        <button type="button" class="custom-inline-reset" onclick="resetCustomControl('adv-eref-xtb-solvent', 'adv-eref-xtb-solvent-custom')">▾</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Extra xTB flags</label>
+                                <input type="text" id="adv-eref-xtb-extra" placeholder="e.g. etemp 400, acc 0.5" title="Any xTB command-line options, comma separated, without the leading dashes. Written as '# flag args' lines in the template." oninput="updateAdvEnergyRefPreview(); updateAllPreviews();">
                             </div>
                         </div>
                     </div>
@@ -4742,6 +4823,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
         // Initialize
         document.addEventListener('DOMContentLoaded', function () {
+            populateXtbSolventSelects();
             updatePreview();
             updateQuenchVisibility();
             initDefaultProtocol();
@@ -10025,6 +10107,7 @@ end
             toggleCustomMethod('adv-opt');
             toggleCustomInput('adv-opt-basis', 'adv-opt-basis-custom');
             syncXtbOptLevelVisibility('adv-opt', theory);
+            syncXtbExtrasVisibility('adv-opt', theory);
             applyAdvancedOptRescueDefaults();
             syncPartialweightsFromTheory();
         }
@@ -10045,6 +10128,7 @@ end
             toggleCustomMethod('adv-ref');
             toggleCustomInput('adv-ref-basis', 'adv-ref-basis-custom');
             syncXtbOptLevelVisibility('adv-ref', theory);
+            syncXtbExtrasVisibility('adv-ref', theory);
             applyAdvancedRefRescueDefaults();
         }
 
@@ -10075,6 +10159,92 @@ end
             const select = document.getElementById(prefix + '-xtb-level');
             if (!select) return 'normal';
             return normalizeXtbOptLevel(select.value || 'normal');
+        }
+
+
+        // --- Standalone xTB extras (Advanced mode) -----------------------------
+        // xTB has no keyword line: every setting is a command-line flag, and the
+        // .asc template carries them as "# <flag> [args]" directives that ASCEC
+        // passes straight through. These controls cover the most-requested ones
+        // (implicit solvation, plus a free-text field for anything else) without
+        // hard-coding the rest of the xTB flag surface.
+
+        // ALPB solvent set; GBSA supports a subset and CPCM-X a different one,
+        // so the list is offered in full and "Other..." stays available.
+        const XTB_SOLVENTS = [
+            'acetone', 'acetonitrile', 'aniline', 'benzaldehyde', 'benzene',
+            'ch2cl2', 'chcl3', 'cs2', 'dioxane', 'dmf', 'dmso', 'ether',
+            'ethanol', 'ethylacetate', 'furane', 'hexadecane', 'hexane',
+            'methanol', 'nitromethane', 'octanol', 'woctanol', 'phenol',
+            'thf', 'toluene', 'water'
+        ];
+
+        const XTB_EXTRA_PREFIXES = ['adv-opt', 'adv-ref', 'adv-eref'];
+
+        // Directives ASCEC already derives from the other fields (or injects
+        // itself). Re-issuing them from the free-text box would either be
+        // ignored downstream or break output collection, so they are filtered.
+        const XTB_RESERVED_FLAGS = new Set([
+            'name', 'rescue', 'namespace', 'nprocs', 'parallel', 'maxiter',
+            'cycles', 'charge', 'chrg', 'uhf', 'mult', 'multiplicity', 'freq',
+            'num', 'hess', 'opt', 'gfn', 'gfnff', 'gfn0', 'gfn1', 'gfn2'
+        ]);
+
+        function populateXtbSolventSelects() {
+            XTB_EXTRA_PREFIXES.forEach((prefix) => {
+                const select = document.getElementById(prefix + '-xtb-solvent');
+                if (!select) return;
+                select.innerHTML = XTB_SOLVENTS.map((s) =>
+                    `<option value="${s}" ${s === 'water' ? 'selected' : ''}>${s}</option>`
+                ).join('') + '<option value="Other">Other...</option>';
+            });
+        }
+
+        function syncXtbExtrasVisibility(prefix, theory) {
+            const group = document.getElementById(prefix + '-xtb-extras-group');
+            if (!group) return;
+            group.style.display = isStandaloneXtbTheory(theory) ? '' : 'none';
+        }
+
+        function getXtbSolventValue(prefix) {
+            const select = document.getElementById(prefix + '-xtb-solvent');
+            if (!select) return '';
+            if (select.value === 'Other') {
+                return (document.getElementById(prefix + '-xtb-solvent-custom')?.value || '').trim();
+            }
+            return select.value || '';
+        }
+
+        // Build the extra "# <flag> [args]" lines for one stage. Returns a string
+        // that starts with a newline, or '' when there is nothing to add.
+        function buildXtbExtraLines(prefix) {
+            const lines = [];
+            const seen = new Set();
+
+            const model = document.getElementById(prefix + '-xtb-solvmodel')?.value || '';
+            const solvent = getXtbSolventValue(prefix);
+            if (model && solvent) {
+                lines.push(`# ${model} ${solvent}`);
+                seen.add(model);
+            }
+
+            const raw = (document.getElementById(prefix + '-xtb-extra')?.value || '').trim();
+            if (raw) {
+                // Comma or newline separated; a leading "--" is optional.
+                raw.split(/[,\n]+/).forEach((entry) => {
+                    const cleaned = entry.trim().replace(/^-+/, '').replace(/\s+/g, ' ');
+                    if (!cleaned) return;
+                    // Anything that could escape the generated launcher is dropped,
+                    // mirroring the rule the .asc parser applies on the other side.
+                    if (/[;&|<>$`'"\\(){}\[\]!*?~]/.test(cleaned)) return;
+                    const flag = cleaned.split(' ')[0].toLowerCase();
+                    if (XTB_RESERVED_FLAGS.has(flag) || seen.has(flag)) return;
+                    seen.add(flag);
+                    lines.push(`# ${cleaned}`);
+                });
+            }
+
+            return lines.length ? '\n' + lines.join('\n') : '';
         }
 
         function syncXtbOptLevelVisibility(prefix, theory) {
@@ -10133,6 +10303,7 @@ end
             }
             toggleCustomMethod('adv-eref');
             toggleCustomInput('adv-eref-basis', 'adv-eref-basis-custom');
+            syncXtbExtrasVisibility('adv-eref', theory);
         }
 
         function updateAdvEnergyRefPreview() {
@@ -10156,7 +10327,7 @@ end
                 const xtbUhf = parseInt(mult) - 1;
                 const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
                 const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
-                const input = `#name\n# ${xtbMethod} ${xtbJob}\n# nprocs ${nprocs}${chargeLine}${uhfLine}`;
+                const input = `#name\n# ${xtbMethod} ${xtbJob}\n# nprocs ${nprocs}${chargeLine}${uhfLine}${buildXtbExtraLines('adv-eref')}`;
                 const textarea = document.getElementById('orca-input3');
                 if (textarea) textarea.value = input;
                 return;
@@ -10498,7 +10669,7 @@ end
 #rescue(${xtbRescue}/${xtbRescueHess})
 # ${xtbMethod} ${xtbJob}
 # nprocs ${nprocs}
-# maxiter ${maxiter}${chargeLine}${uhfLine}`;
+# maxiter ${maxiter}${chargeLine}${uhfLine}${buildXtbExtraLines('adv-opt')}`;
                 const textarea = document.getElementById('orca-input1');
                 if (textarea) textarea.value = input;
                 return;
@@ -10569,7 +10740,7 @@ end
 #rescue(${xtbRescue}/${xtbRescueHess})
 # ${xtbMethod} ${xtbJob}
 # nprocs ${nprocs}
-# maxiter ${maxiter}${chargeLine}${uhfLine}`;
+# maxiter ${maxiter}${chargeLine}${uhfLine}${buildXtbExtraLines('adv-ref')}`;
                             const textarea = document.getElementById('orca-input2');
                             if (textarea) textarea.value = input;
                             return;
