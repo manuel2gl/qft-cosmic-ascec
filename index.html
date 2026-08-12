@@ -880,6 +880,17 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
             background: var(--primary-color);
         }
 
+        /* Smart Mode input sources: PubChem / Enter XYZ / ASE */
+        .smart-input-tabs {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .smart-input-tabs .btn {
+            white-space: nowrap;
+        }
+
         /* Smart Mode compact header — Web of Science style */
         .smart-header {
             display: flex;
@@ -2743,9 +2754,17 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                 <div class="card" style="position: relative;">
                     <div class="card-title-row">
                         <h2 style="margin-bottom:0;">Molecule → XYZ Converter</h2>
-                        <button type="button" id="smart-xyz-toggle-btn" class="btn btn-sm btn-secondary"
-                            style="white-space: nowrap;" onclick="toggleSmartXyzInput()"
-                            title="Switch between PubChem lookup and pasting XYZ coordinates directly">⌨ Enter XYZ</button>
+                        <div class="smart-input-tabs">
+                            <button type="button" id="smart-tab-pubchem" class="btn btn-sm btn-primary active"
+                                onclick="setSmartInputMode('pubchem')"
+                                title="Look a compound up in PubChem by name, SMILES, CAS or InChI">🔍 PubChem</button>
+                            <button type="button" id="smart-tab-manual" class="btn btn-sm btn-secondary"
+                                onclick="setSmartInputMode('manual')"
+                                title="Paste XYZ coordinates directly, or use a lattice shortcut">⌨ Enter XYZ</button>
+                            <button type="button" id="smart-tab-ase" class="btn btn-sm btn-secondary"
+                                onclick="setSmartInputMode('ase')"
+                                title="Build structures with ASE (ase.build) running in your browser">🧊 ASE</button>
+                        </div>
                     </div>
 
                     <div id="smart-pubchem-panel">
@@ -2815,9 +2834,16 @@ H  -0.757000  0.586000  0.000000"></textarea>
                         <div class="quick-mol-buttons" style="margin-top: 5px;">
                             <button class="quick-mol-btn" onclick="smartLoadExampleXyz('water')">Water</button>
                             <button class="quick-mol-btn" onclick="smartLoadExampleXyz('ethanol')">Ethanol</button>
-                            <button class="quick-mol-btn" onclick="smartLoadExampleXyz('graphene')" title="Graphene sheet, 6 unit cells (2x3 grid), 24 C">Graphene</button>
+                            <button class="quick-mol-btn" onclick="smartLoadExampleXyz('graphene')"
+                                title="Graphene monolayer, coronene flake (C24): 7 fused hexagons, a = 2.46 A, C-C = 1.42 A. Built ring by ring, so every carbon sits in a closed hexagon - no lonely carbons.">Graphene</button>
+                            <button class="quick-mol-btn" onclick="smartLoadExampleXyz('silica')"
+                                title="2D silica bilayer sheet (Si12O30): corner-sharing SiO4 tetrahedra, a = 5.30 A, Si-O = 1.61 A. Every Si is 4-coordinate; edge Si carries a terminal O rather than a dangling bond. No OH.">2D Silica</button>
+                            <button class="quick-mol-btn" onclick="smartLoadExampleXyz('pt111')"
+                                title="Pt(111) single close-packed layer (Pt19): a_fcc = 3.9242 A, Pt-Pt = 2.775 A. Bare metal, hexagonal patch, no straggler atoms.">Pt(111)</button>
                         </div>
                     </div>
+
+                    <div id="smart-ase-panel" style="display: none;"></div>
                     <div style="margin-top: 12px; background: #f8f9fa; border-radius: 6px; padding: 12px 14px; font-size: 0.85em;">
                         <div class="mol-info-bar" style="display: flex; gap: 0; align-items: flex-start;">
                             <!-- Left section -->
@@ -4270,6 +4296,9 @@ H  -0.757000  0.586000  0.000000"></textarea>
                         <button class="btn btn-secondary" id="btn-sketcher-mode" onclick="setInputMode('sketcher')">
                             PubChem → XYZ
                         </button>
+                        <button class="btn btn-secondary" id="btn-ase-mode" onclick="setInputMode('ase')">
+                            ASE
+                        </button>
                     </div>
 
                     <div class="adv-fixed-group">
@@ -4305,8 +4334,17 @@ H  -0.757000  0.586000  0.000000"></textarea>
                             <button class="btn btn-primary" onclick="addMoleculeManual()">➕ Add Molecule(s)</button>
                             <button class="btn btn-secondary" onclick="loadExampleWater()">Water</button>
                             <button class="btn btn-secondary" onclick="loadExampleEthanol()">Ethanol</button>
+                            <button class="btn btn-secondary" onclick="loadExampleLattice('graphene')"
+                                title="Graphene monolayer, coronene flake (C24): 7 fused hexagons, a = 2.46 A, C-C = 1.42 A. Every carbon sits in a closed hexagon.">Graphene</button>
+                            <button class="btn btn-secondary" onclick="loadExampleLattice('silica')"
+                                title="2D silica bilayer sheet (Si12O30): corner-sharing SiO4 tetrahedra, a = 5.30 A, Si-O = 1.61 A. Every Si is 4-coordinate; no OH.">2D Silica</button>
+                            <button class="btn btn-secondary" onclick="loadExampleLattice('pt111')"
+                                title="Pt(111) single close-packed layer (Pt19): a_fcc = 3.9242 A, Pt-Pt = 2.775 A. Bare metal.">Pt(111)</button>
                         </div>
                     </div>
+
+                    <!-- ASE Mode -->
+                    <div id="ase-mode" class="tab-content"></div>
 
                     <!-- PubChem Mode -->
                     <div id="sketcher-mode" class="tab-content">
@@ -6682,26 +6720,257 @@ H  -0.757000  0.586000  0.000000"></textarea>
             }
         }
 
-        // Smart mode: swap the PubChem lookup for a paste-your-own-XYZ panel.
-        // Both feed the same preview, so the count + Add controls are unchanged.
+        // Smart mode input sources: PubChem lookup, pasted XYZ (plus the lattice
+        // shortcuts) and ASE. All three feed the same preview, so the count and
+        // Add controls below them are unchanged.
+        const SMART_INPUT_MODES = ['pubchem', 'manual', 'ase'];
+        const SMART_FOCUS_FIELD = {
+            pubchem: 'basic-smiles-input',
+            manual: 'smart-manual-xyz',
+            ase: 'ase-structure'
+        };
         let smartXyzInputMode = 'pubchem';
 
-        function toggleSmartXyzInput() {
-            smartXyzInputMode = smartXyzInputMode === 'pubchem' ? 'manual' : 'pubchem';
-            const manual = smartXyzInputMode === 'manual';
-            const pubchemPanel = document.getElementById('smart-pubchem-panel');
-            const manualPanel = document.getElementById('smart-manual-panel');
-            const btn = document.getElementById('smart-xyz-toggle-btn');
-            if (pubchemPanel) pubchemPanel.style.display = manual ? 'none' : '';
-            if (manualPanel) manualPanel.style.display = manual ? '' : 'none';
-            if (btn) {
-                btn.textContent = manual ? '🔍 PubChem' : '⌨ Enter XYZ';
-                btn.title = manual
-                    ? 'Switch back to PubChem lookup'
-                    : 'Switch between PubChem lookup and pasting XYZ coordinates directly';
+        function setSmartInputMode(mode) {
+            if (!SMART_INPUT_MODES.includes(mode)) return;
+            smartXyzInputMode = mode;
+            for (const m of SMART_INPUT_MODES) {
+                const panel = document.getElementById(`smart-${m}-panel`);
+                if (panel) panel.style.display = m === mode ? '' : 'none';
+                const tab = document.getElementById(`smart-tab-${m}`);
+                if (tab) {
+                    tab.classList.toggle('active', m === mode);
+                    tab.classList.toggle('btn-primary', m === mode);
+                    tab.classList.toggle('btn-secondary', m !== mode);
+                }
             }
-            const focusId = manual ? 'smart-manual-xyz' : 'basic-smiles-input';
-            document.getElementById(focusId)?.focus();
+            document.getElementById(SMART_FOCUS_FIELD[mode])?.focus();
+        }
+
+        // Kept so the original two-way call site still works.
+        function toggleSmartXyzInput() {
+            setSmartInputMode(smartXyzInputMode === 'manual' ? 'pubchem' : 'manual');
+        }
+
+        // ---------------------------------------------------------------
+        // Lattice shortcut builders.
+        //
+        // These generate by whole rings: hexagon centres first, then the six
+        // vertices of each, deduplicated. A ragged rectangular cut - which is
+        // what leaves carbons with a single neighbour and hexagons that were
+        // never closed - is therefore unreachable. The graphene shortcut this
+        // replaced was a hardcoded 24-atom rectangle carrying two 1-coordinate
+        // carbons. Note that ase.build.graphene() would not have fixed that on
+        // its own: it is a 2-atom periodic cell, and repeating it then dropping
+        // periodicity reproduces the same broken edge.
+        // ---------------------------------------------------------------
+
+        const DEBUG_LATTICE = /[?&]debug\b/.test(location.search);
+
+        const LATTICE = {
+            grapheneCC: 1.42,   // C-C bond; a = 2.46 A
+            silicaA: 5.309,     // 2D silica sheet, freestanding DFT (Chem. Rev. 2022, 122, 11172)
+            silicaSiO: 1.61,    // Si-O bond
+            metals: {           // fcc lattice constants, A
+                Pt: 3.9242, Au: 4.0782, Cu: 3.6149,
+                Ag: 4.0853, Pd: 3.8907, Ni: 3.5240
+            }
+        };
+
+        // Site identity is tested by distance, not by a rounded key. Two
+        // floating-point values describing the same lattice site can straddle a
+        // rounding boundary and compare unequal, which silently duplicates
+        // atoms; the error between them is ~1e-14, while the nearest distinct
+        // site is angstroms away, so a plain tolerance is unambiguous.
+        const SAME_SITE_TOL = 1e-6;
+
+        function siteIndex(pts, x, y) {
+            for (let i = 0; i < pts.length; i++) {
+                if (Math.abs(pts[i][0] - x) < SAME_SITE_TOL
+                    && Math.abs(pts[i][1] - y) < SAME_SITE_TOL) return i;
+            }
+            return -1;
+        }
+
+        // Axial coordinates of every hexagon in a flake nRings hexagons across.
+        function hexFlakeCenters(nRings) {
+            const out = [];
+            for (let q = -(nRings - 1); q <= nRings - 1; q++) {
+                for (let r = -(nRings - 1); r <= nRings - 1; r++) {
+                    if (Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r)) <= nRings - 1) out.push([q, r]);
+                }
+            }
+            return out;
+        }
+
+        // Fused-hexagon flake. Every site is a vertex of at least one closed
+        // hexagon, so every site has 2 neighbours (edge) or 3 (interior).
+        function honeycombFlake(nRings, bond) {
+            const a = bond * Math.sqrt(3);
+            const pts = [];
+            for (const [q, r] of hexFlakeCenters(nRings)) {
+                const cx = a * (q + r / 2), cy = a * (r * Math.sqrt(3) / 2);
+                for (let k = 0; k < 6; k++) {
+                    const th = (30 + 60 * k) * Math.PI / 180;
+                    const x = cx + bond * Math.cos(th), y = cy + bond * Math.sin(th);
+                    if (siteIndex(pts, x, y) < 0) pts.push([x, y]);
+                }
+            }
+            return pts;
+        }
+
+        // Triangular-lattice patch, nShells rings out: 1, 7, 19, 37, 61 sites.
+        function triFlakePatch(nShells, spacing) {
+            const out = [];
+            for (let q = -nShells; q <= nShells; q++) {
+                for (let r = -nShells; r <= nShells; r++) {
+                    if (Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r)) <= nShells) {
+                        out.push([spacing * (q + r / 2), spacing * (r * Math.sqrt(3) / 2)]);
+                    }
+                }
+            }
+            return out;
+        }
+
+        function latticeToXyz(atoms, coords) {
+            return coords.map((c, i) =>
+                `${atoms[i].padEnd(2)} ${c[0].toFixed(6).padStart(13)} ${c[1].toFixed(6).padStart(13)} ${c[2].toFixed(6).padStart(13)}`
+            ).join('\n');
+        }
+
+        // Coronene skeleton at the default nRings = 2 (C24): 7 fused hexagons,
+        // the smallest flake that is still recognisably graphene, and cheap
+        // enough for QM. 3 -> C54 (circumcoronene), 4 -> C96.
+        function buildGraphene(nRings = 3) {
+            const pts = honeycombFlake(nRings, LATTICE.grapheneCC);
+            return latticeToXyz(pts.map(() => 'C'), pts.map(([x, y]) => [x, y, 0]));
+        }
+
+        // 2D silica BILAYER sheet: two mirrored honeycomb layers of corner-
+        // sharing SiO4 tetrahedra joined by linear Si-O-Si bridges. This is the
+        // self-saturated SiO2 form (Zhong & Freund, Chem. Rev. 2022, 122, 11172).
+        // A single layer is deliberately NOT offered: that material is SiO2.5,
+        // and its fourth O per tetrahedron is a Si-O-metal bond to the support,
+        // so freestanding it would carry one dangling O on every Si.
+        //
+        // The whole geometry falls out of a = 5.309 A and Si-O = 1.61 A, so
+        // there is no coordinate table to get wrong: in-plane Si-Si is
+        // a/sqrt(3), and a bridging O sits at the bond midpoint raised by h,
+        // where (Si-Si/2)^2 + h^2 = (Si-O)^2. That yields an in-plane Si-O-Si
+        // of 144.3 deg, inside the measured 141 deg peak / 145 deg edge window,
+        // and a linear 180 deg interlayer bridge.
+        //
+        // A finite patch cannot be fully bridged - edge Si is short of one
+        // in-plane O. It gets a terminal O rather than a dangling bond, so every
+        // Si stays 4-coordinate and no H or OH is introduced.
+        function buildSilica2D(nRings = 1) {
+            const dSi = LATTICE.silicaA / Math.sqrt(3);
+            const h = Math.sqrt(LATTICE.silicaSiO ** 2 - (dSi / 2) ** 2);
+            const si = honeycombFlake(nRings, dSi);
+            const big = honeycombFlake(nRings + 1, dSi);   // one ring further out
+            const near = (p, pool) => pool.filter((q) => {
+                const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+                return d > 1e-6 && d < dSi * 1.1;
+            });
+
+            const bonds = [];
+            for (let i = 0; i < si.length; i++) {
+                for (let j = i + 1; j < si.length; j++) {
+                    if (Math.hypot(si[i][0] - si[j][0], si[i][1] - si[j][1]) < dSi * 1.1) bonds.push([i, j]);
+                }
+            }
+
+            const atoms = [], coords = [];
+            for (const sgn of [1, -1]) {
+                const zSi = sgn * LATTICE.silicaSiO, zO = zSi + sgn * h;
+                for (const [x, y] of si) { atoms.push('Si'); coords.push([x, y, zSi]); }
+                for (const [i, j] of bonds) {
+                    atoms.push('O');
+                    coords.push([(si[i][0] + si[j][0]) / 2, (si[i][1] + si[j][1]) / 2, zO]);
+                }
+                // Terminal O where the cut removed a lattice bond: compare each
+                // site's neighbours against the same site one ring further out.
+                for (const pt of si) {
+                    for (const q of near(pt, big)) {
+                        if (siteIndex(si, q[0], q[1]) < 0) {
+                            atoms.push('O');
+                            coords.push([(pt[0] + q[0]) / 2, (pt[1] + q[1]) / 2, zO]);
+                        }
+                    }
+                }
+            }
+            // Linear Si-O-Si bridges joining the two layers.
+            for (const [x, y] of si) { atoms.push('O'); coords.push([x, y, 0]); }
+            return latticeToXyz(atoms, coords);
+        }
+
+        // A single close-packed (111) layer. Pt is the default: the most-used
+        // metal surface in adsorption benchmarking. Bare - metals need no
+        // termination - and the shell-based patch leaves no straggler atoms.
+        // nShells 2 -> 19 atoms; 1 -> 7, 3 -> 37. Metals are expensive in QM,
+        // so the shortcut stays at 19.
+        function buildMetal111(symbol = 'Pt', nShells = 3) {
+            const a = LATTICE.metals[symbol];
+            if (!a) throw new Error(`No fcc lattice constant on file for ${symbol}`);
+            const pts = triFlakePatch(nShells, a / Math.sqrt(2));
+            return latticeToXyz(pts.map(() => symbol), pts.map(([x, y]) => [x, y, 0]));
+        }
+
+        // Neighbour counts per element, so a regression in the builders shows up
+        // as a number rather than by eye. Logged for the shortcuts under ?debug.
+        function verifyCoordination(xyzText, cutoff = 1.75) {
+            const { atoms, coords } = parseXyzText(xyzText);
+            const counts = atoms.map(() => 0);
+            for (let i = 0; i < atoms.length; i++) {
+                for (let j = i + 1; j < atoms.length; j++) {
+                    const d = Math.hypot(coords[i][0] - coords[j][0],
+                                         coords[i][1] - coords[j][1],
+                                         coords[i][2] - coords[j][2]);
+                    if (d <= cutoff) { counts[i]++; counts[j]++; }
+                }
+            }
+            const per = {};
+            atoms.forEach((el, i) => { (per[el] = per[el] || []).push(counts[i]); });
+            const out = {};
+            for (const el of Object.keys(per)) {
+                out[el] = { n: per[el].length, min: Math.min(...per[el]), max: Math.max(...per[el]) };
+            }
+            return out;
+        }
+
+        // Repeatedly drop atoms with too few neighbours. Used on ASE output,
+        // where making a periodic cell finite leaves the same ragged edge the
+        // shortcuts avoid by construction. The cutoff is derived from the
+        // structure's own shortest contact, so no radius table is needed.
+        function pruneUnderCoordinated(atoms, coords, minNeighbors = 2) {
+            if (atoms.length < 2) return { atoms, coords };
+            let dmin = Infinity;
+            for (let i = 0; i < atoms.length; i++) {
+                for (let j = i + 1; j < atoms.length; j++) {
+                    const d = Math.hypot(coords[i][0] - coords[j][0],
+                                         coords[i][1] - coords[j][1],
+                                         coords[i][2] - coords[j][2]);
+                    if (d < dmin) dmin = d;
+                }
+            }
+            const cutoff = dmin * 1.25;
+            let keptAtoms = atoms.slice(), keptCoords = coords.slice();
+            for (;;) {
+                const counts = keptAtoms.map(() => 0);
+                for (let i = 0; i < keptAtoms.length; i++) {
+                    for (let j = i + 1; j < keptAtoms.length; j++) {
+                        const d = Math.hypot(keptCoords[i][0] - keptCoords[j][0],
+                                             keptCoords[i][1] - keptCoords[j][1],
+                                             keptCoords[i][2] - keptCoords[j][2]);
+                        if (d <= cutoff) { counts[i]++; counts[j]++; }
+                    }
+                }
+                const keep = counts.map((c) => c >= minNeighbors);
+                if (keep.every(Boolean) || !keep.some(Boolean)) break;
+                keptAtoms = keptAtoms.filter((_, i) => keep[i]);
+                keptCoords = keptCoords.filter((_, i) => keep[i]);
+            }
+            return { atoms: keptAtoms, coords: keptCoords };
         }
 
         const SMART_XYZ_EXAMPLES = {
@@ -6723,69 +6992,322 @@ H   1.140500 -0.559200  0.881000
 H   1.140500 -0.559200 -0.881000
 H   2.219500  1.213600  0.000000`
             },
-            // Graphene sheet, 6 unit cells (2x3 grid), 24 C.
-            graphene: {
-                name: 'graphene',
-                xyz: `C        0.00000        0.00000        0.00000
-C        1.22976        0.71000        0.00000
-C        1.22976        2.13000        0.00000
-C        0.00000        2.84000        0.00000
-C        0.00000        4.26000        0.00000
-C        1.22976        4.97000        0.00000
-C        1.22976        6.39000        0.00000
-C        0.00000        7.10000        0.00000
-C        0.00000        8.52000        0.00000
-C        1.22976        9.23000        0.00000
-C        1.22976       10.65000        0.00000
-C        0.00000       11.36000        0.00000
-C        2.45951        0.00000        0.00000
-C        3.68927        0.71000        0.00000
-C        3.68927        2.13000        0.00000
-C        2.45951        2.84000        0.00000
-C        2.45951        4.26000        0.00000
-C        3.68927        4.97000        0.00000
-C        3.68927        6.39000        0.00000
-C        2.45951        7.10000        0.00000
-C        2.45951        8.52000        0.00000
-C        3.68927        9.23000        0.00000
-C        3.68927       10.65000        0.00000
-C        2.45951       11.36000        0.00000`
-            }
+            // Generated, not transcribed: see buildGraphene / buildSilica2D /
+            // buildMetal111 above for the lattice constants and the ring-complete
+            // construction. Water and ethanol stay as literals.
+            graphene: { name: 'graphene', build: () => buildGraphene(2) },
+            silica: { name: 'silica_2d', build: () => buildSilica2D(1) },
+            pt111: { name: 'pt111', build: () => buildMetal111('Pt', 2) }
         };
 
         function smartLoadExampleXyz(key) {
             const example = SMART_XYZ_EXAMPLES[key];
             if (!example) return;
+            let xyz;
+            try {
+                xyz = example.build ? example.build() : example.xyz;
+            } catch (e) {
+                toast(`Could not build ${key}: ${e.message}`, 'error');
+                return;
+            }
             const nameInput = document.getElementById('smart-manual-mol-name');
             const xyzInput = document.getElementById('smart-manual-xyz');
             if (nameInput) nameInput.value = example.name;
-            if (xyzInput) xyzInput.value = example.xyz;
-            smartLoadManualXyz();
+            if (xyzInput) xyzInput.value = xyz;
+            if (DEBUG_LATTICE) console.log(`[${key}] coordination`, verifyCoordination(xyz));
+            smartLoadXyzString(example.name, xyz);
         }
 
         // Parse the pasted block into the shared preview. Coordinates are centred
         // the same way the Advanced manual path centres them; pin-at-exact-
         // coordinates lives in Advanced mode, and the list chips can pin after the fact.
-        function smartLoadManualXyz() {
-            const xyzText = (document.getElementById('smart-manual-xyz')?.value || '').trim();
-            if (!xyzText) { toast('Enter XYZ coordinates', 'warning'); return; }
+        // Shared by the paste box, the lattice shortcuts and the ASE tab, so all
+        // three centre coordinates the same way Advanced mode does.
+        function smartLoadXyzString(name, xyzText) {
+            const text = (xyzText || '').trim();
+            if (!text) { toast('Enter XYZ coordinates', 'warning'); return false; }
 
-            const { atoms, coords } = parseXyzText(xyzText);
-            if (atoms.length === 0) { toast('Could not parse coordinates', 'error'); return; }
+            const { atoms, coords } = parseXyzText(text);
+            if (atoms.length === 0) { toast('Could not parse coordinates', 'error'); return false; }
 
             const centered = centerMolecule(atoms, coords);
             currentMolData = { atoms: centered.atoms, coords: centered.coords };
 
-            const name = (document.getElementById('smart-manual-mol-name')?.value || '').trim() || 'molecule';
             const nameField = document.getElementById('basic-mol-name');
-            if (nameField) nameField.value = name;
+            if (nameField) nameField.value = name || 'molecule';
             const smilesField = document.getElementById('basic-mol-smiles');
             if (smilesField) smilesField.value = '';
             hideNovoprolabsLink();
 
             showBasicMolViewer(currentMolData);
             toast(`${atoms.length} atoms loaded into the preview`, 'success');
+            return true;
         }
+
+        function smartLoadManualXyz() {
+            const name = (document.getElementById('smart-manual-mol-name')?.value || '').trim() || 'molecule';
+            return smartLoadXyzString(name, document.getElementById('smart-manual-xyz')?.value || '');
+        }
+
+        // ---------------------------------------------------------------
+        // ASE tab. There is no ASE web service to call the way PubChem is
+        // called, but ASE ships a pure-Python wheel and Pyodide bundles numpy
+        // and scipy, so the real ase.build runs client-side. That keeps this
+        // page a single static file: it still works on GitHub Pages and under
+        // `ascec input local`, and adds no Python dependency to the project.
+        //
+        // One panel definition, rendered into both Smart and Advanced mode.
+        // Every id is prefixed so the two copies never collide, and the runtime
+        // is shared - loading it from either panel enables both. Nothing is
+        // fetched until the user presses the load button.
+        // ---------------------------------------------------------------
+
+        const PYODIDE_VERSION = '0.28.3';
+        const PYODIDE_CDN = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
+        const ASE_LOAD_LABEL = '⬇ Load ASE';
+        let asePyodide = null;
+
+        const ASE_STRUCTURES = {
+            graphene: { label: 'graphene — monolayer sheet', el: 'C' },
+            graphene_nanoribbon: { label: 'graphene_nanoribbon — ribbon (n, m)', el: 'C' },
+            nanotube: { label: 'nanotube — single-walled (n, m)', el: 'C' },
+            fcc111: { label: 'fcc111 — close-packed metal surface', el: 'Pt' },
+            fcc100: { label: 'fcc100 — metal surface', el: 'Pt' },
+            fcc110: { label: 'fcc110 — metal surface', el: 'Pt' },
+            bcc100: { label: 'bcc100 — metal surface', el: 'Fe' },
+            bcc110: { label: 'bcc110 — metal surface', el: 'Fe' },
+            hcp0001: { label: 'hcp0001 — metal surface', el: 'Ru' },
+            mx2: { label: 'mx2 — MoS2-type monolayer', el: 'MoS2' },
+            bulk: { label: 'bulk — crystal unit cell', el: 'Si' },
+            molecule: { label: 'molecule — G2 database', el: 'H2O' }
+        };
+
+        // Where each instance sends the structure it built.
+        const ASE_PANELS = {
+            ase: {
+                host: 'smart-ase-panel',
+                deliver(label, xyz) {
+                    const box = document.getElementById('smart-manual-xyz');
+                    if (box) box.value = xyz;
+                    const name = document.getElementById('smart-manual-mol-name');
+                    if (name) name.value = label;
+                    smartLoadXyzString(label, xyz);
+                }
+            },
+            advase: {
+                host: 'ase-mode',
+                deliver(label, xyz) {
+                    document.getElementById('manual-mol-name').value = label;
+                    document.getElementById('manual-xyz').value = xyz;
+                    setInputMode('manual');
+                    toast(`${xyz.trim().split('\n').length} atoms ready — press Add Molecule(s)`, 'success');
+                }
+            }
+        };
+
+        function aseRenderPanel(prefix) {
+            const host = document.getElementById(ASE_PANELS[prefix].host);
+            if (!host) return;
+            const options = Object.entries(ASE_STRUCTURES)
+                .map(([k, m]) => `<option value="${k}">${m.label}</option>`).join('');
+            const field = (id, label, extra) =>
+                `<div class="form-group" style="flex: 1; margin-bottom: 0;"><label>${label}</label>`
+                + `<input id="${prefix}-${id}" ${extra}></div>`;
+
+            host.innerHTML = `
+                <div class="alert alert-info" style="margin-top: 15px;">
+                    <strong>Build a structure with ASE</strong> — the real <code>ase.build</code>
+                    module, running in your browser.
+                </div>
+
+                <div id="${prefix}-loader">
+                    <button class="btn btn-primary" id="${prefix}-load-btn" style="height: 42px;">${ASE_LOAD_LABEL}</button>
+                    <div id="${prefix}-load-status" style="margin-top: 8px; color: #666; font-size: 0.9em;">
+                        Downloads ASE (~32 MB) using Pyodide. Your browser keeps it afterwards.
+                    </div>
+                </div>
+
+                <div id="${prefix}-builder" style="display: none;">
+                    <div class="inline-group" style="align-items: flex-end; margin-bottom: 10px;">
+                        <div class="form-group" style="flex: 2; margin-bottom: 0;">
+                            <label>Structure</label>
+                            <select id="${prefix}-structure">${options}</select>
+                        </div>
+                        ${field('element', 'Element / formula', 'type="text" placeholder="C"')}
+                    </div>
+
+                    <div class="inline-group" style="align-items: flex-end; margin-bottom: 10px;">
+                        ${field('nx', 'nx', 'type="number" value="4" min="1"')}
+                        ${field('ny', 'ny', 'type="number" value="4" min="1"')}
+                        ${field('nz', 'nz / layers', 'type="number" value="1" min="1"')}
+                        ${field('a', 'a (Å)', 'type="text" placeholder="default"')}
+                        ${field('vacuum', 'vacuum (Å)', 'type="text" placeholder="none"')}
+                    </div>
+
+                    <div style="margin-bottom: 10px;">
+                        <label style="display: flex; align-items: center; gap: 8px; font-weight: 500;">
+                            <input type="checkbox" id="${prefix}-trim" checked style="width: auto; margin: 0;">
+                            Trim atoms with fewer than
+                            <input type="number" id="${prefix}-trim-min" value="2" min="1" max="6"
+                                style="width: 54px; padding: 2px 4px; margin: 0;">
+                            neighbours
+                        </label>
+                        <div style="color: #666; font-size: 0.85em; margin-top: 4px;">
+                            Cleans up the ragged edge left when ASE's periodic cell is made finite.
+                        </div>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom: 10px;">
+                        <label>Python (runs as-is; the object named <code>atoms</code> is read back)</label>
+                        <textarea class="xyz-input" id="${prefix}-code" rows="4" spellcheck="false"></textarea>
+                    </div>
+
+                    <div class="inline-group" style="align-items: center;">
+                        <button class="btn btn-primary" id="${prefix}-run-btn"
+                            style="height: 42px; min-width: 150px; white-space: nowrap;">⚛ Build &amp; Load</button>
+                        <div id="${prefix}-run-status" style="color: #666; font-size: 0.9em;"></div>
+                    </div>
+                </div>`;
+
+            document.getElementById(`${prefix}-load-btn`).addEventListener('click', () => aseLoadRuntime(prefix));
+            document.getElementById(`${prefix}-run-btn`).addEventListener('click', () => aseRun(prefix));
+            for (const id of ['structure', 'element', 'nx', 'ny', 'nz', 'a', 'vacuum']) {
+                document.getElementById(`${prefix}-${id}`)
+                    .addEventListener('input', () => aseSyncScript(prefix));
+            }
+            aseSyncScript(prefix);
+        }
+
+        // Turn the form into the ase.build call it stands for. The script is
+        // shown in the textarea and then run verbatim, so what executes is
+        // always exactly what the user can see and edit.
+        function aseScriptFromForm(prefix) {
+            const val = (id) => (document.getElementById(`${prefix}-${id}`)?.value || '').trim();
+            const kind = val('structure') || 'graphene';
+            const el = val('element') || ASE_STRUCTURES[kind].el;
+            const nx = parseInt(val('nx'), 10) || 1;
+            const ny = parseInt(val('ny'), 10) || 1;
+            const nz = parseInt(val('nz'), 10) || 1;
+            const a = val('a') ? `, a=${val('a')}` : '';
+            const vac = val('vacuum') ? `, vacuum=${val('vacuum')}` : '';
+
+            switch (kind) {
+                case 'graphene':
+                    return `from ase.build import graphene\natoms = graphene(formula='${el}2'${a}, size=(${nx}, ${ny}, 1)${vac})`;
+                case 'graphene_nanoribbon':
+                    return `from ase.build import graphene_nanoribbon\natoms = graphene_nanoribbon(${nx}, ${ny}, type='armchair', saturated=False${vac})`;
+                case 'nanotube':
+                    return `from ase.build import nanotube\natoms = nanotube(${nx}, ${ny}, length=${nz}, symbol='${el}'${vac})`;
+                case 'mx2':
+                    return `from ase.build import mx2\natoms = mx2(formula='${el}'${a}, size=(${nx}, ${ny}, 1)${vac})`;
+                case 'bulk':
+                    return `from ase.build import bulk\natoms = bulk('${el}'${a}).repeat((${nx}, ${ny}, ${nz}))`;
+                case 'molecule':
+                    return `from ase.build import molecule\natoms = molecule('${el}'${vac})`;
+                default:
+                    return `from ase.build import ${kind}\natoms = ${kind}('${el}', size=(${nx}, ${ny}, ${nz})${a}${vac})`;
+            }
+        }
+
+        function aseSyncScript(prefix) {
+            const box = document.getElementById(`${prefix}-code`);
+            if (box) box.value = aseScriptFromForm(prefix);
+        }
+
+        // Reveal the builder in every rendered panel, since the runtime is shared.
+        function aseShowBuilders() {
+            for (const prefix of Object.keys(ASE_PANELS)) {
+                const loader = document.getElementById(`${prefix}-loader`);
+                const builder = document.getElementById(`${prefix}-builder`);
+                if (loader) loader.style.display = 'none';
+                if (builder) builder.style.display = '';
+            }
+        }
+
+        async function aseLoadRuntime(prefix) {
+            const btn = document.getElementById(`${prefix}-load-btn`);
+            const status = document.getElementById(`${prefix}-load-status`);
+            const say = (m) => { if (status) status.textContent = m; };
+            if (btn) { btn.disabled = true; btn.textContent = '⏳ Loading…'; }
+            try {
+                say('Downloading the Pyodide runtime…');
+                const { loadPyodide } = await import(PYODIDE_CDN + 'pyodide.mjs');
+                asePyodide = await loadPyodide({ indexURL: PYODIDE_CDN });
+
+                // scipy is not optional here: ase.build imports ase.build.connected,
+                // which imports ase.neighborlist, which imports scipy.sparse at
+                // module top level. Skipping ASE's own dependency resolution below
+                // still spares us matplotlib.
+                say('Downloading numpy and scipy…');
+                await asePyodide.loadPackage(['numpy', 'scipy', 'micropip', 'typing-extensions']);
+
+                say('Installing ASE…');
+                await asePyodide.runPythonAsync(
+                    'import micropip\nawait micropip.install("ase", deps=False)\n'
+                );
+                const version = await asePyodide.runPythonAsync('import ase; ase.__version__');
+
+                aseShowBuilders();
+                toast(`ASE ${version} loaded`, 'success');
+            } catch (e) {
+                asePyodide = null;
+                if (btn) { btn.disabled = false; btn.textContent = ASE_LOAD_LABEL; }
+                say(`Could not download ASE: ${e.message}`);
+                toast('Could not load ASE', 'error');
+            }
+        }
+
+        // Read the `atoms` object back out as plain XYZ.
+        const ASE_XYZ_TAIL = `
+_ascec_xyz = "\\n".join(
+    "%-2s %13.6f %13.6f %13.6f" % (s, p[0], p[1], p[2])
+    for s, p in zip(atoms.get_chemical_symbols(), atoms.get_positions())
+)
+`;
+
+        async function aseRun(prefix) {
+            if (!asePyodide) { toast('Load ASE first', 'warning'); return; }
+            const btn = document.getElementById(`${prefix}-run-btn`);
+            const status = document.getElementById(`${prefix}-run-status`);
+            const say = (m) => { if (status) status.textContent = m; };
+            const source = (document.getElementById(`${prefix}-code`)?.value || '').trim();
+            if (!source) { toast('Nothing to run', 'warning'); return; }
+
+            if (btn) { btn.disabled = true; btn.textContent = '⏳ Building…'; }
+            try {
+                await asePyodide.runPythonAsync(source + '\n' + ASE_XYZ_TAIL);
+                let xyz = asePyodide.globals.get('_ascec_xyz');
+                if (!xyz) throw new Error('The script did not leave an `atoms` object behind');
+
+                let { atoms, coords } = parseXyzText(xyz);
+                const before = atoms.length;
+                if (document.getElementById(`${prefix}-trim`)?.checked) {
+                    const minN = parseInt(document.getElementById(`${prefix}-trim-min`)?.value, 10) || 2;
+                    ({ atoms, coords } = pruneUnderCoordinated(atoms, coords, minN));
+                    if (atoms.length === 0) {
+                        throw new Error(`Trimming at ${minN} neighbours removed every atom — lower it or switch it off`);
+                    }
+                }
+                xyz = latticeToXyz(atoms, coords);
+
+                const kind = document.getElementById(`${prefix}-structure`)?.value || 'ase';
+                const trimmed = before - atoms.length;
+                say(`${atoms.length} atoms${trimmed ? ` (${trimmed} trimmed)` : ''}.`);
+                if (DEBUG_LATTICE) console.log('[ase]', kind, verifyCoordination(xyz));
+                ASE_PANELS[prefix].deliver(kind, xyz);
+            } catch (e) {
+                const lines = String(e.message).trim().split('\n');
+                say(`Failed: ${lines[lines.length - 1]}`);
+                toast('ASE build failed', 'error');
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = '⚛ Build & Load'; }
+            }
+        }
+
+        // Render both instances at parse time; their hosts are already in the DOM.
+        (function renderAsePanels() {
+            for (const prefix of Object.keys(ASE_PANELS)) aseRenderPanel(prefix);
+        })();
 
         function basicAddMolecule() {
             if (!currentMolData || currentMolData.atoms.length === 0) {
@@ -10922,16 +11444,35 @@ end
         }
 
         // Advanced mode functions
+        const ADV_INPUT_MODES = ['manual', 'sketcher', 'ase'];
+
         function setInputMode(mode) {
+            if (!ADV_INPUT_MODES.includes(mode)) return;
             inputMode = mode;
-            document.getElementById('sketcher-mode').classList.toggle('active', mode === 'sketcher');
-            document.getElementById('manual-mode').classList.toggle('active', mode === 'manual');
-            document.getElementById('btn-sketcher-mode').classList.toggle('active', mode === 'sketcher');
-            document.getElementById('btn-manual-mode').classList.toggle('active', mode === 'manual');
-            document.getElementById('btn-sketcher-mode').classList.toggle('btn-secondary', mode !== 'sketcher');
-            document.getElementById('btn-manual-mode').classList.toggle('btn-secondary', mode !== 'manual');
-            document.getElementById('btn-sketcher-mode').classList.toggle('btn-primary', mode === 'sketcher');
-            document.getElementById('btn-manual-mode').classList.toggle('btn-primary', mode === 'manual');
+            for (const m of ADV_INPUT_MODES) {
+                document.getElementById(`${m}-mode`)?.classList.toggle('active', m === mode);
+                const btn = document.getElementById(`btn-${m}-mode`);
+                if (btn) {
+                    btn.classList.toggle('active', m === mode);
+                    btn.classList.toggle('btn-primary', m === mode);
+                    btn.classList.toggle('btn-secondary', m !== mode);
+                }
+            }
+        }
+
+        // Advanced mode's shortcuts fill the manual XYZ box; the user then hits
+        // Add Molecule(s), exactly as with Water and Ethanol above.
+        function loadExampleLattice(key) {
+            const example = SMART_XYZ_EXAMPLES[key];
+            if (!example || !example.build) return;
+            try {
+                const xyz = example.build();
+                document.getElementById('manual-mol-name').value = example.name;
+                document.getElementById('manual-xyz').value = xyz;
+                if (DEBUG_LATTICE) console.log(`[${key}] coordination`, verifyCoordination(xyz));
+            } catch (e) {
+                toast(`Could not build ${key}: ${e.message}`, 'error');
+            }
         }
 
         async function convertToXYZ() {
