@@ -54,8 +54,9 @@ def calculate_rmsd(
     RMSD of atomic positions, both at a 0.125 Å default threshold. Pass
     *heavy_only* to drop hydrogens (Z = 1) instead.
 
-    Returns the minimised RMSD, or ``None`` when the compared atom counts
-    differ or alignment fails.
+    Returns the minimised RMSD in Å — ``sqrt(sum_i |dr_i|^2 / N)`` over the N
+    compared atoms (heavy atoms only under *heavy_only*) — or ``None`` when the
+    compared atom counts differ or alignment fails.
 
     Ported from cosmic-v01's ``calculate_rmsd`` (lines 1961-2026); that version
     was heavy-atom-only with no choice.
@@ -90,10 +91,15 @@ def calculate_rmsd(
         center2 = np.mean(coords2_filtered, axis=0)
         centered_coords2 = coords2_filtered - center2
 
-        # Step 2: Perform Kabsch alignment to find the optimal rotation
-        # R.align_vectors(a, b) finds rotation + RMSD to transform a onto b.
+        # Step 2: Perform Kabsch alignment to find the optimal rotation.
+        # R.align_vectors(a, b) returns (rotation, rssd), the rotation taking
+        # b onto a. The second value is the root SUM squared deviation, not the
+        # root MEAN square, so it must be divided by sqrt(N) to become an RMSD.
         result = R.align_vectors(centered_coords2, centered_coords1)
-        rmsd_value = result[1]  # The RMSD is always the second value returned
+        # N is the number of atoms actually aligned — the *filtered* count, so
+        # heavy_only divides by the heavy-atom count, not the total.
+        n_aligned = coords1_filtered.shape[0]
+        rmsd_value = float(result[1]) / np.sqrt(n_aligned)
 
         return rmsd_value
 

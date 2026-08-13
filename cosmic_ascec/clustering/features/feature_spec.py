@@ -167,12 +167,25 @@ Drops ``lumo_energy`` and ``radius_of_gyration`` from cosmic-v01; adds
 # --------------------------------------------------------------------------- #
 #
 # cosmic-v01's ``_EXTRACT_FEATURE_UNITS`` (lines 3717-3733). Used for labelled
-# CSV headers (``electronic_energy_(Hartree)``, …). Note: the parsers store
-# ``homo_lumo_gap`` in eV (xTB prints eV; cclib computes ``lumo - homo`` on its
-# eV orbital energies; OPI reads the ``:: HOMO-LUMO gap … eV ::`` line). The
+# CSV headers (``electronic_energy_(Hartree)``, …).
+#
+# UNIT CAVEAT — both orbital features are stored in eV, not in the Hartree this
+# table declares:
+#
+# * ``homo_lumo_gap`` — xTB prints eV; cclib computes ``lumo - homo`` on its eV
+#   orbital energies; OPI reads the ``:: HOMO-LUMO gap … eV ::`` line.
+# * ``homo_energy`` — ``extract_homo_lumo_from_orca_text`` reads column 4 of
+#   ORCA's ORBITAL ENERGIES block, which is ``E(eV)``; cclib's ``moenergies``
+#   are eV as well.
+#
+# Every output path therefore divides by ``HARTREE_TO_EV`` before printing or
+# exporting these two: the ``.dat`` descriptor block and its component-difference
+# scores (``dat_writer``) and the ``--data`` dump (``data_extraction``). The
 # clustering matrix Z-scores every feature, so the eV/Hartree choice does not
-# affect cluster IDs; how ``run_data_extraction`` labels the ``--data`` dump is
-# audited in R5b (the scaling region, cosmic-v01.py 3892-4543).
+# affect cluster IDs — but it does make the ``abs_tolerances`` gate on these two
+# columns tighter than the Hartree values in ``DEFAULT_ABS_TOLERANCES`` suggest.
+# How ``run_data_extraction`` labels the ``--data`` dump is audited in R5b (the
+# scaling region, cosmic-v01.py 3892-4543).
 
 FEATURE_UNITS: Mapping[str, str] = MappingProxyType(
     {
@@ -248,6 +261,46 @@ DEFAULT_WEIGHTS: Mapping[str, float] = MappingProxyType(
 """Uniform default weights — keeps COSMIC method-agnostic unless ``--partialweights``."""
 
 
+# --------------------------------------------------------------------------- #
+# Absolute tolerances                                                          #
+# --------------------------------------------------------------------------- #
+
+DEFAULT_ABS_TOLERANCES: Mapping[str, float] = MappingProxyType(
+    {
+        "electronic_energy": 5e-6,
+        "gibbs_free_energy": 5e-6,
+        "homo_energy": 3e-4,
+        "homo_lumo_gap": 3e-4,
+        "dipole_moment": 1.5e-3,
+        "vnn_nuclear_repulsion": 1e-4,   # V_NN is in Hartree, geometry-driven
+        "rotational_constants_A": 7e-5,
+        "rotational_constants_B": 3.5e-4,
+        "rotational_constants_C": 3e-4,
+        "first_vib_freq": 1e-2,
+        "last_vib_freq": 0.3,
+        "num_hydrogen_bonds": 0.5,       # integer-valued in practice
+        "average_hbond_distance": 1e-3,
+        "std_hbond_distance": 1e-3,
+        "average_hbond_angle": 0.1,
+    }
+)
+"""Per-feature "smallest difference that means anything" thresholds.
+
+Two roles, and they must stay the same number for the report to agree with the
+partition:
+
+* :func:`~cosmic_ascec.clustering.scaling.zscore_scale` drops a column whose
+  pool-wide ``max - min`` falls below its tolerance — the feature carries no
+  usable information for that run.
+* :func:`~cosmic_ascec.clustering.scaling.difference_score_percent` reports each
+  component's within-cluster spread *relative to* this same threshold, so a
+  component that the clustering considered flat always scores near zero.
+
+``--abs-tolerance`` overrides layer on top of this table rather than replacing
+it, exactly as ``--weights`` layers over :data:`DEFAULT_WEIGHTS`.
+"""
+
+
 _WEIGHT_PAIR_RE = re.compile(r"\(([^=]+)=([\d.]+)\)")
 
 
@@ -296,6 +349,7 @@ def parse_abs_tolerance_argument(tolerance_str: str | None) -> Dict[str, float]:
 
 __all__ = [
     "CLUSTERING_NUMERICAL_FEATURES",
+    "DEFAULT_ABS_TOLERANCES",
     "DEFAULT_WEIGHTS",
     "FEATURE_ABSENT_DEFAULTS",
     "FEATURE_COLUMNS",

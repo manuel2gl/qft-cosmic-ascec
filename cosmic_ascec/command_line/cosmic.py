@@ -52,6 +52,7 @@ from cosmic_ascec.clustering import console
 from cosmic_ascec.clustering.console import print_step, print_version_banner
 from cosmic_ascec.clustering.data_extraction import run_data_extraction
 from cosmic_ascec.clustering.features.feature_spec import (
+    DEFAULT_ABS_TOLERANCES,
     DEFAULT_WEIGHTS,
     SEMIEMPIRICAL_WEIGHTS,
     parse_abs_tolerance_argument,
@@ -489,6 +490,9 @@ KEY OPTIONS:
                         as --uhf; ignored without --sp.
   -T FLOAT              Temperature (K) for Boltzmann populations (default 298.15).
   --compare FILE...     Direct pairwise comparison of ≥2 files (no folder).
+                        Writes only clustering_summary.txt, the single
+                        cluster_*.dat and extracted_clusters/ — no
+                        dendrogram, Boltzmann report or motif folder.
   --reprocess-files     Ignore the descriptor cache and re-parse outputs.
   FOLDER                Directory of .out/.log QM outputs or .xyz coordinates —
                         or a single .xyz file (default: current / interactive).
@@ -954,32 +958,18 @@ CITATION:
     weights_dict = dict(base_weights)
     weights_dict.update(user_weights_dict)  # user --weights override the baseline
     min_std_threshold_val = args.min_std_threshold
-    abs_tolerances_dict = parse_abs_tolerance_argument(args.abs_tolerance)
+    # --abs-tolerance overrides layer on top of the defaults, the same way
+    # --weights layers over its baseline above. Naming one feature used to
+    # replace the whole table, which silently switched the tolerance gate off
+    # for the other fourteen and left their component-difference scores with no
+    # reference to measure against.
+    abs_tolerances_dict = dict(DEFAULT_ABS_TOLERANCES)
+    abs_tolerances_dict.update(parse_abs_tolerance_argument(args.abs_tolerance))
     num_cores = args.cores if args.cores is not None else get_cpu_count_fast()
     temperature_k = args.temperature
 
     # Update the global verbose flag
     console.VERBOSE = args.verbose
-
-    # Set default absolute tolerances if not provided via command line
-    if not abs_tolerances_dict:
-        abs_tolerances_dict = {
-            "electronic_energy": 5e-6,
-            "gibbs_free_energy": 5e-6,
-            "homo_energy": 3e-4,
-            "homo_lumo_gap": 3e-4,
-            "dipole_moment": 1.5e-3,
-            "vnn_nuclear_repulsion": 1e-4,   # V_NN is in Hartree, geometry-driven
-            "rotational_constants_A": 7e-5,
-            "rotational_constants_B": 3.5e-4,
-            "rotational_constants_C": 3e-4,
-            "first_vib_freq": 1e-2,
-            "last_vib_freq": 0.3,
-            "num_hydrogen_bonds": 0.5,        # integer-valued in practice
-            "average_hbond_distance": 1e-3,
-            "std_hbond_distance": 1e-3,
-            "average_hbond_angle": 0.1
-        }
 
     current_dir = os.getcwd()
 

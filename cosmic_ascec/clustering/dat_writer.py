@@ -1,24 +1,34 @@
 """Per-cluster ``.dat`` report writer.
 
 For every cluster COSMIC writes one ``extracted_data/<cluster>.dat`` file: a
-plain-text dossier with the RMSD context, the Pearson trust score, a
-per-feature deviation analysis across the cluster, the electronic /
-molecular / vibrational / hydrogen-bond descriptors for each member, the
-pairwise heavy-atom RMSD matrix, and the final geometry of each structure.
+plain-text dossier with the RMSD context, the Pearson trust score, the
+component-difference scores across the cluster, the electronic / molecular /
+vibrational / hydrogen-bond descriptors for each member, the pairwise
+heavy-atom RMSD matrix, and the final geometry of each structure.
+(``--compare`` writes the file next to the summary instead; see
+``dat_subdir``.)
 
-The exact byte layout of this file (separators, field widths, ``N/A``
-strings) is a long-standing contract with downstream tooling — preserve it
-when editing.
+The file answers one question — *which structures differ, and in which
+component* — so the component-difference block leads with the components that
+carry the difference. Its score comes from
+:func:`~cosmic_ascec.clustering.scaling.difference_score_percent`, which
+measures each component's spread against that component's clustering
+tolerance rather than against its mean.
+
+Nothing in COSMIC reads this file back; it is a human-facing report. The
+layout (separators, field widths, ``N/A`` strings) is still stable on purpose
+— people diff these between runs — so keep changes deliberate.
 """
 
 from __future__ import annotations
 
+import math
 import os
 from typing import Any, List, Mapping, MutableMapping, Optional, Sequence
 
 import numpy as np
 
-from cosmic_ascec.clustering.console import calculate_deviation_percentage, vprint
+from cosmic_ascec.clustering.console import vprint
 from cosmic_ascec.clustering.energies import (
     HARTREE_TO_EV,
     hartree_to_ev,
@@ -32,11 +42,25 @@ from cosmic_ascec.clustering.features.geometric import (
     atomic_number_to_symbol,
 )
 from cosmic_ascec.clustering.rmsd import calculate_rmsd
+from cosmic_ascec.clustering.scaling import (
+    DIFFERENCE_SCORE_REFERENCE,
+    difference_score_percent,
+)
 from cosmic_ascec.clustering.thresholds import (
     pearson_similarity_pct as _pearson_similarity_pct,
 )
 
 Record = MutableMapping[str, Any]
+
+
+def _ev_to_hartree(value: Optional[float]) -> Optional[float]:
+    """Convert a stored orbital energy to the Hartree this report declares.
+
+    ``homo_energy`` and ``homo_lumo_gap`` are both held in eV — see the unit
+    caveat beside :data:`FEATURE_UNITS`. ``None`` passes straight through so a
+    missing value stays missing.
+    """
+    return None if value is None else value / HARTREE_TO_EV
 
 
 def write_cluster_dat_file(
@@ -50,6 +74,7 @@ def write_cluster_dat_file(
     rmsd_only: bool = False,
     rmsd_heavy: bool = False,
     pool_has_hbonds: bool = True,
+    dat_subdir: Optional[str] = "extracted_data",
 ) -> None:
     """
     Writes combined .dat file for cluster members, including comparison and
@@ -67,6 +92,9 @@ def write_cluster_dat_file(
     they shaped a partition they took no part in. The whole H-bond section
     collapses to one line for the same reason. Defaults to ``True`` so a caller
     outside the orchestrator keeps the full report.
+
+    ``dat_subdir`` names the folder under ``output_base_dir`` the file goes to;
+    ``None`` writes it straight into ``output_base_dir``.
     """
     if weights is None:
         weights = {}
@@ -75,17 +103,31 @@ def write_cluster_dat_file(
 
     num_configurations = len(cluster_members_data)
 
-    dat_output_dir = os.path.join(output_base_dir, "extracted_data")
+    # ``dat_subdir=None`` writes the .dat beside the summary instead of into
+    # ``extracted_data/``. Comparison mode uses that: one cluster, one .dat, so
+    # a directory holding a single file is pure noise.
+    dat_output_dir = (os.path.join(output_base_dir, dat_subdir) if dat_subdir
+                      else output_base_dir)
     os.makedirs(dat_output_dir, exist_ok=True)
 
     output_filename = os.path.join(dat_output_dir, f"{dat_file_prefix}.dat")
 
-    def write_deviation_line(file_obj, label, values):
+    def difference_line_score(values, feature_key):
+        """Score for one component, or ``None`` when it cannot be scored.
+
+        A component is only scored when every member carries it — a spread
+        computed over a subset would understate how far apart the cluster is.
+        """
         valid_values = [value for value in values if value is not None]
         if len(valid_values) != len(cluster_members_data) or not valid_values:
-            file_obj.write(f"  {label} %Dev: N/A\n")
+            return None
+        return difference_score_percent(valid_values, tolerances.get(feature_key))
+
+    def write_difference_line(file_obj, label, score):
+        if score is None:
+            file_obj.write(f"  {label} %Diff: N/A\n")
             return
-        file_obj.write(f"  {label} %Dev: {calculate_deviation_percentage(valid_values):.2f}%\n")
+        file_obj.write(f"  {label} %Diff: {score:.2f}%\n")
 
     def write_scalar_descriptor_line(file_obj, label, value, formatter):
         if value is None:
@@ -241,20 +283,24 @@ def write_cluster_dat_file(
                     )
             f.write("\n")
 
-        # 5. Deviation Analysis (ONLY for clusters with >1 configuration)
+        # 5. Component Difference (ONLY for clusters with >1 configuration)
         if num_configurations > 1:
             # Dynamically detect which features are NOT available in all cluster members
             _zero_weight = {k for k, v in (weights or {}).items() if v == 0.0}
 
-            # All deviation entries: (display_name, data_extractor, feature_key_for_filter).
+            # All scored components: (display_name, data_extractor, feature_key_for_filter).
             # Order and membership track feature_spec.FEATURE_COLUMNS (the cosmic
             # vector contract) — keep them in sync; do not reintroduce lumo_energy
             # or radius_of_gyration, which were dropped from the v04 vector.
             _deviation_entries = [
                 ("Electronic Energy (Hartree)", lambda d: d.get('final_electronic_energy'), "electronic_energy"),
                 ("Gibbs Free Energy (Hartree)", lambda d: d.get('gibbs_free_energy'), "gibbs_free_energy"),
-                ("HOMO Energy (Hartree)", lambda d: d.get('homo_energy'), "homo_energy"),
-                ("HOMO-LUMO Gap (Hartree)", lambda d: d.get('homo_lumo_gap'), "homo_lumo_gap"),
+                # Both orbital features are stored in eV (see the unit caveat in
+                # feature_spec) while their tolerances are the Hartree values from
+                # DEFAULT_ABS_TOLERANCES. Convert here so the spread and the
+                # threshold it is scored against are the same unit.
+                ("HOMO Energy (Hartree)", lambda d: _ev_to_hartree(d.get('homo_energy')), "homo_energy"),
+                ("HOMO-LUMO Gap (Hartree)", lambda d: _ev_to_hartree(d.get('homo_lumo_gap')), "homo_lumo_gap"),
                 ("Dipole Moment (Debye)", lambda d: d.get('dipole_moment'), "dipole_moment"),
                 ("Nuclear Repulsion (Hartree)", lambda d: d.get('vnn_nuclear_repulsion'), "vnn_nuclear_repulsion"),
                 ("First Vibrational Frequency (cm^-1)", lambda d: d.get('first_vib_freq'), "first_vib_freq"),
@@ -304,14 +350,27 @@ def write_cluster_dat_file(
                 f.write(f"\nDynamic reduced feature vector.\n")
                 f.write(f"Features not used: {', '.join(_excluded_display)}\n")
 
-            f.write("\nDeviation Analysis (Max-Min / |Mean|):\n")
+            # Scored components, most different first — the file exists to say
+            # where the structures differ, so that ordering is the answer. The
+            # entry list itself stays in FEATURE_COLUMNS order (see above); only
+            # the printing is sorted. Unscorable rows keep contract order at the
+            # end rather than being ranked against a number they do not have.
+            _scored = []
             for display_name, extractor, feat_key in _deviation_entries:
                 # Only report features that are actually part of the reduced
                 # vector: skip both zero-weight and missing (N/A) features.
                 if feat_key in _all_excluded:
                     continue
                 values = [extractor(d) for d in cluster_members_data]
-                write_deviation_line(f, display_name, values)
+                _scored.append((display_name, difference_line_score(values, feat_key)))
+            _scored.sort(key=lambda item: (item[1] is None, -(item[1] or 0.0)))
+
+            _per_decade = 100.0 / math.log10(DIFFERENCE_SCORE_REFERENCE)
+            f.write("\nComponent Difference (0% = within tolerance, "
+                    f"100% = {DIFFERENCE_SCORE_REFERENCE:.0f}x the tolerance):\n")
+            f.write(f"  each 10x above the tolerance adds {_per_decade:.0f}%\n")
+            for display_name, score in _scored:
+                write_difference_line(f, display_name, score)
 
             # --- Weights and tolerances display order ---
             weight_display_order = [
@@ -384,7 +443,7 @@ def write_cluster_dat_file(
                 mol_data.get('gibbs_free_energy'),
                 lambda value: f"{value:.6f} Hartree ({hartree_to_kcal_mol(value):.2f} kcal/mol, {hartree_to_ev(value):.2f} eV)"
             )
-            write_scalar_descriptor_line(f, "HOMO Energy (Hartree)", mol_data.get('homo_energy'), lambda value: f"{value:.6f}")
+            write_scalar_descriptor_line(f, "HOMO Energy (Hartree)", mol_data.get('homo_energy'), lambda value: f"{value / HARTREE_TO_EV:.6f}")
             write_scalar_descriptor_line(f, "HOMO-LUMO Gap (Hartree)", mol_data.get('homo_lumo_gap'), lambda value: f"{value / HARTREE_TO_EV:.6f}")
             write_scalar_descriptor_line(f, "Nuclear Repulsion (Hartree)", mol_data.get('vnn_nuclear_repulsion'), lambda value: f"{value:.6f}")
         f.write("\n")

@@ -18,8 +18,6 @@ print-calls into ``logging`` without checking what reads them.
 
 from __future__ import annotations
 
-import numpy as np
-
 # Version string embedded in the ASCII-art clustering reports.
 version = "* COSMIC-v01: Feb-2026 *"
 
@@ -88,38 +86,8 @@ def print_step(message, **kwargs):
     print(message, **kwargs)
 
 
-def calculate_deviation_percentage(values):
-    """Percentage deviation ``(max-min)/|mean|`` for a list of values.
-
-    Verbatim port of cosmic-v01's ``calculate_deviation_percentage``
-    (lines 286-316).
-    """
-    if not values or len(values) < 2:
-        return 0.0
-
-    numeric_values = [v for v in values if v is not None]
-    if not numeric_values:
-        return 0.0
-
-    min_val = min(numeric_values)
-    max_val = max(numeric_values)
-
-    if min_val == 0.0 and max_val == 0.0:
-        return 0.0
-
-    if max_val == min_val:
-        return 0.0
-
-    mean_val = np.mean(numeric_values)
-    if mean_val == 0.0:
-        return 100.0 if max_val != min_val else 0.0
-
-    return ((max_val - min_val) / abs(mean_val)) * 100.0
-
-
 __all__ = [
     "VERBOSE",
-    "calculate_deviation_percentage",
     "print_step",
     "print_version_banner",
     "version",

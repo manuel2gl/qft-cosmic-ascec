@@ -100,8 +100,9 @@ def run_data_extraction(pkl_path: str, out_dir: Optional[str] = None) -> int:
                         val = float(raw)
                     except (TypeError, ValueError):
                         val = float('nan')
-                if feat == 'homo_lumo_gap' and np.isfinite(val):
-                    # Cache stores gap in eV; emit Hartree for consistency.
+                if feat in ('homo_lumo_gap', 'homo_energy') and np.isfinite(val):
+                    # Both orbital features are cached in eV; emit Hartree so the
+                    # dump matches the unit FEATURE_UNITS declares for them.
                     val = val / HARTREE_TO_EV
             row.append(val)
         rows.append(row)

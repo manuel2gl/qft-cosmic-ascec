@@ -742,7 +742,7 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     if is_compare_mode and len(clean_data_for_clustering) >= 2:
         hbond_groups = {0: sorted(clean_data_for_clustering,
                                   key=lambda x: (sorting_energy(x, mode), x['filename']))}
-        print("  Comparison mode: Running clustering to generate dendrogram, then forcing a single output cluster.")
+        print("  Comparison mode: Running clustering, then forcing a single output cluster.")
     elif group_hb:
         # Group by exact H-bond count (separate dendrograms per HB family)
         hbond_groups = {}
@@ -754,10 +754,22 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
         hbond_groups = {0: sorted(clean_data_for_clustering,
                                   key=lambda x: (sorting_energy(x, mode), x['filename']))}
 
-    # Output directory paths
+    # Output directory paths.
+    #
+    # Comparison mode is deliberately minimal: it answers one question ("are
+    # these structures the same?") and its whole answer is clustering_summary.txt,
+    # the single cluster_*.dat and the one cluster_*/ folder of geometries, all
+    # at the top level. No dendrogram (a two-leaf tree says nothing), no
+    # extracted_data/ or extracted_clusters/ wrapper around a single entry, no
+    # Boltzmann report and no motif folder — those belong to a real ensemble
+    # partition, not to a pairwise check. See the guards on `is_compare_mode`
+    # further down.
     dendrogram_images_folder = os.path.join(output_base_dir, "dendrogram_images")
-    extracted_data_folder = os.path.join(output_base_dir, "extracted_data")
-    extracted_clusters_folder = os.path.join(output_base_dir, "extracted_clusters")
+    extracted_data_folder = (output_base_dir if is_compare_mode
+                             else os.path.join(output_base_dir, "extracted_data"))
+    extracted_clusters_folder = (output_base_dir if is_compare_mode
+                                 else os.path.join(output_base_dir, "extracted_clusters"))
+    dat_subdir_for_run = None if is_compare_mode else "extracted_data"
 
     # `md_provenance` was loaded above, beside the composition check that shares
     # it. mapping.dat is written by the MD pre-filter and exists nowhere else,
@@ -767,12 +779,14 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
 
 
 
-    os.makedirs(dendrogram_images_folder, exist_ok=True)
-    os.makedirs(extracted_data_folder, exist_ok=True)
-    os.makedirs(extracted_clusters_folder, exist_ok=True)
+    if not is_compare_mode:
+        os.makedirs(dendrogram_images_folder, exist_ok=True)
+        os.makedirs(extracted_data_folder, exist_ok=True)
+        os.makedirs(extracted_clusters_folder, exist_ok=True)
 
     if console.VERBOSE:
-        print(f"Dendrogram images will be saved to '{dendrogram_images_folder}'")
+        if not is_compare_mode:
+            print(f"Dendrogram images will be saved to '{dendrogram_images_folder}'")
         print(f"Extracted data files will be saved to '{extracted_data_folder}'")
         print(f"Extracted cluster XYZ/MOL files will be saved to '{extracted_clusters_folder}'")
     else:
@@ -1162,7 +1176,7 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             _rmsd_clusters, _rmsd_linkage, _rmsd_linkage_members = rmsd_only_partitions[hbond_count]
             current_hbond_group_clusters_for_final_output.extend(_rmsd_clusters)
 
-            if _rmsd_linkage is not None:
+            if _rmsd_linkage is not None and not is_compare_mode:
                 import re
                 _rmsd_basenames = [os.path.splitext(m['filename'])[0] for m in _rmsd_linkage_members]
                 _rmsd_conf_labels = []
@@ -1302,31 +1316,30 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                 else:
                     conf_labels.append(filename)
 
-            if is_compare_mode:
-                dendrogram_title_suffix = "Comparison"
-            elif group_hb:
+            if group_hb:
                 dendrogram_title_suffix = f"H-bonds = {hbond_count}"
             else:
                 dendrogram_title_suffix = "All configurations"
 
-            if group_hb and not is_compare_mode:
-                dendrogram_filename = os.path.join(dendrogram_images_folder, f"dendrogram_H{hbond_count}.png")
-            else:
-                dendrogram_filename = os.path.join(dendrogram_images_folder, f"dendrogram.png")
+            if not is_compare_mode:
+                if group_hb:
+                    dendrogram_filename = os.path.join(dendrogram_images_folder, f"dendrogram_H{hbond_count}.png")
+                else:
+                    dendrogram_filename = os.path.join(dendrogram_images_folder, f"dendrogram.png")
 
-            try:
-                _diag_n_eff = effective_n_features(features_scaled)
-            except Exception:
-                _diag_n_eff = None
+                try:
+                    _diag_n_eff = effective_n_features(features_scaled)
+                except Exception:
+                    _diag_n_eff = None
 
-            plot_annotated_dendrogram(
-                linkage_matrix, _main_optimal_k, _main_cut_height,
-                dendrogram_filename, title_suffix=dendrogram_title_suffix,
-                conf_labels=conf_labels,
-                mojena_threshold=_mojena_t, mojena_k=_mojena_k,
-                n_eff=_diag_n_eff,
-                knee_threshold=_knee_t, knee_k=_knee_k)
-            vprint(f"Dendrogram saved as '{os.path.basename(dendrogram_filename)}'")
+                plot_annotated_dendrogram(
+                    linkage_matrix, _main_optimal_k, _main_cut_height,
+                    dendrogram_filename, title_suffix=dendrogram_title_suffix,
+                    conf_labels=conf_labels,
+                    mojena_threshold=_mojena_t, mojena_k=_mojena_k,
+                    n_eff=_diag_n_eff,
+                    knee_threshold=_knee_t, knee_k=_knee_k)
+                vprint(f"Dendrogram saved as '{os.path.basename(dendrogram_filename)}'")
 
             # --- Match reduced-tier structures against fullest-tier clusters ---
             _matched_reduced = {}
@@ -1556,7 +1569,8 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             write_cluster_dat_file(cluster_name_prefix, members_data, output_base_dir, rmsd_threshold,
                                    hbond_count_for_original_cluster=hbond_count if group_hb else None, weights=weights, tolerances=abs_tolerances,
                                    rmsd_only=rmsd_only, rmsd_heavy=rmsd_heavy,
-                                   pool_has_hbonds=_pool_has_hbonds)
+                                   pool_has_hbonds=_pool_has_hbonds,
+                                   dat_subdir=dat_subdir_for_run)
             vprint(f"Wrote combined data for Cluster '{cluster_name_prefix}' to '{cluster_name_prefix}.dat'")
 
             cluster_xyz_subfolder = os.path.join(extracted_clusters_folder, cluster_name_prefix)
@@ -1579,8 +1593,10 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             summary_file_content_lines.extend(hbond_group_summary_lines)
             previous_hbond_group_processed = True
 
-    # Write combined skipped structures summary after clustering
-    if all_skipped_clustered_with_normal or all_skipped_need_recalc:
+    # Write combined skipped structures summary after clustering.
+    # Comparison mode keeps every requested structure and writes no side
+    # folders, so it reports these in the summary only.
+    if (all_skipped_clustered_with_normal or all_skipped_need_recalc) and not is_compare_mode:
         combined_skipped_info = {
             'clustered_with_normal': all_skipped_clustered_with_normal,
             'need_recalculation': all_skipped_need_recalc
@@ -1595,7 +1611,7 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
         )
 
     # Persist non-converged critical structures for redo mode.
-    if all_non_converged_critical:
+    if all_non_converged_critical and not is_compare_mode:
         save_non_converged_critical_structures(
             all_non_converged_critical,
             output_base_dir,
@@ -1820,16 +1836,19 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     all_input_filenames = [m.get('filename', '') for m in clean_data_for_clustering]
     output_prefix, folder_prefix, is_second_step = detect_motif_input_level(all_input_filenames)
 
-    if is_second_step:
+    if is_second_step and not is_compare_mode:
         print_step(f"Detected motif inputs - using '{output_prefix}_##' naming for unique motifs")
 
     # Create motifs folder with representative structures from each cluster
     # Pass boltzmann_final_data to sort motifs by population (highest population = motif_01)
-    motif_to_cluster_mapping = create_unique_motifs_folder(all_final_clusters, output_base_dir, mode,
-                                                          cluster_id_mapping=cluster_id_mapping,
-                                                          output_prefix=output_prefix,
-                                                          folder_prefix=folder_prefix,
-                                                          boltzmann_data=boltzmann_final_data)
+    # Comparison mode forces a single cluster, so a motif folder would just be a
+    # third copy of the same representative geometry — skipped.
+    if not is_compare_mode:
+        create_unique_motifs_folder(all_final_clusters, output_base_dir, mode,
+                                    cluster_id_mapping=cluster_id_mapping,
+                                    output_prefix=output_prefix,
+                                    folder_prefix=folder_prefix,
+                                    boltzmann_data=boltzmann_final_data)
 
     # Reference values for the informational relative energies. Each quantity
     # gets its own zero — the lowest value among the same representatives —
@@ -1846,8 +1865,10 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     min_prev_elec = _min_over_reps('prev_elec')  # composite runs only
 
     # --- Create separate Boltzmann Distribution Analysis file ---
+    # A populations report over one forced cluster carries no information, so
+    # comparison mode does not produce it.
     boltzmann_file_content_lines = []
-    if final_global_min_energy is not None:
+    if final_global_min_energy is not None and not is_compare_mode:
         # Helper function to center text within 75 characters (same as summary)
         def center_text_boltzmann(text, width=75):
             return text.center(width)
