@@ -405,6 +405,78 @@ def run_shell_extraction(args, parser):
     return str(work_dir)
 
 
+# Output subfolders a COSMIC stage directory writes its QM jobs into. Used to
+# recognise a stage directory when resolving a relative --prev-out-dir against
+# the ancestors of the working directory.
+_STAGE_OUT_GLOBS = ("orca_out_*", "opt_out_*", "gaussian_out_*", "calc_out_*", "xtb_out_*")
+
+
+def _looks_like_stage_dir(path):
+    """True when *path* holds QM output subfolders, i.e. is a COSMIC stage dir."""
+    return any(
+        os.path.isdir(hit)
+        for pattern in _STAGE_OUT_GLOBS
+        for hit in glob.glob(os.path.join(path, pattern))
+    )
+
+
+def resolve_prev_out_dir(path, parser):
+    """Resolve ``--prev-out-dir`` to an absolute directory, or abort.
+
+    Two failures used to be silent, because the orchestrator guards the
+    composite-energy call with a bare ``os.path.isdir`` and no ``else``:
+
+    * A path that does not exist was ignored, and the run silently ranked by
+      the bare eref electronic energy instead of the composite Gibbs energy.
+    * A *relative* sibling-stage name is the natural thing to type, but the
+      working directory is usually the stage's own output folder
+      (``cosmic_3/orca_out_29``), so ``--prev-out-dir cosmic_2`` resolved to a
+      non-existent ``cosmic_3/orca_out_29/cosmic_2`` and hit the first case.
+
+    So a relative name is tried against the working directory first, then
+    against its ancestors — an ancestor hit must look like a stage directory
+    (:func:`_looks_like_stage_dir`) so a common name cannot match some
+    unrelated folder further up the tree. Nothing found is a hard error: a run
+    that asked for composite energies and got electronic ones is worse than a
+    run that stopped.
+    """
+    expanded = os.path.expanduser(path)
+
+    if os.path.isabs(expanded):
+        if os.path.isdir(expanded):
+            return os.path.abspath(expanded)
+        parser.error(
+            f"--prev-out-dir: no such directory: {expanded}"
+        )
+
+    candidates = []
+    directory = os.getcwd()
+    while True:
+        candidates.append(os.path.join(directory, expanded))
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            break
+        directory = parent
+
+    for index, candidate in enumerate(candidates):
+        if not os.path.isdir(candidate):
+            continue
+        # The working-directory candidate is what the user literally asked for;
+        # ancestors are inferred, so they have to prove they are a stage dir.
+        if index > 0 and not _looks_like_stage_dir(candidate):
+            continue
+        resolved = os.path.abspath(candidate)
+        if index > 0:
+            print_step(f"--prev-out-dir '{path}' resolved to {resolved}")
+        return resolved
+
+    parser.error(
+        f"--prev-out-dir: could not find '{path}' in {os.getcwd()} or any "
+        f"parent directory. Composite energies need the previous stage's "
+        f"COSMIC base directory (the one holding orca_out_*/, umotifs_*/ …); "
+        f"pass its full path."
+    )
+
 def main(argv=None):
     """COSMIC clustering CLI — verbatim port of cosmic-v01.py lines 6296-6744.
 
@@ -697,7 +769,10 @@ CITATION:
     parser.add_argument("-T", "--temperature", type=float, default=298.15, metavar="FLOAT",
                         help="temperature for Boltzmann analysis in K (default: 298.15)")
     parser.add_argument("--prev-out-dir", type=str, default=None, metavar="PATH",
-                        help="previous stage COSMIC base directory for composite energy: G = E_eref + (G_prev - E_prev)")
+                        help="previous stage COSMIC base directory for composite energy: "
+                             "G = E_eref + (G_prev - E_prev). A relative name is looked up "
+                             "in the working directory and its parents, so a sibling stage "
+                             "(e.g. cosmic_2) works from inside cosmic_3/orca_out_29")
     parser.add_argument("--level", type=str, default=None, metavar="LEVEL",
                         choices=[lv.key for lv in _levels.LEVELS],
                         help="name this pass's representatives explicitly: "
@@ -855,6 +930,13 @@ CITATION:
     # --data: dump feature vectors from the given cache file and exit.
     if args.data:
         return run_data_extraction(args.data, out_dir=args.output_dir)
+
+    # Pin --prev-out-dir to an absolute directory here, once, so every mode
+    # below (--compare and the folder scan alike) gets the same resolution and
+    # a missing previous stage stops the run instead of quietly degrading it to
+    # bare electronic energies.
+    if args.prev_out_dir:
+        args.prev_out_dir = resolve_prev_out_dir(args.prev_out_dir, parser)
 
     # --shell / --nearest: pre-filter an MD trajectory, then carry on and
     # cluster what came out. Extraction happens here, before any clustering

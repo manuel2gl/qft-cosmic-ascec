@@ -721,6 +721,15 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     mode = EnergyMode(has_freq=_dataset_has_freq, has_composite=False)
 
     # --- Apply composite energies from previous stage (eref workflow) ---
+    # A prev_out_dir that does not exist is never silently dropped: ranking by
+    # bare electronic energy when composite Gibbs was asked for is a wrong
+    # answer, not a lesser one. The CLI already aborts on an unresolvable path
+    # (resolve_prev_out_dir); this covers direct callers of this function.
+    if prev_out_dir and not os.path.isdir(prev_out_dir):
+        raise ClusteringError(
+            f"prev_out_dir '{prev_out_dir}' is not a directory — composite "
+            f"energies (G = E_eref + (G_prev - E_prev)) cannot be computed."
+        )
     if prev_out_dir and os.path.isdir(prev_out_dir):
         n_matched = apply_composite_energies(clean_data_for_clustering, prev_out_dir)
         if n_matched > 0:
