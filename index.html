@@ -3853,7 +3853,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
                             <label>Rescue Method</label>
                             <div class="custom-inline-control">
                                 <select id="adv-opt-rescue-method" onchange="markAdvOptRescueManual(); toggleCustomInput('adv-opt-rescue-method', 'adv-opt-rescue-method-custom'); updateAllPreviews()">
-                                    <option value="GFN2-xTB" selected>GFN2-xTB</option>
+                                    <option value="none" selected>None (no rescue)</option>
+                                    <option value="GFN2-xTB">GFN2-xTB</option>
                                     <option value="GFN1-xTB">GFN1-xTB</option>
                                     <option value="GFN0-xTB">GFN0-xTB</option>
                                     <option value="GFN-FF">GFN-FF</option>
@@ -3999,7 +4000,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
                             <label>Rescue Method</label>
                             <div class="custom-inline-control">
                                 <select id="adv-ref-rescue-method" onchange="markAdvRefRescueManual(); toggleCustomInput('adv-ref-rescue-method', 'adv-ref-rescue-method-custom'); updateAllPreviews()">
-                                    <option value="HF-3c" selected>HF-3c</option>
+                                    <option value="none" selected>None (no rescue)</option>
+                                    <option value="HF-3c">HF-3c</option>
                                     <option value="GFN2-xTB">GFN2-xTB</option>
                                     <option value="GFN1-xTB">GFN1-xTB</option>
                                     <option value="GFN0-xTB">GFN0-xTB</option>
@@ -10400,7 +10402,10 @@ end
         function getAdvOptRescueMethodValue() {
             const select = document.getElementById('adv-opt-rescue-method');
             const custom = document.getElementById('adv-opt-rescue-method-custom');
-            if (!select) return 'HF-3c';
+            // '' means rescue is off: no #rescue(...) line is written, and the
+            // engine then never computes a Hessian to repair a structure.
+            if (!select) return '';
+            if (select.value === 'none') return '';
             if (select.value === 'Other') return custom?.value?.trim() || 'HF-3c';
             return select.value;
         }
@@ -10408,7 +10413,10 @@ end
         function getAdvRefRescueMethodValue() {
             const select = document.getElementById('adv-ref-rescue-method');
             const custom = document.getElementById('adv-ref-rescue-method-custom');
-            if (!select) return 'HF-3c';
+            // '' means rescue is off: no #rescue(...) line is written, and the
+            // engine then never computes a Hessian to repair a structure.
+            if (!select) return '';
+            if (select.value === 'none') return '';
             if (select.value === 'Other') return custom?.value?.trim() || 'HF-3c';
             return select.value;
         }
@@ -10442,6 +10450,8 @@ end
             const custom = document.getElementById('adv-opt-rescue-method-custom');
             const hess = document.getElementById('adv-opt-rescue-hess');
             if (!select || !hess) return;
+            // Rescue off is a deliberate state - never auto-fill a method over it.
+            if (select.value === 'none') return;
 
             const suggested = getSuggestedAdvancedOptRescue();
             const options = Array.from(select.options).map(o => o.value);
@@ -10486,6 +10496,8 @@ end
             const custom = document.getElementById('adv-ref-rescue-method-custom');
             const hess = document.getElementById('adv-ref-rescue-hess');
             if (!select || !hess) return;
+            // Rescue off is a deliberate state - never auto-fill a method over it.
+            if (select.value === 'none') return;
 
             const suggested = getSuggestedAdvancedRefRescue();
             const options = Array.from(select.options).map(o => o.value);
@@ -10659,14 +10671,15 @@ end
                 const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
                 const xtbRescue = String(rescueMethod || xtbMethod).replace(/^(Native-)+/, '');
                 const xtbRescueHess = rescueHess;
+                // No rescue method selected -> no #rescue(...) line at all.
+                const xtbRescueLine = rescueMethodRaw ? `\n#rescue(${xtbRescue}/${xtbRescueHess})` : '';
                 const xtbOptLevel = formatXtbOptLevel(getXtbOptLevelValue('adv-opt'));
                 const xtbFreq = xtbFreqToken(job);
                 const xtbJob = xtbFreq ? `Opt ${xtbOptLevel} ${xtbFreq}` : `Opt ${xtbOptLevel}`;
                 const xtbUhf = parseInt(mult) - 1;
                 const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
                 const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
-                const input = `#name
-#rescue(${xtbRescue}/${xtbRescueHess})
+                const input = `#name${xtbRescueLine}
 # ${xtbMethod} ${xtbJob}
 # nprocs ${nprocs}
 # maxiter ${maxiter}${chargeLine}${uhfLine}${buildXtbExtraLines('adv-opt')}`;
@@ -10678,10 +10691,11 @@ end
             const formattedMethod = formatTemplateMethodLine(method);
             const methodLine = basis ? `${formattedMethod} ${basis}` : formattedMethod;
             const rescueDisplayMethod = formatTemplateMethodLine(rescueMethod);
+            // No rescue method selected -> no #rescue(...) line at all.
+            const rescueLine = rescueMethodRaw ? `\n#rescue(${rescueDisplayMethod}/${rescueHess})` : '';
             const maxcoreLine = maxcore ? `%maxcore ${maxcore}\n` : '';
 
-                        const input = `#name
-#rescue(${rescueDisplayMethod}/${rescueHess})
+                        const input = `#name${rescueLine}
 ! ${methodLine}
 ! ${job}
 %pal
@@ -10730,14 +10744,15 @@ end
                             const xtbMethod = String(method || 'GFN2-xTB').replace(/^(Native-)+/, '');
                             const xtbRescue = String(rescueMethod || xtbMethod).replace(/^(Native-)+/, '');
                             const xtbRescueHess = rescueHess;
+                            // No rescue method selected -> no #rescue(...) line at all.
+                            const xtbRescueLine = rescueMethodRaw ? `\n#rescue(${xtbRescue}/${xtbRescueHess})` : '';
                             const xtbOptLevel = formatXtbOptLevel(getXtbOptLevelValue('adv-ref'));
                             const xtbFreq = xtbFreqToken(job);
                             const xtbJob = xtbFreq ? `Opt ${xtbOptLevel} ${xtbFreq}` : `Opt ${xtbOptLevel}`;
                             const xtbUhf = parseInt(mult) - 1;
                             const chargeLine = parseInt(charge) !== 0 ? `\n# charge ${charge}` : '';
                             const uhfLine = xtbUhf > 0 ? `\n# uhf ${xtbUhf}` : '';
-                            const input = `#name
-#rescue(${xtbRescue}/${xtbRescueHess})
+                            const input = `#name${xtbRescueLine}
 # ${xtbMethod} ${xtbJob}
 # nprocs ${nprocs}
 # maxiter ${maxiter}${chargeLine}${uhfLine}${buildXtbExtraLines('adv-ref')}`;
@@ -10749,10 +10764,11 @@ end
                         const formattedMethod = formatTemplateMethodLine(method);
                         const methodLine = basis ? `${formattedMethod} ${basis}` : formattedMethod;
                         const rescueDisplayMethod = formatTemplateMethodLine(rescueMethod);
+                        // No rescue method selected -> no #rescue(...) line at all.
+                        const rescueLine = rescueMethodRaw ? `\n#rescue(${rescueDisplayMethod}/${rescueHess})` : '';
                         const maxcoreLine = maxcore ? `%maxcore ${maxcore}\n` : '';
 
-                        const input = `#name
-#rescue(${rescueDisplayMethod}/${rescueHess})
+                        const input = `#name${rescueLine}
 ! ${methodLine}
 ! ${job}
 %pal
