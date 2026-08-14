@@ -9186,10 +9186,18 @@ def process_redo_structures(context: WorkflowContext, stage_dir: str, template_f
     else:
         qm_program = 'xtb'
 
-    # Parse rescue method from template (for structures with 2+ imaginary frequencies)
+    # Parse rescue method from template (for structures with 2+ imaginary frequencies).
+    # Rescue is opt-in: no "#rescue(...)" line in the template means no Hessian
+    # is ever computed here. Say so in the log — it is the only visible sign of
+    # which recovery mode the redo is about to use.
     rescue_method, rescue_use_numfreq = parse_rescue_method(
         template_content, launcher_content=launcher_content, qm_program=qm_program
     )
+    if rescue_method:
+        _redo_log(f"  Hessian rescue: enabled ({rescue_method}, "
+                  f"{'NumFreq' if rescue_use_numfreq else 'Freq'})")
+    else:
+        _redo_log("  Hessian rescue: disabled (no #rescue(...) in template)")
 
     # Extract charge and multiplicity from template
     charge_val = 0
@@ -9800,10 +9808,18 @@ def process_optimization_redo(context: WorkflowContext, stage_dir: str, template
     else:
         qm_program = 'xtb'
 
-    # Parse rescue method from template (for structures with 2+ imaginary frequencies)
+    # Parse rescue method from template (for structures with 2+ imaginary frequencies).
+    # Rescue is opt-in: no "#rescue(...)" line in the template means no Hessian
+    # is ever computed here. Say so in the log — it is the only visible sign of
+    # which recovery mode the redo is about to use.
     rescue_method, rescue_use_numfreq = parse_rescue_method(
         template_content, launcher_content=launcher_content, qm_program=qm_program
     )
+    if rescue_method:
+        _redo_log(f"  Hessian rescue: enabled ({rescue_method}, "
+                  f"{'NumFreq' if rescue_use_numfreq else 'Freq'})")
+    else:
+        _redo_log("  Hessian rescue: disabled (no #rescue(...) in template)")
 
     # Extract charge and multiplicity from template
     charge_val = 0
@@ -11724,15 +11740,20 @@ def parse_rescue_method(input_content: str, orca_path: Optional[str] = None,
                          launcher_content: Optional[str] = None,
                          qm_program: Optional[str] = None) -> Tuple[str, bool]:
     """
-    Parse the #rescue(Method) directive from a QM input/template file, or detect
-    the rescue method from the template's method line.
+    Parse the #rescue(Method) directive from a QM input/template file.
+
+    Hessian rescue is **opt-in**: it runs only when the template carries an
+    explicit ``#rescue(...)`` line. With no such line this returns an empty
+    method and the redo path keeps its defaults — displacement along the
+    imaginary mode, or resubmission from the final geometry — with no Hessian
+    calculation of any kind.
 
     Logic:
     1. If #rescue(method) is specified, use that method
     2. If #rescue(method,num) is specified, use that method with NumFreq
-    3. If template uses an xTB method, reuse that method with NumFreq
-       (converting to native for ORCA 6.1+ or non-native for 5.x)
-    4. Default: HF-3c with Freq
+    3. If #rescue() carries no method, rescue is still on and falls back to the
+       program default (GFN2-xTB for standalone xTB, HF-3c otherwise)
+    4. No #rescue directive at all: rescue disabled -> ('', False)
 
     For standalone xTB (qm_program='xtb'), ORCA version conversion is skipped
     and xTB methods default to analytical Freq (use_numfreq=False).
@@ -11742,8 +11763,7 @@ def parse_rescue_method(input_content: str, orca_path: Optional[str] = None,
         #rescue(b97-c)                 -> Uses b97-c with Freq
         #rescue(b97-c,num)             -> Uses b97-c with NumFreq
         #rescue(GFN2-xTB/freq)         -> Uses GFN2-xTB with analytical Freq (standalone xTB)
-        Template: ! Native-GFN2-xTB Opt -> Uses Native-GFN2-xTB with NumFreq
-        Template: ! B98-3c Opt         -> Uses HF-3c with Freq (default)
+        (no #rescue line)              -> ('', False): no Hessian rescue
 
     Args:
         input_content: Content of the QM input file
@@ -11753,7 +11773,8 @@ def parse_rescue_method(input_content: str, orca_path: Optional[str] = None,
 
     Returns:
         Tuple of (rescue_method, use_numfreq) where:
-        - rescue_method: Method string (e.g., "Native-GFN2-xTB", "HF-3c", "GFN2-xTB")
+        - rescue_method: Method string (e.g., "Native-GFN2-xTB", "HF-3c",
+          "GFN2-xTB"), or '' when no #rescue directive is present (rescue off)
         - use_numfreq: True if NumFreq should be used, False for Freq
     """
     is_standalone_xtb = (qm_program == 'xtb')
@@ -11789,8 +11810,10 @@ def parse_rescue_method(input_content: str, orca_path: Optional[str] = None,
 
         return (method, freq_mode)
 
-    # Look for #rescue(method) / #rescue(method,num) / #rescue(method/num) pattern
-    match = re.search(r'#rescue\(([^)]+)\)', input_content, re.IGNORECASE)
+    # Look for #rescue(method) / #rescue(method,num) / #rescue(method/num) pattern.
+    # An empty "#rescue()" still counts as opting in — it selects the program
+    # default method below.
+    match = re.search(r'#rescue\(([^)]*)\)', input_content, re.IGNORECASE)
     if match:
         method, explicit_numfreq = _parse_rescue_spec(match.group(1))
         if not method:
@@ -11817,20 +11840,12 @@ def parse_rescue_method(input_content: str, orca_path: Optional[str] = None,
             return (method, explicit_numfreq)
         return (method, False)
 
-    # No #rescue directive - check if template uses xTB method
-    xtb_method = detect_xtb_in_template(input_content)
-    if xtb_method:
-        if is_standalone_xtb:
-            method = re.sub(r'^(Native-)+', '', xtb_method, flags=re.IGNORECASE)
-            return (method, False)  # xTB analytical Hessian
-        # Reuse the template's xTB method, converted for ORCA version
-        converted_method = convert_xtb_for_orca_version(xtb_method, orca_path, launcher_content)
-        return (converted_method, True)  # xTB methods use NumFreq in ORCA
-
-    # Default
-    if is_standalone_xtb:
-        return ('GFN2-xTB', False)
-    return ('HF-3c', False)
+    # No #rescue directive - rescue is OFF. Hessian rescue is an opt-in recovery
+    # mode: without an explicit "#rescue(...)" line in the template the redo path
+    # must stay on its defaults (displace along the imaginary mode, or resubmit
+    # from the final geometry). Returning a method here would silently turn on a
+    # Hessian calculation for every run, which is never the default.
+    return ('', False)
 
 
 def generate_rescue_hessian_input(template_content: str, rescue_method: str, xyz_coords: str, 
