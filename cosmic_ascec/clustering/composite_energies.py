@@ -18,6 +18,8 @@ import os
 import re
 from typing import Any, Dict, List, MutableMapping, Sequence
 
+from cosmic_ascec import levels as _levels
+
 Record = MutableMapping[str, Any]
 
 
@@ -157,9 +159,16 @@ def apply_composite_energies(
     # e.g. "motif_02_opt (G = ...)".  If a direct stem match fails, we consult
     # this map to resolve the original prev-stage stem.
     stem_alias: dict = {}  # eref_stem → prev_stem
-    umotif_dirs = sorted(glob.glob(os.path.join(prev_out_dir, "umotifs_*")))
-    motif_dirs = sorted(glob.glob(os.path.join(prev_out_dir, "motifs_*")))
-    source_dirs = umotif_dirs or motif_dirs
+    # Most-refined folder present wins, so a prev_out_dir holding several stage
+    # folders resolves to the one that actually fed this pass. ALL_FOLDER_GLOBS
+    # is ordered u_motifs, umotifs (legacy), motifs, candidates; the legacy
+    # spelling has to stay because runs made before the rename are still on disk
+    # and must keep resolving.
+    source_dirs = []
+    for _pattern in _levels.ALL_FOLDER_GLOBS:
+        source_dirs = sorted(glob.glob(os.path.join(prev_out_dir, _pattern)))
+        if source_dirs:
+            break
     if source_dirs:
         latest_dir = source_dirs[-1]
         for xyz_file in glob.glob(os.path.join(latest_dir, "*.xyz")):

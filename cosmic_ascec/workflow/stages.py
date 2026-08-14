@@ -99,6 +99,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
+from cosmic_ascec import levels as _levels
 from cosmic_ascec.workflow.context import WorkflowContext
 from cosmic_ascec.workflow.job_registry import (
     _adopt_ascec_job,
@@ -1106,26 +1107,20 @@ def _process_xyz_file_for_opt(xyz_file_data):
         import re
         comment = config['comment']
         
-        # Check for umotif first (must come before motif check since umotif contains 'motif')
-        umotif_match = re.search(r'(umotif_\d+)', comment, re.IGNORECASE)
-        motif_match = re.search(r'(?<!u)(motif_\d+)', comment, re.IGNORECASE)
-        
-        # If not found in comment, try to extract from filename
-        if not umotif_match and not motif_match:
-            umotif_match = re.search(r'(umotif_\d+)', base_name, re.IGNORECASE)
-            motif_match = re.search(r'(?<!u)(motif_\d+)', base_name, re.IGNORECASE)
-        
-        if umotif_match:
-            # Keep umotif prefix, just add _opt suffix
-            source_name = umotif_match.group(1).lower()
-            input_name = f"{source_name}_opt{input_ext}"
-        elif motif_match:
-            # Keep motif prefix, just add _opt suffix
-            # COSMIC will later promote motif_##_opt → umotif_##
-            source_name = motif_match.group(1).lower()
+        # Carry the representative's own label through to its QM job, so
+        # candidate_25 becomes candidate_25_opt.inp and the next clustering pass
+        # can promote it one rung. ANY_LABEL_RE matches longest-first, so
+        # u_motif_07 is never mis-read as the motif_07 sitting inside it — the
+        # ordered alternation replaces the old pair of lookbehind-guarded
+        # regexes, which had to be tried in the right sequence by hand.
+        label_match = _levels.ANY_LABEL_RE.search(comment) or \
+            _levels.ANY_LABEL_RE.search(base_name)
+
+        if label_match:
+            source_name = label_match.group(0).lower()
             input_name = f"{source_name}_opt{input_ext}"
         else:
-            # For non-motif files, use simple opt_conf_X naming
+            # Unlabelled input (raw conformers) gets positional naming.
             input_name = f"opt_conf_{config['config_num']}{input_ext}"
             source_name = base_name
         
@@ -2892,7 +2887,7 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
             for file in files:
                 if is_qm_byproduct(file):
                     continue
-                if (file.startswith("motif_") and file.endswith(".xyz")) or \
+                if (file.endswith(".xyz") and _levels.ANY_LABEL_RE.match(file)) or \
                    (file.endswith(".xyz") and "combined" in file.lower() and root != "."):
                     xyz_files.append(os.path.join(root, file))
 
@@ -3150,7 +3145,9 @@ def interactive_optimization_file_selection(xyz_files: List[str], opt_dir: str =
     # Separate combined files from motif/umotif files
     combined_files = [f for f in xyz_files if "combined" in os.path.basename(f).lower()]
     # Match both motif_ and umotif_ files
-    motif_files = [f for f in xyz_files if ("motif_" in os.path.basename(f) or "umotif_" in os.path.basename(f)) and "combined" not in os.path.basename(f).lower()]
+    motif_files = [f for f in xyz_files
+                   if _levels.ANY_LABEL_RE.search(os.path.basename(f))
+                   and "combined" not in os.path.basename(f).lower()]
     
     # Sort motif/umotif files by number
     def extract_motif_number(filepath):
@@ -3385,8 +3382,10 @@ def get_sort_key(filename):
     import re
     # Try multiple patterns in order of specificity
     patterns = [
-        r'u?motif_(\d+)_opt\.\w+',   # umotif_28_opt.xyz or motif_28_opt.xtboptok
-        r'u?motif_(\d+)\.\w+',        # umotif_28.xyz or motif_28.xyz
+        # Every rung, plus the legacy 'umotif' spelling. Ordered so the
+        # longer 'u_motif' is tried before the 'motif' nested inside it.
+        r'(?:(?:u_?)?motif|candidate)_(\d+)_opt\.\w+',
+        r'(?:(?:u_?)?motif|candidate)_(\d+)\.\w+',
         r'opt_conf_(\d+)\.\w+',      # opt_conf_3.xyz or opt_conf_1.xtboptok
         r'result_(\d+)\.\w+',        # result_123.xyz
         r'conf_(\d+)\.\w+',          # conf_20.xyz
@@ -4883,7 +4882,7 @@ def collect_out_files_with_tracking(reuse_existing=False, target_cosmic_folder=N
 
             # Also remove motifs folders
             for item in os.listdir(cosmic_dir):
-                if item.startswith('motifs_') or item.startswith('umotifs_'):
+                if any(item.startswith(g[:-1]) for g in _levels.ALL_FOLDER_GLOBS):
                     items_to_remove.append(item)
 
             # Remove stale sibling output folders (e.g., orca_out_18 left over
@@ -5732,7 +5731,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
         if final_cosmic_dir:
             # Find the final motifs/umotifs directory (highest numbered)
-            for pattern in ["umotifs_*", "motifs_*"]:
+            for pattern in _levels.ALL_FOLDER_GLOBS:
                 candidates = sorted(glob.glob(os.path.join(final_cosmic_dir, pattern)))
                 candidates = [c for c in candidates if os.path.isdir(c)]
                 if candidates:
@@ -5804,7 +5803,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             since filenames don't encode the original structure name."""
             mapping = {}
             motifs_d = None
-            for pat in ["umotifs_*", "motifs_*"]:
+            for pat in _levels.ALL_FOLDER_GLOBS:
                 cands = sorted(glob.glob(os.path.join(cosmic_dir_path, pat)))
                 cands = [c for c in cands if os.path.isdir(c)]
                 if cands:
@@ -5849,8 +5848,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
         # --- Helper: extract rank number from a motif/umotif stem ---
         def extract_rank_from_stem(stem):
-            """Extract the rank number from stems like 'umotif_05_opt', 'motif_03_opt', 'umotif_05'."""
-            m = _re.match(r'(?:u?motif)_(\d+)', stem)
+            """Rank from a stem like 'u_motif_05_opt', 'motif_03_opt', 'candidate_05'."""
+            m = _re.match(r'(?:(?:u_?)?motif|candidate)_(\d+)', stem)
             return int(m.group(1)) if m else None
 
         # --- Helper: copy motif folders from calc_dir to out_dir with final naming ---
@@ -5901,7 +5900,16 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
         opt_only_stages = [(d, idx, ir) for d, idx, ir in opt_dirs if not ir]  # optimization stages
 
         # --- Determine the final prefix (motif vs umotif) ---
-        final_prefix = "umotif" if (final_motifs_dir and "umotif" in os.path.basename(final_motifs_dir)) else "motif"
+        # Which rung the final folder holds, read off its own name
+        # (u_motifs_26 -> u_motif). Falls back to the mid rung, which is what
+        # the old two-way test defaulted to.
+        _final_base = os.path.basename(final_motifs_dir) if final_motifs_dir else ""
+        _final_lv = next((lv for lv in reversed(_levels.LEVELS)
+                          if _final_base.startswith(lv.folder + "_")), None)
+        if _final_lv is not None:
+            final_prefix = _final_lv.label
+        else:
+            final_prefix = "umotif" if _final_base.startswith("umotifs_") else _levels.MOTIF.label
 
         # Subdirectories inside each stage dir that must survive the cleaning pass.
         preserve_subdirs: Dict[str, set] = {}
@@ -6063,26 +6071,26 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
             print("Warning: Could not resolve final cosmic directory for final ensemble copy.")
             return
 
-        umotif_dirs = sorted(glob.glob(os.path.join(resolved_cosmic_dir, 'umotifs_*')))
-        motif_dirs = sorted(glob.glob(os.path.join(resolved_cosmic_dir, 'motifs_*')))
-
-        # Prefer the most refined/final ensemble when present.
-        source_dir = umotif_dirs[-1] if umotif_dirs else (motif_dirs[-1] if motif_dirs else None)
+        # Most refined rung present is the final ensemble. ALL_FOLDER_GLOBS is
+        # ordered u_motifs -> umotifs (legacy) -> motifs -> candidates, so the
+        # first pattern that hits is the latest stage this run reached.
+        source_dir = None
+        for _pattern in _levels.ALL_FOLDER_GLOBS:
+            _hits = sorted(glob.glob(os.path.join(resolved_cosmic_dir, _pattern)))
+            if _hits:
+                source_dir = _hits[-1]
+                break
         if not source_dir:
-            print(f"Warning: No motifs_/umotifs_ folder found in {resolved_cosmic_dir} for final ensemble copy.")
+            print(f"Warning: No representative folder found in {resolved_cosmic_dir} for final ensemble copy.")
             return
 
         source_xyz = None
         source_mol = None
 
-        preferred_xyz = [
-            os.path.join(source_dir, 'all_umotifs_combined.xyz'),
-            os.path.join(source_dir, 'all_motifs_combined.xyz'),
-        ]
-        preferred_mol = [
-            os.path.join(source_dir, 'all_umotifs_combined.mol'),
-            os.path.join(source_dir, 'all_motifs_combined.mol'),
-        ]
+        # all_<folder>_combined.{xyz,mol}, one per rung plus the legacy spelling.
+        _stems = [lv.folder for lv in _levels.LEVELS] + ['umotifs']
+        preferred_xyz = [os.path.join(source_dir, f'all_{st}_combined.xyz') for st in _stems]
+        preferred_mol = [os.path.join(source_dir, f'all_{st}_combined.mol') for st in _stems]
 
         for path in preferred_xyz:
             if os.path.exists(path):
@@ -7368,8 +7376,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         optimization_dir_path = context.optimization_stage_dir if context.optimization_stage_dir else "calculation"
                         cosmic_result['input_dir'] = optimization_dir_path  # Read from calculation
                         cosmic_result['working_dir'] = cosmic_dir
-                        # After calculation: use "motifs" prefix (first level clustering)
-                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, "motifs")  # Motifs for opt stage
+                        # After geometry optimization: the bottom rung.
+                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, _levels.CANDIDATE.folder)
                         
                         if final_critical is not None:
                             cosmic_result['critical_pct'] = final_critical
@@ -7596,15 +7604,15 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     prev_was_opt = (stage_idx > 0 and stages[stage_idx - 1]['type'] == 'refinement')
                     
                     if prev_was_opt:
-                        # After refinement: input from refinement dir, output to umotifs
+                        # After geometry refinement: the middle rung.
                         opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "geometry_refinement"
                         cosmic_result['input_dir'] = opt_dir
-                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, "umotifs")
+                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, _levels.MOTIF.folder)
                     else:
                         # After optimization: input from optimization dir, output to motifs
                         optimization_dir_path = context.optimization_stage_dir if context.optimization_stage_dir else "calculation"
                         cosmic_result['input_dir'] = optimization_dir_path
-                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, "motifs")
+                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, _levels.CANDIDATE.folder)
                     
                     cosmic_result['working_dir'] = cosmic_dir
                     
@@ -7907,8 +7915,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         opt_dir = context.refinement_stage_dir if context.refinement_stage_dir else "geometry_refinement"
                         cosmic_result['input_dir'] = opt_dir  # Read from refinement
                         cosmic_result['working_dir'] = cosmic_dir
-                        # After optimization: use "umotifs" prefix (unique motifs, second level)
-                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, "umotifs")  # Unique motifs
+                        # After geometry refinement: the middle rung.
+                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, _levels.MOTIF.folder)
                         
                         if final_critical is not None:
                             cosmic_result['critical_pct'] = final_critical
@@ -8166,7 +8174,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                         'skipped_structures', 'clustering_summary.txt', 'boltzmann_distribution.txt'
                                     ]
                                     for item in os.listdir(base_cosmic_dir):
-                                        if item.startswith('motifs_') or item.startswith('umotifs_'):
+                                        if any(item.startswith(g[:-1]) for g in _levels.ALL_FOLDER_GLOBS):
                                             items_to_remove.append(item)
                                     for item in items_to_remove:
                                         item_path = os.path.join(base_cosmic_dir, item)
@@ -8317,7 +8325,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                         cosmic_dir = context.cosmic_dir if context.cosmic_dir else "cosmic_3"
                         cosmic_result['input_dir'] = opt_dir
                         cosmic_result['working_dir'] = cosmic_dir
-                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, "umotifs")
+                        # After energy refinement: the top rung.
+                        cosmic_result['output_dir'] = os.path.join(cosmic_dir, _levels.U_MOTIF.folder)
 
                         if final_critical is not None:
                             cosmic_result['critical_pct'] = final_critical
@@ -11236,7 +11245,12 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
                         
                         motifs_created = result.get('motifs_created') if result.get('motifs_created') is not None else live_clusters
                         if motifs_created is not None:
-                            motif_label = "Unique Motifs" if ('output_dir' in result and 'umotif' in str(result.get('output_dir', ''))) else "Motifs"
+                            _od = str(result.get('output_dir', ''))
+                            _lv = next((lv for lv in reversed(_levels.LEVELS)
+                                        if lv.folder in _od), None)
+                            if _lv is None and 'umotif' in _od:
+                                _lv = _levels.U_MOTIF
+                            motif_label = (_lv.display.title() if _lv else "Motifs")
                             label_col = f"    {motif_label}:"
                             f.write(f"{label_col:<22}{motifs_created} representatives\n")
 
@@ -13053,23 +13067,30 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
     Supports both cosmic/ (first run) and cosmic_2/ (after optimization).
     """
     def _count_latest_cosmic_representatives(cosmic_dir: str) -> Tuple[Optional[int], Optional[int]]:
-        """Return counts for latest motifs_* and umotifs_* representative xyz files."""
+        """Representative counts for the progress panel: (mid rung, top rung).
+
+        The two slots correspond to context.last_cosmic_motif_count and
+        last_cosmic_umotif_count. With three rungs the bottom one (candidates)
+        shares the first slot: a run is only ever at one rung per cosmic pass,
+        so the two are never populated from different stages at once.
+        """
         try:
-            motif_dirs = sorted(glob.glob(os.path.join(cosmic_dir, "motifs_*")), key=natural_sort_key)
-            umotif_dirs = sorted(glob.glob(os.path.join(cosmic_dir, "umotifs_*")), key=natural_sort_key)
+            def _count(folder_stem: str, label: str) -> Optional[int]:
+                dirs = sorted(glob.glob(os.path.join(cosmic_dir, f"{folder_stem}_*")),
+                              key=natural_sort_key)
+                if not dirs:
+                    return None
+                return len(glob.glob(os.path.join(dirs[-1], f"{label}_*.xyz")))
 
-            motif_count: Optional[int] = None
-            umotif_count: Optional[int] = None
+            # Legacy 'umotif' counts as the top rung, matching how it was written.
+            top = _count(_levels.U_MOTIF.folder, _levels.U_MOTIF.label)
+            if top is None:
+                top = _count('umotifs', 'umotif')
+            mid = _count(_levels.MOTIF.folder, _levels.MOTIF.label)
+            if mid is None:
+                mid = _count(_levels.CANDIDATE.folder, _levels.CANDIDATE.label)
 
-            if motif_dirs:
-                latest_motif_dir = motif_dirs[-1]
-                motif_count = len(glob.glob(os.path.join(latest_motif_dir, "motif_*.xyz")))
-
-            if umotif_dirs:
-                latest_umotif_dir = umotif_dirs[-1]
-                umotif_count = len(glob.glob(os.path.join(latest_umotif_dir, "umotif_*.xyz")))
-
-            return motif_count, umotif_count
+            return mid, top
         except Exception:
             return None, None
 
@@ -13172,7 +13193,7 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
         ]
         # Also remove motifs and umotifs folders
         for item in os.listdir(cosmic_base):
-            if item.startswith('motifs_') or item.startswith('umotifs_'):
+            if any(item.startswith(g[:-1]) for g in _levels.ALL_FOLDER_GLOBS):
                 items_to_remove.append(item)
         
         for item in items_to_remove:
@@ -13328,10 +13349,27 @@ def execute_cosmic_stage(context: WorkflowContext, stage: Dict[str, Any]) -> int
     # If user provides --th/--threshold, pass it through; otherwise
     # cosmic uses statistical consensus cutting (no threshold needed).
     
-    # No need to specify motif prefix - cosmic script auto-detects from filenames:
-    # conf_* files → creates motifs_*/ folder (after calculation)
-    # motif_* files → creates motifs_*/ folder (first cosmic)
-    # umotif_* files → creates umotifs_*/ folder (after optimization)
+    # Name this pass's representatives explicitly rather than letting cosmic
+    # infer the rung from input filenames. The runner knows which stage it just
+    # finished, and inference cannot distinguish the last two passes: under the
+    # old scheme both emitted "umotif", so umotif_23 meant one molecule after
+    # geometry refinement and a different one after energy refinement.
+    #
+    # Reuses the same attribute precedence as the out-folder choice above —
+    # eref beats refinement beats optimization — which is correct across a
+    # whole protocol because each stage sets a strictly higher-precedence
+    # attribute than the one before it, so a stale lower one cannot win.
+    if not any(a == '--level' or a.startswith('--level=') for a in other_args):
+        _stage_for_level = None
+        for _attr, _stype in (('eref_cosmic_folder', 'energy_refinement'),
+                              ('refinement_cosmic_folder', 'refinement'),
+                              ('optimization_cosmic_folder', 'optimization')):
+            if getattr(context, _attr, None):
+                _stage_for_level = _stype
+                break
+        _level = _levels.stage_to_level(_stage_for_level)
+        if _level:
+            cmd.extend(['--level', _level])
     
     # If this is a redo and we have a list of recalculated files, pass them for incremental update
     if hasattr(context, 'recalculated_files') and context.recalculated_files:
@@ -13764,22 +13802,24 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
             existing_sims.sort(key=lambda x: (int(m.group(1)) if (m := re.search(r'_(\d+)', x)) else 0))
             # Find the first one with motifs or umotifs
             for cosmic_folder in existing_sims:
-                if glob.glob(os.path.join(cosmic_folder, "motifs_*/")) or glob.glob(os.path.join(cosmic_folder, "umotifs_*/")):
+                if any(glob.glob(os.path.join(cosmic_folder, g + "/")) for g in _levels.ALL_FOLDER_GLOBS):
                     motifs_source_folder = cosmic_folder
                     break
 
     if not motifs_source_folder:
         motifs_source_folder = "cosmic"  # Default
 
-    # Step 2: Find motifs or umotifs in the source folder (prefer umotifs if both exist)
-    umotif_dirs = glob.glob(os.path.join(motifs_source_folder, "umotifs_*/"))
-    motif_dirs = glob.glob(os.path.join(motifs_source_folder, "motifs_*/"))
+    # Step 2: take the most refined rung present in the source folder.
+    # ALL_FOLDER_GLOBS is ordered u_motifs -> umotifs (legacy) -> motifs ->
+    # candidates, so the first hit is the latest stage available.
+    motif_dirs = []
+    for _pattern in _levels.ALL_FOLDER_GLOBS:
+        motif_dirs = glob.glob(os.path.join(motifs_source_folder, _pattern + "/"))
+        if motif_dirs:
+            break
 
-    # Prefer umotifs over motifs (more refined clustering)
-    if umotif_dirs:
-        motif_dirs = umotif_dirs
-    elif not motif_dirs:
-        print(f"Warning: No motif/umotif directories found in {motifs_source_folder}/")
+    if not motif_dirs:
+        print(f"Warning: No representative directories found in {motifs_source_folder}/")
         print("  Skipping optimization stage")
         return 0
 
@@ -13890,11 +13930,13 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
         if not workflow_concise:
             print(f"Using motifs from: {motif_dir}")
     
-    # Get motif/umotif XYZ files from the motifs directory
-    # Look for both motif_*.xyz and umotif_*.xyz patterns
-    motif_files = glob.glob(os.path.join(motif_dir, "motif_*.xyz"))
-    umotif_files = glob.glob(os.path.join(motif_dir, "umotif_*.xyz"))
-    motif_files.extend(umotif_files)  # Combine both patterns
+    # Representative XYZs from the chosen folder, whichever rung it holds.
+    # Globbing "motif_*.xyz" alone would silently miss u_motif_*.xyz and
+    # candidate_*.xyz, since glob anchors at the start of the name.
+    motif_files = []
+    for _label in _levels.ALL_LABELS:
+        motif_files.extend(glob.glob(os.path.join(motif_dir, f"{_label}_*.xyz")))
+    motif_files = sorted(set(motif_files))
     combined_file = glob.glob(os.path.join(motif_dir, "*combined*.xyz"))
     
     if not motif_files and not combined_file:

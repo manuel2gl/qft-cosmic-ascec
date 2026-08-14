@@ -83,6 +83,7 @@ from cosmic_ascec.clustering.motifs import (
     combine_xyz_files,
     create_unique_motifs_folder,
     detect_motif_input_level,
+    eligible_representatives,
     write_xyz_file,
 )
 from cosmic_ascec.clustering.rmsd import (
@@ -103,6 +104,7 @@ from cosmic_ascec.clustering.scaling import (
     zscore_scale,
 )
 from cosmic_ascec.file_formats.provenance import describe, load_mapping
+from cosmic_ascec import levels as _levels
 from cosmic_ascec.clustering.stoichiometry import check_stoichiometry, format_report
 from cosmic_ascec.clustering.thresholds import (
     attach_pearson_to_rep,
@@ -196,7 +198,7 @@ def get_cpu_count_fast():
 
 
 # Modified to accept rmsd_threshold and output_base_dir
-def perform_clustering_and_analysis(input_source, threshold="auto", file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None, partialweights=False, rmsd_only=False, rmsd_heavy=False, sp_method=None, sp_charge=None, sp_uhf=None, allow_mixed_stoichiometry=False):
+def perform_clustering_and_analysis(input_source, threshold="auto", file_extension_pattern=None, rmsd_threshold=None, output_base_dir=None, force_reprocess_cache=False, weights=None, is_compare_mode=False, min_std_threshold=1e-6, abs_tolerances=None, num_cores=None, temperature_k=298.15, group_hb=False, prev_out_dir=None, partialweights=False, rmsd_only=False, rmsd_heavy=False, sp_method=None, sp_charge=None, sp_uhf=None, allow_mixed_stoichiometry=False, level=None):
     """
     Performs hierarchical clustering and comprehensive analysis on molecular structures.
     This is the main analysis function that orchestrates the entire clustering workflow.
@@ -863,6 +865,7 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     summary_file_content_lines.append(f"Total files skipped: <TOTAL_SKIPPED_PLACEHOLDER>")
     summary_file_content_lines.append(f"Critical skipped files: <IMAG_NEED_RECALC_PLACEHOLDER>")
     summary_file_content_lines.append(f"Total number of final clusters: <TOTAL_CLUSTERS_PLACEHOLDER>")
+    summary_file_content_lines.append("<SKIPPED_BREAKDOWN_PLACEHOLDER>")
     if rmsd_threshold is not None and not rmsd_only:
         summary_file_content_lines.append(f"Total RMSD moved configurations: <TOTAL_RMSD_OUTLIERS_PLACEHOLDER>")
     summary_file_content_lines.append("")
@@ -950,6 +953,9 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
     # representatives; they are redundant with a true minimum already in their cluster.
     # Reported separately for visibility — they are neither skipped nor critical.
     all_reduced_matched = []
+    # Members of clusters dropped for having no usable representative. Reported
+    # so the count reconciliation stays closed when this path fires.
+    all_unpublishable_clusters = []
 
     # --rmsd-only: the geometry-only partition is built once here and reused by
     # the output loop below (the pairwise Kabsch matrix is O(n²) — no reason to
@@ -1487,6 +1493,39 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
                 current_hbond_group_clusters_for_final_output
             )
 
+        # Last gate before cluster ids are handed out: drop any cluster that
+        # could not supply a representative anyway. Runs after all three
+        # member filters, so anything already accounted for as imaginary,
+        # critical or redundant is gone and cannot be counted twice here.
+        # Each of those filters drops a cluster it leaves empty — but a
+        # cluster can survive with members that are individually unusable as
+        # representatives (the "promote local max" path leaves a whole H-bond
+        # group below full-feature when every structure in it is feature-poor).
+        # Such a cluster used to be numbered and written, then silently yield no
+        # representative, putting a hole in the published sequence: cluster_24
+        # with no motif beside it, and nothing anywhere saying why.
+        #
+        # Applying the representative rule here, from the same helper the motif
+        # writer uses, makes cluster_N and <label>_N the same sequence by
+        # construction rather than by coincidence.
+        if not is_compare_mode:
+            _publishable, _unpublishable = [], []
+            for _cl in current_hbond_group_clusters_for_final_output:
+                if not _cl:
+                    continue
+                if eligible_representatives(_cl, dataset_has_freq=_dataset_has_freq):
+                    _publishable.append(_cl)
+                else:
+                    _unpublishable.append(_cl)
+            if _unpublishable:
+                for _cl in _unpublishable:
+                    _names = ", ".join(m.get('filename', '?') for m in _cl)
+                    print(f"  Dropped a {len(_cl)}-member cluster with no usable "
+                          f"representative: {_names}")
+                    all_unpublishable_clusters.extend(_cl)
+            current_hbond_group_clusters_for_final_output = _publishable
+
+
         # Track and accumulate skipped structures
         total_imag_clustered_with_normal += len(hbond_skipped_info.get('clustered_with_normal', []))
         total_imag_need_recalc += len(hbond_skipped_info.get('need_recalculation', []))
@@ -1530,11 +1569,18 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             hbond_group_summary_lines.append("Files:")
             for m_data in members_data:
                 if mode.has_freq:
-                    if m_data['gibbs_free_energy'] is not None:
-                        gibbs_str = f"{m_data['gibbs_free_energy']:.6f} Hartree ({hartree_to_kcal_mol(m_data['gibbs_free_energy']):.2f} kcal/mol, {hartree_to_ev(m_data['gibbs_free_energy']):.2f} eV)"
+                    # Prefer the composite when there is one: it is the quantity
+                    # the run ranks on. Printing the previous stage's Gibbs under
+                    # a bare "Gibbs Energy" label made a composite summary look
+                    # like a plain DFT one.
+                    _comp = m_data.get('composite_gibbs')
+                    _val = _comp if _comp is not None else m_data['gibbs_free_energy']
+                    _tag = "Composite Gibbs Energy" if _comp is not None else "Gibbs Energy"
+                    if _val is not None:
+                        gibbs_str = f"{_val:.6f} Hartree ({hartree_to_kcal_mol(_val):.2f} kcal/mol, {hartree_to_ev(_val):.2f} eV)"
                     else:
                         gibbs_str = "N/A"
-                    hbond_group_summary_lines.append(f"  - {m_data['filename']} (Gibbs Energy: {gibbs_str})")
+                    hbond_group_summary_lines.append(f"  - {m_data['filename']} ({_tag}: {gibbs_str})")
                 else:
                     elec = m_data.get('final_electronic_energy')
                     elec_str = f"{elec:.6f} Hartree" if elec is not None else "N/A"
@@ -1722,6 +1768,36 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             summary_file_content_lines[i] = line.replace("<TOTAL_SKIPPED_PLACEHOLDER>", total_skipped_str)
         if "<IMAG_NEED_RECALC_PLACEHOLDER>" in line:
             summary_file_content_lines[i] = line.replace("<IMAG_NEED_RECALC_PLACEHOLDER>", critical_skipped_str)
+        if "<SKIPPED_BREAKDOWN_PLACEHOLDER>" in line:
+            # Account for every input file by name. "Total files skipped" is a
+            # sum over four unrelated categories, and one of them — inputs that
+            # could not be parsed at all (a crashed or truncated QM job) — was
+            # counted here but named nowhere else, so a structure could drop out
+            # of a run silently and the totals would still look consistent.
+            _bd = []
+            _bd.append(f"  Inputs seen: {total_files_attempted}"
+                       f" = {len(clean_data_for_clustering)} processed"
+                       f" + {len(skipped_files)} unreadable")
+            if total_imag_clustered_with_normal or total_imag_need_recalc:
+                _bd.append(f"  Imaginary frequencies: {total_imag_clustered_with_normal} "
+                           f"clustered with true minima, {total_imag_need_recalc} need recalculation")
+            if redundant_reduced:
+                _bd.append(f"  Redundant (no own energy): {len(redundant_reduced)}"
+                           f" -> skipped_structures/redundant_no_energy/")
+            if total_non_converged_critical:
+                _bd.append(f"  Non-converged (critical): {total_non_converged_critical}"
+                           f" -> skipped_structures/critical_non_converged/")
+            if all_unpublishable_clusters:
+                _bd.append(f"  Clusters dropped for having no usable representative: "
+                           f"{len(all_unpublishable_clusters)} structure(s)")
+                for _m in all_unpublishable_clusters:
+                    _bd.append(f"    - {_m.get('filename', '?')}")
+            if skipped_files:
+                _bd.append(f"  Unreadable input ({len(skipped_files)}) - no parseable "
+                           f"result; check the QM job completed:")
+                for _fn in sorted(skipped_files):
+                    _bd.append(f"    - {_fn}")
+            summary_file_content_lines[i] = "\n".join(_bd)
 
     # Add comparison-specific details at the very end if in comparison mode
     if is_compare_mode:
@@ -1831,13 +1907,24 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             for cid in boltzmann_final_data:
                 boltzmann_final_data[cid]['population'] = 0.0
 
-    # Detect if inputs are from a previous motif step to determine output naming
-    # This enables the workflow: conf_### → motif_## → umotif_##
-    all_input_filenames = [m.get('filename', '') for m in clean_data_for_clustering]
-    output_prefix, folder_prefix, is_second_step = detect_motif_input_level(all_input_filenames)
-
-    if is_second_step and not is_compare_mode:
-        print_step(f"Detected motif inputs - using '{output_prefix}_##' naming for unique motifs")
+    # What this pass calls its representatives. The ladder is
+    # candidate -> motif -> u_motif, one rung per computational stage
+    # (cosmic_ascec.levels). A protocol run states the rung outright via
+    # --level, because the runner knows which stage it just finished; sniffing
+    # the input filenames is the fallback for a bare `cosmic <dir>`.
+    _forced = _levels.resolve(level)
+    if _forced is not None:
+        output_prefix, folder_prefix = _forced.label, _forced.folder
+        is_second_step = _forced is not _levels.CANDIDATE
+        if not is_compare_mode:
+            print_step(f"Level '{_forced.key}' - naming representatives "
+                       f"'{_forced.label}_##'")
+    else:
+        all_input_filenames = [m.get('filename', '') for m in clean_data_for_clustering]
+        output_prefix, folder_prefix, is_second_step = detect_motif_input_level(all_input_filenames)
+        if is_second_step and not is_compare_mode:
+            print_step(f"Detected {output_prefix}-level inputs - naming "
+                       f"representatives '{output_prefix}_##'")
 
     # Create motifs folder with representative structures from each cluster
     # Pass boltzmann_final_data to sort motifs by population (highest population = motif_01)
@@ -1927,11 +2014,12 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
         boltzmann_file_content_lines.append("")
 
         # Sort by population percentage descending for better readability
-        # Number motifs by population rank: highest population = motif_01/umotif_01
+        # Number representatives by population rank: highest population = <label>_01
         sorted_final_data = sorted(boltzmann_final_data.items(), key=lambda item: item[1]['population'], reverse=True)
 
-        # Add section header for motif assignment
-        display_name = "Unique Motif (umotif)" if output_prefix == 'umotif' else "Motif"
+        # Add section header for representative assignment
+        _lv = _levels.resolve(output_prefix) or _levels.CANDIDATE
+        display_name = f"{_lv.display_one.title()} ({_lv.label})"
         boltzmann_file_content_lines.append(f"{display_name} Assignment Summary")
         boltzmann_file_content_lines.append("(sorted by Boltzmann population)")
         if mode.has_composite:

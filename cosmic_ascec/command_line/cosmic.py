@@ -70,6 +70,7 @@ from cosmic_ascec.clustering.orchestrator import (
     perform_clustering_and_analysis,
 )
 from cosmic_ascec.clustering.thresholds import resolve_opt_params_from_sibling_cosmic
+from cosmic_ascec import levels as _levels
 from cosmic_ascec.exceptions import ClusteringError
 
 
@@ -697,6 +698,13 @@ CITATION:
                         help="temperature for Boltzmann analysis in K (default: 298.15)")
     parser.add_argument("--prev-out-dir", type=str, default=None, metavar="PATH",
                         help="previous stage COSMIC base directory for composite energy: G = E_eref + (G_prev - E_prev)")
+    parser.add_argument("--level", type=str, default=None, metavar="LEVEL",
+                        choices=[lv.key for lv in _levels.LEVELS],
+                        help="name this pass's representatives explicitly: "
+                             "candidate (after geometry optimization), motif "
+                             "(after geometry refinement) or u_motif (after "
+                             "energy refinement). Omitted, the level is guessed "
+                             "from the input filenames.")
 
     # Output control
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -975,17 +983,33 @@ CITATION:
 
 
     if args.compare:
-        if len(args.compare) < 2:
+        # A stage run keeps each structure in its own folder
+        # (energy_refinement/umotif_12/umotif_12_opt.out), so naming two of them
+        # meant spelling the stem out twice per path. Accept the folder and
+        # resolve the output inside it, so `--compare a_dir b_dir` works as well
+        # as `--compare a.out b.out`. Leading/trailing whitespace is stripped:
+        # a pasted backslash continuation collapses to " path", which used to
+        # fail as a not-found file for no visible reason.
+        compare_files = []
+        for entry in (e.strip() for e in args.compare):
+            if os.path.isdir(entry):
+                found = sorted(
+                    f for ext in ('.out', '.log', XYZ_EXTENSION)
+                    for f in glob.glob(os.path.join(entry, '*' + ext))
+                )
+                if not found:
+                    print(f"Error: No .out, .log or .xyz file in directory: {entry}")
+                    return 1
+                compare_files.extend(found)
+            elif os.path.exists(entry):
+                compare_files.append(entry)
+            else:
+                print(f"Error: File not found: {entry}")
+                return 1
+
+        if len(compare_files) < 2:
             print("Error: --compare requires at least 2 files.")
             return 1
-
-        compare_files = args.compare
-
-        # Check that all files exist
-        for file_path in compare_files:
-            if not os.path.exists(file_path):
-                print(f"Error: File not found: {file_path}")
-                return 1
 
         # Determine file extensions and check compatibility
         extensions = [os.path.splitext(f)[1].lower() for f in compare_files]
@@ -1019,6 +1043,12 @@ CITATION:
                 num_cores=num_cores,
                 temperature_k=temperature_k,
                 group_hb=args.group_hb,
+                # Composite Gibbs needs the previous stage here too: comparing
+                # two energy-refinement outputs is exactly the case where the
+                # ranking energy is E_eref + (G_prev - E_prev), and dropping
+                # this argument silently fell back to the bare electronic
+                # energy with no warning.
+                prev_out_dir=args.prev_out_dir,
                 partialweights=args.partialweights,
                 rmsd_only=rmsd_only_mode,
                 rmsd_heavy=args.rmsd_heavy,
@@ -1166,7 +1196,7 @@ CITATION:
             print(f"\nProcessing folder: {display_name}\n")
 
             try:
-                perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir, partialweights=args.partialweights, rmsd_only=rmsd_only_mode, rmsd_heavy=args.rmsd_heavy, sp_method=sp_method, sp_charge=args.charge, sp_uhf=args.uhf, allow_mixed_stoichiometry=from_md_shell)
+                perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir, partialweights=args.partialweights, rmsd_only=rmsd_only_mode, rmsd_heavy=args.rmsd_heavy, sp_method=sp_method, sp_charge=args.charge, sp_uhf=args.uhf, allow_mixed_stoichiometry=from_md_shell, level=args.level)
             except ClusteringError as exc:
                 # Stop the run rather than skipping the folder: the exit status
                 # has to mean "this did not do what you asked", and a batch that

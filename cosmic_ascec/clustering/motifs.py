@@ -21,7 +21,6 @@ thermochemistry is available in the QM outputs — passed in via an
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import subprocess
 from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple
@@ -44,48 +43,147 @@ from cosmic_ascec.clustering.features.feature_spec import (
 from cosmic_ascec.clustering.features.geometric import atomic_number_to_symbol
 from cosmic_ascec.clustering.scaling import pool_has_hydrogen_bonds
 from cosmic_ascec.file_formats.provenance import describe, load_mapping, update_mapping
+from cosmic_ascec import levels as _levels
 
 Record = MutableMapping[str, Any]
 Cluster = List[Record]
 
 
-def detect_motif_input_level(filenames: Sequence[str]) -> Tuple[str, str, bool]:
+def eligible_representatives(cluster_members: Cluster, *, dataset_has_freq: bool,
+                             geometry_only: bool = False) -> Cluster:
+    """Members of a cluster that may stand for it.
+
+    No representative may carry imaginary frequencies or non-converged data, and
+    it must have whatever quantity this run ranks on. The rule lives here, in
+    one place, because the orchestrator has to apply exactly the same test when
+    it decides which clusters get published and numbered — if the two ever
+    disagree, a cluster is handed an id and then yields nothing, which is how
+    the published sequence used to end up with holes in it (cluster_24 present
+    with no motif_24 beside it).
+
+    Geometry-only input (plain XYZ, no ``--sp``) has nothing to rank on, so the
+    energy test is dropped there and the caller falls back to a geometric rule.
+    In the energy-refinement stage a representative may carry only a composite
+    Gibbs energy — the high-level single point has no frequencies of its own —
+    so either form of Gibbs counts.
     """
-    Detect the input naming level to determine the appropriate output prefix.
+    if geometry_only:
+        return [m for m in cluster_members
+                if not m.get('_has_imaginary_freqs', False)
+                and m.get('_is_full_feature', True)]
+    if dataset_has_freq:
+        return [m for m in cluster_members
+                if not m.get('_has_imaginary_freqs', False)
+                and (m.get('gibbs_free_energy') is not None
+                     or m.get('composite_gibbs') is not None)
+                and m.get('_is_full_feature', True)]
+    return [m for m in cluster_members
+            if m.get('final_electronic_energy') is not None
+            and m.get('_is_full_feature', True)]
+
+
+#: Per-pass index of representatives, written beside them.
+STAGE_INDEX_FILENAME = "stage_index.dat"
+
+
+def write_stage_index(motifs_dir: str, output_prefix: str,
+                      rows: Sequence[Tuple[str, Any, str, str]]) -> None:
+    """Write ``stage_index.dat``: what each representative is, and where it came from.
+
+    One row per representative, joining the four things that otherwise live in
+    four different files: its label, the cluster it stands for, the structure it
+    was carved from, and its ranking energy. Reading one of these per stage
+    walks the whole chain back to the annealing geometry —
+    ``u_motif_13 <- motif_12_opt``, then in the previous stage's index
+    ``motif_12 <- candidate_25_opt``.
+
+    The label alone was never enough for this. Before the levels were split, the
+    last two passes both wrote ``umotif_NN``, so a chain step could only be
+    resolved by knowing which directory a file sat in; the source column makes
+    the link explicit and local.
+    """
+    if not rows:
+        return
+    try:
+        path = os.path.join(motifs_dir, STAGE_INDEX_FILENAME)
+        w_label = max(len(str(r[0])) for r in rows)
+        w_label = max(w_label, len("# label"))
+        w_src = max(max(len(str(r[2])) for r in rows), len("source"))
+        with open(path, "w", newline="\n", encoding="utf-8") as fh:
+            fh.write(f"# COSMIC stage index - level '{output_prefix}'\n")
+            fh.write("# Each row: this pass's representative, the cluster it "
+                     "represents,\n")
+            fh.write("# the structure it came from, and its ranking energy "
+                     "(Hartree).\n")
+            fh.write(f"{'# label'.ljust(w_label)}  {'cluster':>7}  "
+                     f"{'source'.ljust(w_src)}  energy\n")
+            for label, cluster_id, source, energy in rows:
+                fh.write(f"{str(label).ljust(w_label)}  {str(cluster_id):>7}  "
+                         f"{str(source).ljust(w_src)}  {energy}\n")
+    except OSError as exc:
+        # An index is a convenience; losing it must not sink a finished run.
+        print(f"  WARNING: could not write {STAGE_INDEX_FILENAME}: {exc}")
+
+
+def _level_of(output_prefix: str) -> "_levels.Level":
+    """:class:`~cosmic_ascec.levels.Level` for a prefix, tolerating old names.
+
+    Display strings and folder stems all hang off this, so an unrecognised
+    prefix degrades to the bottom rung rather than raising in the middle of
+    writing output.
+    """
+    return _levels.resolve(output_prefix) or _levels.CANDIDATE
+
+
+
+def detect_motif_input_level(filenames: Sequence[str]) -> Tuple[str, str, bool]:
+    """Guess which rung to emit from what the input files are called.
+
+    Fallback only. A protocol run passes ``--level`` explicitly, because the
+    runner knows which stage it just finished; this is for a bare
+    ``cosmic <dir>`` invocation, where the filenames are the only clue.
+
+    The rungs are ``candidate -> motif -> u_motif``
+    (:mod:`cosmic_ascec.levels`), and each pass emits the one *above* whatever
+    it was handed: unlabelled input (``conf_*``, plain xyz) is raw geometry and
+    yields ``candidate``; ``candidate_*`` yields ``motif``; ``motif_*`` yields
+    ``u_motif``. ``u_motif_*`` is the top, so it stays there and warns — a
+    fourth clustering pass has nothing left to promote to, and silently reusing
+    the label is what made ``umotif_23`` ambiguous across stages in the first
+    place.
+
+    Legacy ``umotif_*`` input counts as the top rung, since that is what the old
+    two-rung scheme meant by it on output.
 
     Returns ``(output_prefix, folder_prefix, is_second_step)``.
-
-    Verbatim port of cosmic-v01's ``detect_motif_input_level`` (123-169).
     """
     if not filenames:
-        return 'motif', 'motifs', False
+        return _levels.CANDIDATE.label, _levels.CANDIDATE.folder, False
 
-    # Count files matching each pattern
-    motif_pattern = re.compile(r'^motif_\d+', re.IGNORECASE)
-    umotif_pattern = re.compile(r'^umotif_\d+', re.IGNORECASE)
-
-    motif_count = 0
-    umotif_count = 0
-
+    # Highest rung present wins: a folder mixing motif_* with a stray candidate_*
+    # is still a motif-level folder. label_of() matches longest-first, so the
+    # "motif" inside "u_motif" never registers as the middle rung.
+    counts = {}
     for filename in filenames:
         base_name = os.path.splitext(os.path.basename(filename))[0]
-        if umotif_pattern.match(base_name):
-            umotif_count += 1
-        elif motif_pattern.match(base_name):
-            motif_count += 1
+        label = _levels.label_of(base_name)
+        if label:
+            counts[label] = counts.get(label, 0) + 1
 
-    total_files = len(filenames)
+    if not counts:
+        return _levels.CANDIDATE.label, _levels.CANDIDATE.folder, False
 
-    # If majority of files are umotif, keep using umotif
-    if umotif_count > total_files * 0.5:
-        return 'umotif', 'umotifs', True
+    highest = max(counts, key=lambda k: _levels.LEVELS.index(_levels.resolve(k)))
+    current = _levels.resolve(highest)
 
-    # If majority of files are motif, use umotif for output
-    if motif_count > total_files * 0.5:
-        return 'umotif', 'umotifs', True
+    if current is _levels.U_MOTIF:
+        print(f"  Warning: input is already at the top level "
+              f"('{_levels.U_MOTIF.label}'); reclustering it emits that level "
+              f"again, so labels will repeat across passes. Pass --level to "
+              f"name this pass explicitly.")
 
-    # Default: first step, use motif
-    return 'motif', 'motifs', False
+    out = _levels.next_level(highest)
+    return out.label, out.folder, out is not _levels.CANDIDATE
 
 
 def pool_has_energies(all_clusters_data: Sequence[Cluster]) -> bool:
@@ -280,7 +378,7 @@ def create_unique_motifs_folder(
         return {}
 
     # Determine display name based on prefix
-    display_name = "unique motifs" if output_prefix == 'umotif' else "motifs"
+    display_name = _level_of(output_prefix).display
 
     representatives = []
     representative_cluster_ids = []
@@ -297,31 +395,9 @@ def create_unique_motifs_folder(
         if not cluster_members:
             continue
 
-        # CRITICAL: No motif can have imaginary frequencies or non-converged data.
-        if geometry_only:
-            valid_members = [
-                m for m in cluster_members
-                if not m.get('_has_imaginary_freqs', False)
-                and m.get('_is_full_feature', True)
-            ]
-        elif dataset_has_freq:
-            # In the energy-refinement (composite) stage the representative carries
-            # only a composite Gibbs energy — the high-level single point has no
-            # frequencies, so gibbs_free_energy is None.  Accept either so these
-            # structures still yield a representative instead of an empty folder.
-            valid_members = [
-                m for m in cluster_members
-                if not m.get('_has_imaginary_freqs', False)
-                and (m.get('gibbs_free_energy') is not None
-                     or m.get('composite_gibbs') is not None)
-                and m.get('_is_full_feature', True)
-            ]
-        else:
-            valid_members = [
-                m for m in cluster_members
-                if m.get('final_electronic_energy') is not None
-                and m.get('_is_full_feature', True)
-            ]
+        valid_members = eligible_representatives(
+            cluster_members, dataset_has_freq=dataset_has_freq,
+            geometry_only=geometry_only)
 
         if not valid_members:
             # All members are invalid for representative selection.
@@ -399,43 +475,43 @@ def create_unique_motifs_folder(
         # files below can quote a structure's cluster as well as its frame.
         provenance = load_mapping(output_base_dir)
 
+    stage_index_rows = []
+
     for motif_idx, (representative, cluster_id) in enumerate(sorted_representatives_with_ids, 1):
         base_name = os.path.splitext(representative['filename'])[0]
 
-        # For umotif output, always use clean umotif_## naming regardless of input name
-        if output_prefix == 'umotif':
-            # Clean naming: umotif_01.xyz (the source is recorded in the combined XYZ comment)
-            motif_filename = f"{output_prefix}_{motif_idx:02d}.xyz"
-        # Check if base_name already has a motif number (for motif output from non-motif input)
-        elif base_name.lower().startswith("motif_"):
-            # Extract the motif number from base_name (e.g., "motif_01_opt" -> 1)
-            match = re.match(r"motif_(\d+)", base_name, re.IGNORECASE)
-            if match:
-                original_motif_num = int(match.group(1))
-                if original_motif_num == motif_idx:
-                    # Energy rank matches original motif number, no duplication needed
-                    motif_filename = f"{base_name}.xyz"
-                else:
-                    # Energy rank differs, show both to indicate reordering
-                    motif_filename = f"{output_prefix}_{motif_idx:02d}_{base_name}.xyz"
-            else:
-                # Couldn't parse motif number, use full format
-                motif_filename = f"{output_prefix}_{motif_idx:02d}_{base_name}.xyz"
-        else:
-            # Doesn't start with motif_, use full format
-            motif_filename = f"{output_prefix}_{motif_idx:02d}_{base_name}.xyz"
+        # One naming rule for every rung: <label>_<rank>.xyz, where the rank is
+        # this pass's own cluster ordering. The previous rule only cleaned up
+        # the top rung and, for the others, either kept the *input's* number
+        # when it happened to equal the new rank or glued both together
+        # ("motif_03_motif_17_opt.xyz"). Both variants make the number on the
+        # file mean something other than the cluster it represents, which is
+        # precisely the confusion this is meant to end. The source structure is
+        # not lost — it goes in the XYZ comment line below, where it cannot be
+        # mistaken for an index.
+        motif_filename = f"{output_prefix}_{motif_idx:02d}.xyz"
 
         motif_path = os.path.join(motifs_dir, motif_filename)
 
         write_xyz_file(representative, motif_path, mode, provenance=provenance)
 
-        display_prefix = output_prefix.upper() if output_prefix == 'umotif' else 'Motif'
+        display_prefix = _level_of(output_prefix).display_one.title()
         if dataset_has_freq:
             gibbs_str = f"{representative['gibbs_free_energy']:.6f}" if representative.get('gibbs_free_energy') is not None else "N/A"
             vprint(f"  {display_prefix} {motif_idx:02d}: {base_name} (Gibbs Energy: {gibbs_str} Hartree, Cluster ID: {cluster_id})")
         else:
             elec_str = f"{representative['final_electronic_energy']:.6f}" if representative.get('final_electronic_energy') is not None else "N/A"
             vprint(f"  {display_prefix} {motif_idx:02d}: {base_name} (Electronic Energy: {elec_str} Hartree, Cluster ID: {cluster_id})")
+
+        _e = (representative.get('composite_gibbs')
+              if representative.get('composite_gibbs') is not None
+              else representative.get('gibbs_free_energy')
+              if representative.get('gibbs_free_energy') is not None
+              else representative.get('final_electronic_energy'))
+        stage_index_rows.append((
+            f"{output_prefix}_{motif_idx:02d}", cluster_id, base_name,
+            "-" if _e is None else f"{_e:.6f}",
+        ))
 
     # Use appropriate filename based on prefix
     combined_xyz_filename = f"all_{folder_prefix}_combined.xyz"
@@ -451,21 +527,17 @@ def create_unique_motifs_folder(
                 continue
 
             base_name = os.path.splitext(rep_data['filename'])[0]
-            # Use the output_prefix for naming, include source info for umotif
-            if output_prefix == 'umotif':
-                # For umotifs, include the source motif name in the comment for traceability
-                energy_comment = representative_energy_comment(rep_data, mode)
-                source = f"from {base_name}"
-                detail = f"{source}, {energy_comment}" if energy_comment else source
-                comment_line = f"{output_prefix}_{motif_idx:02d} ({detail})"
-                trace = describe(provenance, rep_data.get('filename', ''))
-                if trace:
-                    comment_line += f" | {trace}"
-            else:
-                comment_line = structure_comment(
-                    rep_data, mode, prefix=f"{output_prefix}_{motif_idx:02d}_",
-                    provenance=provenance,
-                )
+            # Every rung records where it came from. This used to be top-rung
+            # only, which is why a mid-protocol file could not be traced back
+            # to the structure it represents without opening the stage folder
+            # it happened to live in.
+            energy_comment = representative_energy_comment(rep_data, mode)
+            source = f"from {base_name}"
+            detail = f"{source}, {energy_comment}" if energy_comment else source
+            comment_line = f"{output_prefix}_{motif_idx:02d} ({detail})"
+            trace = describe(provenance, rep_data.get('filename', ''))
+            if trace:
+                comment_line += f" | {trace}"
 
             outfile.write(f"{len(atomnos)}\n")
             outfile.write(f"{comment_line}\n")
@@ -585,7 +657,7 @@ def create_unique_motifs_folder(
                 dendrogram(linkage_matrix, labels=motif_labels, orientation='top',
                           distance_sort=True, show_leaf_counts=True)
                 # Use appropriate title based on prefix
-                dendrogram_title = 'Unique Motifs (umotifs)' if output_prefix == 'umotif' else 'Motifs'
+                dendrogram_title = _level_of(output_prefix).display.title()
                 plt.title(f'{dendrogram_title} Dendrogram')
                 plt.xlabel(dendrogram_title)
                 plt.ylabel('Distance')
@@ -605,7 +677,9 @@ def create_unique_motifs_folder(
     except Exception as e:
         print(f"  WARNING: Error creating {folder_prefix} dendrogram: {e}")
 
-    display_name = "Unique motifs" if output_prefix == 'umotif' else "Motifs"
+    write_stage_index(motifs_dir, output_prefix, stage_index_rows)
+
+    display_name = _level_of(output_prefix).display.capitalize()
     print_step(f"{display_name} created: {len(sorted_representatives_with_ids)} representatives saved to {os.path.basename(motifs_dir)}\n")
 
     return motif_to_cluster_mapping

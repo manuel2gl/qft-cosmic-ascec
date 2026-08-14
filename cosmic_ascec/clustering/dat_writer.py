@@ -295,6 +295,11 @@ def write_cluster_dat_file(
             _deviation_entries = [
                 ("Electronic Energy (Hartree)", lambda d: d.get('final_electronic_energy'), "electronic_energy"),
                 ("Gibbs Free Energy (Hartree)", lambda d: d.get('gibbs_free_energy'), "gibbs_free_energy"),
+                # Composite spread is what a composite run is actually ranked on;
+                # without it the table showed only the previous stage's Gibbs gap.
+                # Rows whose value is None everywhere are dropped downstream, so
+                # this costs nothing in a non-composite run.
+                ("Composite Gibbs Energy (Hartree)", lambda d: d.get('composite_gibbs'), "gibbs_free_energy"),
                 # Both orbital features are stored in eV (see the unit caveat in
                 # feature_spec) while their tolerances are the Hartree values from
                 # DEFAULT_ABS_TOLERANCES. Convert here so the spread and the
@@ -432,12 +437,27 @@ def write_cluster_dat_file(
                 mol_data.get('final_electronic_energy'),
                 lambda value: f"{value:.6f} Hartree ({hartree_to_kcal_mol(value):.2f} kcal/mol, {hartree_to_ev(value):.2f} eV)"
             )
+            # In a composite run the Gibbs on this record was backfilled from the
+            # previous stage, so it is a DFT value sitting next to a CCSD(T)
+            # electronic energy. Saying just "Gibbs Free Energy" invited reading
+            # it as the composite; name the level, and print the composite itself
+            # underneath rather than leaving it only in the XYZ comment line.
+            _composite = mol_data.get('composite_gibbs')
             write_scalar_descriptor_line(
                 f,
-                "Gibbs Free Energy",
+                "Gibbs Free Energy (previous stage)" if _composite is not None else "Gibbs Free Energy",
                 mol_data.get('gibbs_free_energy'),
                 lambda value: f"{value:.6f} Hartree ({hartree_to_kcal_mol(value):.2f} kcal/mol, {hartree_to_ev(value):.2f} eV)"
             )
+            if _composite is not None:
+                write_scalar_descriptor_line(
+                    f, "Thermal Correction", mol_data.get('composite_thermal'),
+                    lambda value: f"{value:.6f} Hartree ({hartree_to_kcal_mol(value):.2f} kcal/mol)"
+                )
+                write_scalar_descriptor_line(
+                    f, "Composite Gibbs Energy", _composite,
+                    lambda value: f"{value:.6f} Hartree ({hartree_to_kcal_mol(value):.2f} kcal/mol, {hartree_to_ev(value):.2f} eV)"
+                )
             write_scalar_descriptor_line(f, "HOMO Energy (Hartree)", mol_data.get('homo_energy'), lambda value: f"{value / HARTREE_TO_EV:.6f}")
             write_scalar_descriptor_line(f, "HOMO-LUMO Gap (Hartree)", mol_data.get('homo_lumo_gap'), lambda value: f"{value / HARTREE_TO_EV:.6f}")
             write_scalar_descriptor_line(f, "Nuclear Repulsion (Hartree)", mol_data.get('vnn_nuclear_repulsion'), lambda value: f"{value:.6f}")
