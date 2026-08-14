@@ -286,15 +286,9 @@ DEFAULT_ABS_TOLERANCES: Mapping[str, float] = MappingProxyType(
 )
 """Per-feature "smallest difference that means anything" thresholds.
 
-Two roles, and they must stay the same number for the report to agree with the
-partition:
-
-* :func:`~cosmic_ascec.clustering.scaling.zscore_scale` drops a column whose
-  pool-wide ``max - min`` falls below its tolerance — the feature carries no
-  usable information for that run.
-* :func:`~cosmic_ascec.clustering.scaling.difference_score_percent` reports each
-  component's within-cluster spread *relative to* this same threshold, so a
-  component that the clustering considered flat always scores near zero.
+One role: :func:`~cosmic_ascec.clustering.scaling.zscore_scale` drops a column
+whose pool-wide ``max - min`` falls below its tolerance — the feature carries no
+usable information for that run and takes no part in the partition.
 
 ``--abs-tolerance`` overrides layer on top of this table rather than replacing
 it, exactly as ``--weights`` layers over :data:`DEFAULT_WEIGHTS`.

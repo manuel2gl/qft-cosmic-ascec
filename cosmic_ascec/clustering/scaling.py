@@ -32,14 +32,14 @@ v05. They run once over the whole pool, before any of the ported functions, and
 settle what the H-bond columns mean for this dataset — see
 :data:`FEATURE_ABSENT_DEFAULTS`.
 
-:func:`difference_score_percent` is new in v05 as well. It is the reporting
-counterpart of the tolerance test inside :func:`zscore_scale`: same threshold,
-same ``max - min``, read as a continuous score instead of a keep/drop verdict.
+:func:`relative_range` is new in v05 as well. It is pure reporting: the
+within-cluster ``max - min`` of one feature, and that spread as a percentage of
+the smallest value. The tolerance plays no part in it -- it decides only whether
+:func:`zscore_scale` kept the feature at all.
 """
 
 from __future__ import annotations
 
-import math
 from typing import Any, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
 import numpy as np
@@ -353,79 +353,61 @@ def median_pairwise_distance(scaled_matrix: np.ndarray) -> float:
     return float(np.median(d))
 
 
-DIFFERENCE_SCORE_REFERENCE: float = 1e4
-"""Spread, in multiples of a feature's tolerance, that scores a full 100%.
-
-Anything this far above the noise floor is "different beyond any doubt" and the
-score stops resolving. Four decades is what it takes to keep a real dataset
-legible — in a water-hexamer pair the components span 1x to 122264x their
-tolerances, so a linear scale would either pin almost every row at 100% or
-crush every row to nearly 0% — and it makes the scale trivial to state: each
-factor of ten above the tolerance is worth exactly 25%.
-"""
-
-
-def difference_score_percent(
+def relative_range(
     values: Sequence[Any],
-    tolerance: Optional[float],
-) -> Optional[float]:
-    """Score how far apart a cluster's members are in one feature, as a percentage.
+) -> Tuple[Optional[float], Optional[float]]:
+    """Spread of one component across a cluster, as ``(max - min, percent)``.
 
-    The spread is ``max - min`` over the members — the same quantity
-    :func:`zscore_scale` tests when it decides whether a column carries any
-    information — measured against ``tolerance``, the smallest difference that
-    means anything for this feature (:data:`DEFAULT_ABS_TOLERANCES`)::
+    ``percent`` is that spread measured against the smallest value::
 
-        100 * log10(spread/tolerance) / log10(DIFFERENCE_SCORE_REFERENCE)
+        100 * (max - min) / |min|
 
-    The tolerance is the zero of the scale, not a point part-way up it: a
-    component whose members sit within tolerance of each other is one
-    :func:`zscore_scale` drops from the vector entirely, so it took no part in
-    the partition and scores exactly 0%. Above that the scale is 25% per factor
-    of ten — 10x the tolerance is 25%, 100x is 50%, 1000x is 75% — saturating
-    at 100%.
+    a direct comparison between the two extremes with no constructed scale
+    behind it. It is deliberately **not** capped: whenever the larger value is
+    more than double the smaller the range exceeds 100%, which is what a
+    relative change means and not an error.
 
-    Measuring against the tolerance rather than against the mean is the whole
-    point. A relative range ``(max-min)/|mean|`` reports two structures 2.1
-    kcal/mol apart in electronic energy as ``0.00%``, because a -458 Hartree
-    absolute energy swamps the difference, while calling a 31 cm-1 gap between
-    two floppy low-frequency modes the largest difference in the file at
-    ``65%``, because their mean is small. The tolerance is a fixed per-feature
-    scale, so neither a large offset nor a small magnitude can distort it.
+    Read the two numbers together. The percentage is the useful one for a
+    ratio-scale quantity -- a dipole moment, a rotational constant, a bond
+    distance. It says almost nothing about a quantity carrying a large
+    arbitrary offset: two structures 1.2 kcal/mol apart in Gibbs energy come
+    out at ``0.00%`` because a -458 Hartree absolute energy swamps the
+    difference. That is what ``max - min`` is printed beside it for.
 
-    Returns ``None`` — report it as ``N/A`` — when fewer than two members carry
-    the feature, or when no usable tolerance is known for it.
+    When the values span zero, ``|min|`` is a legitimate but arbitrary
+    reference and the percentage should not be leaned on; the absolute range
+    is still exact.
+
+    Returns ``(None, None)`` -- report the row as ``N/A`` -- when fewer than
+    two members carry the feature. Returns ``(spread, None)`` when the smallest
+    value is exactly zero, which makes the percentage undefined: a member with
+    no hydrogen bond carries ``num_hydrogen_bonds = 0``, and a member with a
+    single bond carries ``std_hbond_distance = 0.0``.
     """
-    numeric = [v for v in values if v is not None]
+    numeric = [float(v) for v in values if v is not None]
     if len(numeric) < 2:
-        return None
-    if tolerance is None or tolerance <= 0:
-        return None
+        return None, None
 
-    spread = float(max(numeric)) - float(min(numeric))
-    # At or below the tolerance there is nothing to report: this is exactly the
-    # condition on which zscore_scale drops the column. Catches spread == 0 too,
-    # which would otherwise take log10 to negative infinity.
-    if spread <= tolerance:
-        return 0.0
-
-    decades = math.log10(spread / tolerance) / math.log10(
-        DIFFERENCE_SCORE_REFERENCE)
-    return 100.0 * min(1.0, decades)
+    low = min(numeric)
+    spread = max(numeric) - low
+    if spread == 0.0:
+        return 0.0, 0.0
+    if low == 0.0:
+        return spread, None
+    return spread, 100.0 * spread / abs(low)
 
 
 __all__ = [
-    "DIFFERENCE_SCORE_REFERENCE",
     "apply_absent_defaults",
     "apply_weights",
     "build_feature_vectors",
-    "difference_score_percent",
     "effective_n_features",
     "group_has_any_clustering_feature_data",
     "has_valid_rotational_constants",
     "is_valid_scalar",
     "median_pairwise_distance",
     "pool_has_hydrogen_bonds",
+    "relative_range",
     "select_complete_group_scalar_features",
     "zscore_scale",
 ]

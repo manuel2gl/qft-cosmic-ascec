@@ -2,18 +2,18 @@
 
 For every cluster COSMIC writes one ``extracted_data/<cluster>.dat`` file: a
 plain-text dossier with the RMSD context, the Pearson trust score, the
-component-difference scores across the cluster, the electronic / molecular /
+component differences across the cluster, the electronic / molecular /
 vibrational / hydrogen-bond descriptors for each member, the pairwise
 heavy-atom RMSD matrix, and the final geometry of each structure.
 (``--compare`` writes the file next to the summary instead; see
 ``dat_subdir``.)
 
 The file answers one question — *which structures differ, and in which
-component* — so the component-difference block leads with the components that
-carry the difference. Its score comes from
-:func:`~cosmic_ascec.clustering.scaling.difference_score_percent`, which
-measures each component's spread against that component's clustering
-tolerance rather than against its mean.
+component*. The component-difference block reports each component's
+within-cluster ``max - min`` together with that spread as a percentage of the
+smallest value (:func:`~cosmic_ascec.clustering.scaling.relative_range`), in
+the fixed ``FEATURE_COLUMNS`` order the weights and tolerances blocks below it
+also use.
 
 Nothing in COSMIC reads this file back; it is a human-facing report. The
 layout (separators, field widths, ``N/A`` strings) is still stable on purpose
@@ -22,7 +22,6 @@ layout (separators, field widths, ``N/A`` strings) is still stable on purpose
 
 from __future__ import annotations
 
-import math
 import os
 from typing import Any, List, Mapping, MutableMapping, Optional, Sequence
 
@@ -43,8 +42,7 @@ from cosmic_ascec.clustering.features.geometric import (
 )
 from cosmic_ascec.clustering.rmsd import calculate_rmsd
 from cosmic_ascec.clustering.scaling import (
-    DIFFERENCE_SCORE_REFERENCE,
-    difference_score_percent,
+    relative_range,
 )
 from cosmic_ascec.clustering.thresholds import (
     pearson_similarity_pct as _pearson_similarity_pct,
@@ -112,22 +110,24 @@ def write_cluster_dat_file(
 
     output_filename = os.path.join(dat_output_dir, f"{dat_file_prefix}.dat")
 
-    def difference_line_score(values, feature_key):
-        """Score for one component, or ``None`` when it cannot be scored.
+    def difference_line_values(values):
+        """``(max - min, percent)`` for one component, or ``(None, None)``.
 
-        A component is only scored when every member carries it — a spread
+        A component is only reported when every member carries it — a spread
         computed over a subset would understate how far apart the cluster is.
         """
         valid_values = [value for value in values if value is not None]
         if len(valid_values) != len(cluster_members_data) or not valid_values:
-            return None
-        return difference_score_percent(valid_values, tolerances.get(feature_key))
+            return None, None
+        return relative_range(valid_values)
 
-    def write_difference_line(file_obj, label, score):
-        if score is None:
-            file_obj.write(f"  {label} %Diff: N/A\n")
+    def write_difference_line(file_obj, label, spread, percent, label_width):
+        if spread is None:
+            file_obj.write(f"  {label:<{label_width}} N/A\n")
             return
-        file_obj.write(f"  {label} %Diff: {score:.2f}%\n")
+        pct = "N/A" if percent is None else f"{percent:.2f}%"
+        file_obj.write(
+            f"  {label:<{label_width}} {pct:>9}   (max-min = {spread:.6g})\n")
 
     def write_scalar_descriptor_line(file_obj, label, value, formatter):
         if value is None:
@@ -350,11 +350,9 @@ def write_cluster_dat_file(
                 f.write(f"\nDynamic reduced feature vector.\n")
                 f.write(f"Features not used: {', '.join(_excluded_display)}\n")
 
-            # Scored components, most different first — the file exists to say
-            # where the structures differ, so that ordering is the answer. The
-            # entry list itself stays in FEATURE_COLUMNS order (see above); only
-            # the printing is sorted. Unscorable rows keep contract order at the
-            # end rather than being ranked against a number they do not have.
+            # Rows stay in FEATURE_COLUMNS order (see above), which is also the
+            # order of the weights and tolerances blocks printed below — one
+            # component reads straight down the three of them.
             _scored = []
             for display_name, extractor, feat_key in _deviation_entries:
                 # Only report features that are actually part of the reduced
@@ -362,15 +360,13 @@ def write_cluster_dat_file(
                 if feat_key in _all_excluded:
                     continue
                 values = [extractor(d) for d in cluster_members_data]
-                _scored.append((display_name, difference_line_score(values, feat_key)))
-            _scored.sort(key=lambda item: (item[1] is None, -(item[1] or 0.0)))
+                _scored.append((display_name,) + difference_line_values(values))
 
-            _per_decade = 100.0 / math.log10(DIFFERENCE_SCORE_REFERENCE)
-            f.write("\nComponent Difference (0% = within tolerance, "
-                    f"100% = {DIFFERENCE_SCORE_REFERENCE:.0f}x the tolerance):\n")
-            f.write(f"  each 10x above the tolerance adds {_per_decade:.0f}%\n")
-            for display_name, score in _scored:
-                write_difference_line(f, display_name, score)
+            _label_w = max((len(name) for name, _, _ in _scored), default=0)
+            f.write("\nComponent Difference "
+                    "(max - min, relative to the smaller value):\n")
+            for display_name, spread, percent in _scored:
+                write_difference_line(f, display_name, spread, percent, _label_w)
 
             # --- Weights and tolerances display order ---
             weight_display_order = [
@@ -393,18 +389,10 @@ def write_cluster_dat_file(
             # Filter out all excluded features (freq-dependent + zero-weight)
             weight_display_order = [(k, dn, dk) for k, dn, dk in weight_display_order if k not in _all_excluded]
 
-            # Print clustering weights applied
-            f.write("\nClustering Weights Applied:\n")
-            for feature_key, feature_display_name, data_key in weight_display_order:
-                weight_value = weights.get(feature_key, 1.0)
-                f.write(f"  {feature_display_name}: {weight_value:.2f}\n")
-
-            f.write("\n")
-
             # Print clustering tolerances applied (if any non-default tolerances exist)
             has_custom_tolerances = any(tolerances.get(key, 0.0) != 0.0 for key, _, _ in weight_display_order)
             if has_custom_tolerances:
-                f.write("Clustering Absolute Tolerances Applied:\n")
+                f.write("\nClustering Absolute Tolerances Applied:\n")
                 tolerances_printed = False
                 for feature_key, feature_display_name, data_key in weight_display_order:
                     tol_value = tolerances.get(feature_key, 0.0)
@@ -422,7 +410,14 @@ def write_cluster_dat_file(
 
                 if not tolerances_printed:
                     f.write("  None\n")
-                f.write("\n")
+
+            # Print clustering weights applied
+            f.write("\nClustering Weights Applied:\n")
+            for feature_key, feature_display_name, data_key in weight_display_order:
+                weight_value = weights.get(feature_key, 1.0)
+                f.write(f"  {feature_display_name}: {weight_value:.2f}\n")
+
+            f.write("\n")
 
         # Separator before the detailed descriptor comparison section
         f.write("=" * 90 + "\n\n")
