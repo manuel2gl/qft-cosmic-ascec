@@ -59,6 +59,14 @@ from cosmic_ascec.clustering.features.feature_spec import (
     parse_weights_argument,
 )
 from cosmic_ascec.clustering.features.xtb_sp import SP_METHODS, resolve_sp_method
+from cosmic_ascec.clustering.features.mol_input import (
+    MOL_CONVERTED_SUBDIR,
+    MOL_EXTENSION,
+    MOL_GLOB,
+    find_mol_files,
+    is_mol_byproduct,
+    stage_mol_as_xyz,
+)
 from cosmic_ascec.clustering.features.xyz_input import (
     FRAMES_SUBDIR,
     XYZ_EXTENSION,
@@ -91,8 +99,11 @@ def _is_number(token):
 
 # Input globs in precedence order. A folder that holds QM outputs is clustered
 # on those; ``*.xyz`` is the fallback, so adding the geometry-only front-end
-# cannot change how any existing run directory is interpreted.
-_INPUT_PRECEDENCE = ("*.out", "*.log", XYZ_GLOB)
+# cannot change how any existing run directory is interpreted. ``*.mol`` sits
+# below both: it carries no more information than the ``.xyz`` it converts to,
+# so a folder holding a structure in both forms is still read as .xyz and the
+# OpenBabel round-trip is skipped entirely.
+_INPUT_PRECEDENCE = ("*.out", "*.log", XYZ_GLOB, MOL_GLOB)
 
 
 def _available_inputs(folder):
@@ -114,6 +125,8 @@ def _available_inputs(folder):
             matches = [f for f in matches if not f.endswith('.xtbopt.log')]
         elif pattern == XYZ_GLOB:
             matches = [f for f in matches if not is_xyz_byproduct(f)]
+        elif pattern == MOL_GLOB:
+            matches = [f for f in matches if not is_mol_byproduct(f)]
         if matches:
             found[pattern] = sorted(matches)
     return found
@@ -171,6 +184,14 @@ def preprocess_j_argument(argv):
 
 #: Where a single named .xyz is staged so the downstream globs see only it.
 SELECTED_SUBDIR = "xyz_selected"
+
+#: Directories COSMIC creates to hold a normalised copy of its own input:
+#: frames exploded out of a multi-frame file, a single named .xyz staged on its
+#: own, and .mol converted to .xyz. Interactive discovery skips them — offering
+#: one as a folder to process would present the same structures a second time,
+#: under a name the user never chose. Naming one explicitly still works; only
+#: the menu is filtered.
+_STAGING_SUBDIRS = frozenset({SELECTED_SUBDIR, FRAMES_SUBDIR, MOL_CONVERTED_SUBDIR})
 
 
 def _stage_single_xyz(path, base_dir):
@@ -495,11 +516,13 @@ def main(argv=None):
   feature pool available. Redundant structures collapse into unique conformational
   families; each family's lowest-energy structure is the representative motif.
 
-  Input is a folder of .out/.log QM outputs, or of .xyz coordinate files. Plain
-  coordinates give the 8 geometry-derived descriptors (nuclear repulsion,
-  rotational constants A/B/C, and the four H-bond columns) with no QM run at
-  all — the entry point for large systems. '--sp' adds 4 more via one xTB
-  single point per structure. A multi-frame .xyz is split per frame.
+  Input is a folder of .out/.log QM outputs, or of .xyz or .mol coordinate
+  files. Plain coordinates give the 8 geometry-derived descriptors (nuclear
+  repulsion, rotational constants A/B/C, and the four H-bond columns) with no QM
+  run at all — the entry point for large systems. '--sp' adds 4 more via one xTB
+  single point per structure. A multi-frame .xyz is split per frame. .mol input
+  is converted to .xyz with OpenBabel ('obabel', required for it) into
+  'mol_as_xyz/'; a folder holding both forms is read as .xyz.
 
   An MD trajectory (.pdb/.gro/.xyz) can be given directly. Say which part of it
   matters and cosmic reduces every frame to the solute plus its solvation shell
@@ -567,8 +590,9 @@ KEY OPTIONS:
                         cluster_*.dat and extracted_clusters/ — no
                         dendrogram, Boltzmann report or motif folder.
   --reprocess-files     Ignore the descriptor cache and re-parse outputs.
-  FOLDER                Directory of .out/.log QM outputs or .xyz coordinates —
-                        or a single .xyz file (default: current / interactive).
+  FOLDER                Directory of .out/.log QM outputs or .xyz/.mol
+                        coordinates — or a single .xyz/.mol file
+                        (default: current / interactive).
 
 MD TRAJECTORY PRE-FILTER (--shell / --nearest):
   A solvated trajectory cannot be clustered as it stands — a solute in a box of
@@ -911,10 +935,10 @@ CITATION:
 
     # Positional argument
     parser.add_argument('input_source', nargs='?', default=None, metavar="FOLDER|TRAJECTORY",
-                        help='directory containing .out/.log QM outputs or .xyz '
-                             'coordinate files (a single .xyz file is also accepted), '
-                             'or an MD trajectory (.pdb/.gro/.xyz) together with '
-                             '--shell/--nearest saying which part of it to cluster')
+                        help='directory containing .out/.log QM outputs or .xyz/.mol '
+                             'coordinate files (a single .xyz or .mol file is also '
+                             'accepted), or an MD trajectory (.pdb/.gro/.xyz) together '
+                             'with --shell/--nearest saying which part of it to cluster')
 
 
     # Preprocess arguments to handle -j8 format
@@ -1079,8 +1103,13 @@ CITATION:
                     f for ext in ('.out', '.log', XYZ_EXTENSION)
                     for f in glob.glob(os.path.join(entry, '*' + ext))
                 )
+                # .mol only when the folder offers nothing better. Adding it
+                # unconditionally would list a structure twice in the folder
+                # COSMIC itself wrote both forms into.
                 if not found:
-                    print(f"Error: No .out, .log or .xyz file in directory: {entry}")
+                    found = find_mol_files(entry)
+                if not found:
+                    print(f"Error: No .out, .log, .xyz or .mol file in directory: {entry}")
                     return 1
                 compare_files.extend(found)
             elif os.path.exists(entry):
@@ -1092,6 +1121,22 @@ CITATION:
         if len(compare_files) < 2:
             print("Error: --compare requires at least 2 files.")
             return 1
+
+        # Normalise .mol to .xyz before anything inspects extensions, so the
+        # compatibility check below and the parser dispatch downstream both see
+        # a single coordinate format rather than a mixture that only looks like
+        # one. Named .xyz and .out files are passed through untouched.
+        mol_named = [f for f in compare_files if f.lower().endswith(MOL_EXTENSION)]
+        if mol_named:
+            try:
+                staged = stage_mol_as_xyz(mol_named, output_directory or current_dir,
+                                          label="compare")
+            except ClusteringError as exc:
+                print(f"\nERROR: {exc}", file=sys.stderr)
+                return 1
+            converted = {f: os.path.join(staged, os.path.splitext(os.path.basename(f))[0] + XYZ_EXTENSION)
+                         for f in mol_named}
+            compare_files = [converted.get(f, f) for f in compare_files]
 
         # Determine file extensions and check compatibility
         extensions = [os.path.splitext(f)[1].lower() for f in compare_files]
@@ -1105,7 +1150,7 @@ CITATION:
             extensions[0] if extensions[0] in ['.log', '.out', XYZ_EXTENSION] else None
         )
         if not file_extension_pattern_for_compare:
-            print("Error: Provided files do not have .log, .out or .xyz extensions.")
+            print("Error: Provided files do not have .log, .out, .xyz or .mol extensions.")
             return 1
 
         file_names = [os.path.basename(f) for f in compare_files]
@@ -1151,16 +1196,28 @@ CITATION:
             # hand over a large set of structures, and it is split per frame
             # downstream.
             if os.path.isfile(args.input_source):
-                if not args.input_source.lower().endswith(XYZ_EXTENSION):
-                    print(f"Error: '{args.input_source}' is a file; only .xyz files can be "
-                          f"given directly. Pass the containing folder instead.")
+                lowered = args.input_source.lower()
+                if not lowered.endswith((XYZ_EXTENSION, MOL_EXTENSION)):
+                    print(f"Error: '{args.input_source}' is a file; only .xyz and .mol "
+                          f"files can be given directly. Pass the containing folder instead.")
                     return 1
                 # Name one file and that is the file you get. Handing over its
                 # directory instead would sweep in every other .xyz beside it,
                 # because the pipeline re-globs its input folder several times
                 # downstream — so the only way to make a one-file selection
-                # stick is to give it a folder holding exactly that file.
-                selected_folders = [_stage_single_xyz(args.input_source, args.output_dir or current_dir)]
+                # stick is to give it a folder holding exactly that file. A
+                # named .mol reaches the same place through obabel: the
+                # conversion writes into a directory of its own, which is
+                # already the one-file folder the staging step would have made.
+                if lowered.endswith(MOL_EXTENSION):
+                    try:
+                        selected_folders = [stage_mol_as_xyz(
+                            [args.input_source], args.output_dir or current_dir)]
+                    except ClusteringError as exc:
+                        print(f"\nERROR: {exc}", file=sys.stderr)
+                        return 1
+                else:
+                    selected_folders = [_stage_single_xyz(args.input_source, args.output_dir or current_dir)]
                 file_extension_pattern = XYZ_GLOB
             elif not os.path.isdir(args.input_source):
                 print(f"Error: Input source '{args.input_source}' is not a directory.")
@@ -1172,12 +1229,15 @@ CITATION:
                 # existing run directory is interpreted exactly as before.
                 file_extension_pattern = _preferred_pattern(_available_inputs(args.input_source))
                 if file_extension_pattern is None:
-                    print(f"Error: No .out, .log or .xyz files found in '{args.input_source}'.")
+                    print(f"Error: No .out, .log, .xyz or .mol files found in '{args.input_source}'.")
                     return 1
 
         else:
             # Interactive mode
-            all_potential_folders = [current_dir] + [d for d in glob.glob(os.path.join(current_dir, '*')) if os.path.isdir(d)]
+            all_potential_folders = [current_dir] + [
+                d for d in glob.glob(os.path.join(current_dir, '*'))
+                if os.path.isdir(d) and os.path.basename(d) not in _STAGING_SUBDIRS
+            ]
 
             folder_inputs = {}
             for folder in all_potential_folders:
@@ -1188,7 +1248,7 @@ CITATION:
             all_valid_folders_to_display = sorted(folder_inputs)
 
             if not all_valid_folders_to_display:
-                print("No subdirectories containing .out, .log or .xyz files found, or files are organized directly in the current directory.")
+                print("No subdirectories containing .out, .log, .xyz or .mol files found, or files are organized directly in the current directory.")
                 return 0
 
             def _folder_label(folder):
@@ -1259,15 +1319,15 @@ CITATION:
                 print(f"\nOnly {file_extension_pattern.lstrip('*')} files found in the selected "
                       f"folder(s). Processing {file_extension_pattern.lstrip('*')} files.")
             else:
-                print("\nNo .out, .log or .xyz files found in the selected folder(s) that match available types. Exiting.")
+                print("\nNo .out, .log, .xyz or .mol files found in the selected folder(s) that match available types. Exiting.")
                 return 0
 
         # Single points only make sense for coordinate input: a QM output
         # already carries its own energy, and recomputing it at a different
         # level would mix two methods in one feature column.
-        if sp_method and file_extension_pattern != XYZ_GLOB:
-            print(f"WARNING: --sp applies to .xyz input only; ignoring it for "
-                  f"'{file_extension_pattern}' files.")
+        if sp_method and file_extension_pattern not in (XYZ_GLOB, MOL_GLOB):
+            print(f"WARNING: --sp applies to coordinate input only; ignoring it "
+                  f"for '{file_extension_pattern}' files.")
             sp_method = None
 
         print(f"\nProcessing {len(selected_folders)} folder(s) for files matching '{file_extension_pattern}'...")
@@ -1277,8 +1337,25 @@ CITATION:
                 display_name = "./"
             print(f"\nProcessing folder: {display_name}\n")
 
+            # .mol input is normalised to .xyz here and nowhere else: from this
+            # point the pipeline is handed a folder of coordinates in the format
+            # it already parses, caches and copies by filename. The converted
+            # set lives under the output directory, not beside the .mol files,
+            # so the user's input folder is left exactly as it was found.
+            cluster_folder, cluster_pattern = folder_path, file_extension_pattern
+            if file_extension_pattern == MOL_GLOB:
+                try:
+                    cluster_folder = stage_mol_as_xyz(
+                        find_mol_files(folder_path), output_directory or current_dir,
+                        label="" if len(selected_folders) == 1 else (display_name.strip("./") or "cwd"),
+                    )
+                except ClusteringError as exc:
+                    print(f"\nERROR: {exc}", file=sys.stderr)
+                    return 1
+                cluster_pattern = XYZ_GLOB
+
             try:
-                perform_clustering_and_analysis(folder_path, clustering_threshold, file_extension_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir, partialweights=args.partialweights, rmsd_only=rmsd_only_mode, rmsd_heavy=args.rmsd_heavy, sp_method=sp_method, sp_charge=args.charge, sp_uhf=args.uhf, allow_mixed_stoichiometry=from_md_shell, level=args.level)
+                perform_clustering_and_analysis(cluster_folder, clustering_threshold, cluster_pattern, rmsd_validation_threshold, output_directory, force_reprocess_cache, weights_dict, is_compare_mode=False, min_std_threshold=min_std_threshold_val, abs_tolerances=abs_tolerances_dict, num_cores=num_cores, temperature_k=temperature_k, group_hb=args.group_hb, prev_out_dir=args.prev_out_dir, partialweights=args.partialweights, rmsd_only=rmsd_only_mode, rmsd_heavy=args.rmsd_heavy, sp_method=sp_method, sp_charge=args.charge, sp_uhf=args.uhf, allow_mixed_stoichiometry=from_md_shell, level=args.level)
             except ClusteringError as exc:
                 # Stop the run rather than skipping the folder: the exit status
                 # has to mean "this did not do what you asked", and a batch that

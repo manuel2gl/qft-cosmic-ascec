@@ -84,6 +84,7 @@ from cosmic_ascec.clustering.motifs import (
     create_unique_motifs_folder,
     detect_motif_input_level,
     eligible_representatives,
+    pool_has_energies,
     write_xyz_file,
 )
 from cosmic_ascec.clustering.rmsd import (
@@ -738,6 +739,15 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             print_step(f"Composite energies applied to {n_matched}/{len(clean_data_for_clustering)} structures (prev: {prev_out_dir})")
         else:
             print(f"  Warning: No composite energies could be matched from {prev_out_dir}")
+
+    # Geometry-only input (plain XYZ with no --sp) carries nothing to rank on.
+    # The motif writer switches to the centroid rule there; the publish gate
+    # below has to be told the same thing, or it applies the energy predicate,
+    # finds no eligible member and drops every cluster before the writer is
+    # ever reached ("Dropped a 2-member cluster with no usable representative"
+    # followed by "No clusters found"). Computed over the whole pool, and after
+    # composite energies are applied, so the two decisions see the same data.
+    _dataset_geometry_only = not pool_has_energies([clean_data_for_clustering])
 
     # --- H-bond grouping decision ---
     # By default, all structures go into a single pool and property-based
@@ -1522,7 +1532,8 @@ def perform_clustering_and_analysis(input_source, threshold="auto", file_extensi
             for _cl in current_hbond_group_clusters_for_final_output:
                 if not _cl:
                     continue
-                if eligible_representatives(_cl, dataset_has_freq=_dataset_has_freq):
+                if eligible_representatives(_cl, dataset_has_freq=_dataset_has_freq,
+                                            geometry_only=_dataset_geometry_only):
                     _publishable.append(_cl)
                 else:
                     _unpublishable.append(_cl)
