@@ -14,11 +14,18 @@ set -e  # Stop immediately if any command fails
 #       cd /path/to/ascec_v04   # the dir holding install.sh
 #       bash install.sh          # auto-detects local mode
 #
+#   (c) On a cluster, reusing the conda your site already provides:
+#       module load anaconda3
+#       CONDA_ROOT="$(conda info --base)" bash install.sh
+#       # add CONDA_SOLVER=classic if that conda has no mamba and you would
+#       # rather not wait for the script to probe for it
+#
 # The script will:
 #   - Install/configure Miniconda if needed
 #   - Get/refresh the source (clone from GitHub OR copy from local checkout)
 #   - Create a Python 3.11 conda env named 'py11' (or install into base)
-#   - Install numpy, scipy, matplotlib, cclib, openbabel, xtb
+#   - Install numpy, scipy, matplotlib, cclib, openbabel, xtb -- with mamba
+#     when it is available, and with classic conda when it is not
 #   - Install orca-pi via pip (for ORCA 6.1+ output parsing)
 #   - Set up `ascec` and `cosmic` shell aliases pointing at the root scripts
 #
@@ -59,6 +66,46 @@ ALLOW_TARBALL="${ALLOW_TARBALL:-FALSE}"
 # download is NOT verified and the script says so out loud.
 MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
 MINICONDA_SHA256=""
+
+# Existing conda on a cluster or shared machine.
+# Set CONDA_ROOT to the prefix of a conda you already have when it is not in
+# one of the standard locations (module-provided installs usually are not):
+#
+#     module load anaconda3            # or whatever your site calls it
+#     CONDA_ROOT="$(conda info --base)" bash install.sh
+#
+# The script then uses that conda instead of downloading Miniconda, and never
+# writes into the shared prefix: the environment lands in your own envs dir
+# (normally ~/.conda/envs) whenever the shared prefix is read-only.
+CONDA_ROOT="${CONDA_ROOT:-}"
+
+# Which package manager resolves the dependencies: auto | mamba | libmamba | classic
+#
+#   auto     -> mamba first, classic conda as the safety net. In order:
+#                 1. a `mamba` binary already on PATH or in the conda prefix
+#                 2. a conda that already carries the libmamba solver
+#                    (the same solver engine, driven by conda -- this is the
+#                    normal case for conda >= 23.10)
+#                 3. install mamba, but only into a base this script owns
+#                    (see INSTALL_MAMBA); conda-libmamba-solver if that fails
+#                 4. classic conda -- slower, never broken
+#   mamba    -> require mamba/libmamba; stop with an explanation if unavailable
+#   libmamba -> require conda's libmamba solver specifically (no mamba binary)
+#   classic  -> force classic conda and skip every probe above. Use this on an
+#               old or locked-down conda where you already know mamba is absent.
+#
+# An existing conda that has neither mamba nor the libmamba plugin is left
+# exactly as it is and driven with the classic solver. Nothing is installed
+# into somebody else's base environment to make mamba appear.
+CONDA_SOLVER="${CONDA_SOLVER:-auto}"
+
+# May `mamba` be installed into the base environment in auto mode?
+#   AUTO  -> only into a base this script installed itself (a fresh Miniconda).
+#            An existing base -- yours or the cluster's -- is never touched.
+#   TRUE  -> also allowed for an existing writable base. Note this can pull a
+#            large re-solve of that base, which is why it is not the default.
+#   FALSE -> never install mamba; use whatever is already there.
+INSTALL_MAMBA="${INSTALL_MAMBA:-AUTO}"
 
 # Markers fencing our block in the user's shell rc file. Everything between
 # them is ours to rewrite; everything outside is the user's and is never
@@ -187,40 +234,60 @@ fi
 DEFAULT_MINICONDA_DIR="$HOME/miniconda3"
 
 MINICONDA_DIR=""
-for candidate in "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/conda" "$HOME/miniforge3" "$HOME/mambaforge" "/opt/conda" "/opt/miniconda3" "/opt/anaconda3"; do
-    if [ -x "$candidate/bin/conda" ]; then
-        MINICONDA_DIR="$candidate"
-        break
-    fi
-done
+USING_EXTERNAL_CONDA=FALSE
+# TRUE only when this script downloads and installs Miniconda in this run. That
+# base belongs to us, so it is the one place mamba may be added without asking.
+BOOTSTRAPPED_CONDA=FALSE
 
-if ! have conda; then
-    if [ -n "$MINICONDA_DIR" ]; then
-        info "Conda installation found at $MINICONDA_DIR. Initializing..."
-        eval "$("$MINICONDA_DIR/bin/conda" shell.bash hook)"
-        "$MINICONDA_DIR/bin/conda" init bash > /dev/null 2>&1 || true
-    else
-        info "Conda not found. Installing Miniconda to $DEFAULT_MINICONDA_DIR..."
-        MINICONDA_DIR="$DEFAULT_MINICONDA_DIR"
-        # Download into a temp dir: the old version wrote miniconda.sh into the
-        # current directory, which fails outright if the cwd is read-only.
-        TMP_DIR="$(mktemp -d)"
-        trap 'rm -rf "$TMP_DIR"' EXIT
-        info "Downloading $MINICONDA_URL"
-        fetch "$MINICONDA_URL" "$TMP_DIR/miniconda.sh"
-        verify_sha256 "$TMP_DIR/miniconda.sh" "$MINICONDA_SHA256"
-        bash "$TMP_DIR/miniconda.sh" -b -p "$MINICONDA_DIR"
-        eval "$("$MINICONDA_DIR/bin/conda" shell.bash hook)"
-        "$MINICONDA_DIR/bin/conda" init bash > /dev/null 2>&1 || true
-        rm -rf "$TMP_DIR"
-        trap - EXIT
-    fi
+if [ -n "$CONDA_ROOT" ]; then
+    # An explicitly chosen conda wins over anything found on PATH, so a cluster
+    # module install is used as-is instead of a second Miniconda being dropped
+    # into $HOME.
+    [ -x "$CONDA_ROOT/bin/conda" ] \
+        || die "CONDA_ROOT=$CONDA_ROOT does not contain bin/conda." \
+               "Point CONDA_ROOT at a conda *prefix* -- the directory that" \
+               "'conda info --base' prints on that installation."
+    info "Using the conda you selected: $CONDA_ROOT"
+    MINICONDA_DIR="$CONDA_ROOT"
+    USING_EXTERNAL_CONDA=TRUE
+    eval "$("$CONDA_ROOT/bin/conda" shell.bash hook)"
 else
-    info "Conda found at $(command -v conda). Proceeding..."
-    eval "$(conda shell.bash hook)"
-    if ! grep -q "conda initialize" "$HOME/.bashrc" 2>/dev/null; then
-        info "Adding conda initialization to .bashrc..."
-        conda init bash > /dev/null 2>&1 || true
+    for candidate in "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/conda" "$HOME/miniforge3" "$HOME/mambaforge" "/opt/conda" "/opt/miniconda3" "/opt/anaconda3"; do
+        if [ -x "$candidate/bin/conda" ]; then
+            MINICONDA_DIR="$candidate"
+            break
+        fi
+    done
+
+    if ! have conda; then
+        if [ -n "$MINICONDA_DIR" ]; then
+            info "Conda installation found at $MINICONDA_DIR. Initializing..."
+            eval "$("$MINICONDA_DIR/bin/conda" shell.bash hook)"
+            "$MINICONDA_DIR/bin/conda" init bash > /dev/null 2>&1 || true
+        else
+            info "Conda not found. Installing Miniconda to $DEFAULT_MINICONDA_DIR..."
+            MINICONDA_DIR="$DEFAULT_MINICONDA_DIR"
+            BOOTSTRAPPED_CONDA=TRUE
+            # Download into a temp dir: the old version wrote miniconda.sh into the
+            # current directory, which fails outright if the cwd is read-only.
+            TMP_DIR="$(mktemp -d)"
+            trap 'rm -rf "$TMP_DIR"' EXIT
+            info "Downloading $MINICONDA_URL"
+            fetch "$MINICONDA_URL" "$TMP_DIR/miniconda.sh"
+            verify_sha256 "$TMP_DIR/miniconda.sh" "$MINICONDA_SHA256"
+            bash "$TMP_DIR/miniconda.sh" -b -p "$MINICONDA_DIR"
+            eval "$("$MINICONDA_DIR/bin/conda" shell.bash hook)"
+            "$MINICONDA_DIR/bin/conda" init bash > /dev/null 2>&1 || true
+            rm -rf "$TMP_DIR"
+            trap - EXIT
+        fi
+    else
+        info "Conda found at $(command -v conda). Proceeding..."
+        eval "$(conda shell.bash hook)"
+        if ! grep -q "conda initialize" "$HOME/.bashrc" 2>/dev/null; then
+            info "Adding conda initialization to .bashrc..."
+            conda init bash > /dev/null 2>&1 || true
+        fi
     fi
 fi
 
@@ -228,6 +295,184 @@ have conda || die "conda is still not callable after bootstrapping." \
                   "Open a new shell and re-run this script."
 
 CONDA_BASE=$(conda info --base)
+CONDA_VERSION=$(conda --version 2>/dev/null | awk '{print $2}')
+info "conda ${CONDA_VERSION:-unknown} at $CONDA_BASE"
+
+# On a shared install the base prefix belongs to the site admins. Knowing this
+# up front lets the script skip writes that would only fail, and explains why
+# the new environment appears under ~/.conda/envs rather than next to base.
+CONDA_BASE_WRITABLE=TRUE
+[ -w "$CONDA_BASE/conda-meta" ] || CONDA_BASE_WRITABLE=FALSE
+if [ "$CONDA_BASE_WRITABLE" = "FALSE" ]; then
+    info "base env is read-only -- nothing will be installed into it."
+    if [ "$INSTALL_PY11" != "TRUE" ]; then
+        die "INSTALL_PY11=FALSE asks to install into the base environment," \
+            "but $CONDA_BASE is not writable by you." \
+            "" \
+            "SOLUTION: set INSTALL_PY11=TRUE so a private '$ENV_NAME' env is" \
+            "created in your own envs dir instead."
+    fi
+fi
+
+#-----------------------------------------
+# 1b. Choose the package manager
+#-----------------------------------------
+# mamba resolves conda-forge packages like openbabel/xtb in seconds where the
+# classic solver can grind for 10+ minutes, so it is the preferred front-end.
+# It is not a requirement though: `mamba` and conda's `--solver=libmamba` drive
+# the same solver engine, and classic conda produces the same environment, only
+# slower. This runs before the environment is created so that one tool handles
+# creation, git and the dependency install alike.
+
+PKG_CMD="conda"          # the binary that actually resolves packages
+PKG_LABEL="classic conda"
+SOLVER_ARGS=()           # conda-only; mamba does not take --solver
+
+# Run a package subcommand (install/create) with the chosen tool and solver.
+pkg_run() {
+    local sub="$1"; shift
+    "$PKG_CMD" "$sub" "${SOLVER_ARGS[@]}" "$@"
+}
+
+# mamba may be on PATH, or sitting in the conda prefix without the prefix being
+# on PATH (common when conda was set up only through the shell hook).
+find_mamba() {
+    if have mamba; then
+        command -v mamba
+        return 0
+    fi
+    if [ -x "$CONDA_BASE/bin/mamba" ]; then
+        echo "$CONDA_BASE/bin/mamba"
+        return 0
+    fi
+    return 1
+}
+
+# conda >= 22.11 accepts --solver; before that the flag was --experimental-solver
+# and there is no libmamba plugin worth chasing. Ask conda itself rather than
+# parsing a version string.
+conda_accepts_solver_flag() {
+    conda install --help 2>/dev/null | grep -q -- '--solver'
+}
+
+# The plugin is imported by the python running conda, i.e. base's python.
+conda_has_libmamba() {
+    "$CONDA_BASE/bin/python" -c "import conda_libmamba_solver" >/dev/null 2>&1
+}
+
+use_mamba() {
+    PKG_CMD="$1"
+    PKG_LABEL="mamba"
+    SOLVER_ARGS=()
+}
+
+use_libmamba() {
+    PKG_CMD="conda"
+    PKG_LABEL="conda + libmamba solver"
+    SOLVER_ARGS=(--solver=libmamba)
+}
+
+use_classic() {
+    PKG_CMD="conda"
+    PKG_LABEL="classic conda"
+    # Only pass the flag when conda understands it; an old conda has one solver
+    # anyway and would just choke on an unknown option.
+    if conda_accepts_solver_flag; then
+        SOLVER_ARGS=(--solver=classic)
+    else
+        SOLVER_ARGS=()
+    fi
+}
+
+# May we add mamba to the base env? Only a base this script created is ours to
+# change; an existing one is left alone unless the user opts in explicitly.
+may_install_mamba() {
+    case "$INSTALL_MAMBA" in
+        FALSE) return 1 ;;
+        TRUE)  [ "$CONDA_BASE_WRITABLE" = "TRUE" ] && return 0; return 1 ;;
+        AUTO)  [ "$BOOTSTRAPPED_CONDA" = "TRUE" ] && [ "$CONDA_BASE_WRITABLE" = "TRUE" ] \
+                   && return 0; return 1 ;;
+        *) die "INSTALL_MAMBA must be 'AUTO', 'TRUE' or 'FALSE'" \
+               "(got '$INSTALL_MAMBA')." ;;
+    esac
+}
+
+select_package_manager() {
+    local mamba_bin=""
+
+    case "$CONDA_SOLVER" in
+        classic)
+            use_classic
+            info "Package manager: $PKG_LABEL (forced via CONDA_SOLVER=classic)."
+            info "Expect the dependency solve to take several minutes."
+            return 0
+            ;;
+        auto|mamba|libmamba) ;;
+        *) die "CONDA_SOLVER must be 'auto', 'mamba', 'libmamba' or 'classic'" \
+               "(got '$CONDA_SOLVER')." ;;
+    esac
+
+    # 1. An existing mamba wins outright -- nothing to install, fastest path.
+    if [ "$CONDA_SOLVER" != "libmamba" ] && mamba_bin="$(find_mamba)"; then
+        use_mamba "$mamba_bin"
+        info "Package manager: mamba ($mamba_bin)."
+        return 0
+    fi
+
+    # 2. conda already carrying the libmamba solver is just as fast.
+    if conda_accepts_solver_flag && conda_has_libmamba; then
+        use_libmamba
+        info "Package manager: $PKG_LABEL (mamba binary not present, same solver engine)."
+        return 0
+    fi
+
+    # 3. Try to obtain one, but only in a base we are allowed to touch.
+    if may_install_mamba; then
+        info "Installing mamba into the base env at $CONDA_BASE..."
+        if conda install -n base -c conda-forge mamba -y >/dev/null 2>&1 \
+           && mamba_bin="$(find_mamba)"; then
+            use_mamba "$mamba_bin"
+            info "Package manager: mamba (installed into base)."
+            return 0
+        fi
+        warn "Installing mamba failed; trying the smaller conda-libmamba-solver."
+        if conda_accepts_solver_flag \
+           && conda install -n base -c conda-forge conda-libmamba-solver -y >/dev/null 2>&1 \
+           && conda_has_libmamba; then
+            use_libmamba
+            info "Package manager: $PKG_LABEL."
+            return 0
+        fi
+    elif [ "$CONDA_BASE_WRITABLE" != "TRUE" ]; then
+        info "base env is read-only, so mamba cannot be added there."
+    else
+        info "This conda was already here, so its base env is left untouched."
+        info "(INSTALL_MAMBA=TRUE would allow adding mamba to it.)"
+    fi
+
+    # 4. No mamba anywhere: classic conda still builds the same environment.
+    if [ "$CONDA_SOLVER" = "mamba" ] || [ "$CONDA_SOLVER" = "libmamba" ]; then
+        die "CONDA_SOLVER=$CONDA_SOLVER was requested, but neither a mamba binary" \
+            "nor conda's libmamba solver is available in $CONDA_BASE," \
+            "and this script is not allowed to install one there." \
+            "" \
+            "OPTIONS:" \
+            "  1. Re-run with CONDA_SOLVER=classic -- same environment, slower solve." \
+            "  2. Re-run with INSTALL_MAMBA=TRUE if that base is yours to change." \
+            "  3. Ask your admin to run:" \
+            "       conda install -n base -c conda-forge mamba" \
+            "  4. Unset CONDA_ROOT and let this script install its own Miniconda" \
+            "     into \$HOME, where it may set mamba up itself."
+    fi
+
+    use_classic
+    warn "No mamba and no libmamba solver on this conda, and its base env is not"
+    warn "ours to change -- falling back to $PKG_LABEL. The install still works"
+    warn "and produces the same environment; the dependency solve is just slower,"
+    warn "so allow several minutes before assuming it has hung."
+}
+
+select_package_manager
 
 #-----------------------------------------
 # 2. Get/refresh the source
@@ -250,10 +495,10 @@ ensure_git() {
     if [ "$target_env" != "base" ] \
        && ! conda env list | awk '{print $1}' | grep -qx "$target_env"; then
         info "Creating the '$target_env' environment early so git can go into it..."
-        conda create -n "$target_env" python="$PY_VERSION" -y >/dev/null 2>&1 \
+        pkg_run create -n "$target_env" python="$PY_VERSION" -y >/dev/null 2>&1 \
             || target_env="base"
     fi
-    conda install -n "$target_env" -c conda-forge git -y >/dev/null 2>&1 || return 1
+    pkg_run install -n "$target_env" -c conda-forge git -y >/dev/null 2>&1 || return 1
     if [ "$target_env" = "base" ]; then
         export PATH="$CONDA_BASE/bin:$PATH"
     else
@@ -516,9 +761,16 @@ fi
 # 4. Accept Conda Terms of Service
 #----------------------------------------------
 
-info "Accepting conda Terms of Service..."
-conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main 2>/dev/null || true
-conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
+# `conda tos` only exists on conda >= 24.11; older conda does not gate the
+# defaults channel behind an acceptance at all. Probing first keeps an old
+# cluster conda from printing a scary "invalid choice: 'tos'" here.
+if conda tos --help >/dev/null 2>&1; then
+    info "Accepting conda Terms of Service..."
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main 2>/dev/null || true
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
+else
+    info "This conda has no 'tos' subcommand (pre-24.11) — nothing to accept."
+fi
 
 #--------------------------
 # 5. Environment Setup
@@ -530,27 +782,35 @@ if [ "$INSTALL_PY11" = "TRUE" ]; then
         info "Environment '$ENV_NAME' already exists. Activating..."
         conda activate "$ENV_NAME"
     else
-        info "Creating new environment '$ENV_NAME'..."
-        conda create -n "$ENV_NAME" python="$PY_VERSION" -y
+        info "Creating new environment '$ENV_NAME' with $PKG_LABEL..."
+        pkg_run create -n "$ENV_NAME" python="$PY_VERSION" -y
+        # `conda activate` regardless of who created the env: mamba's own shell
+        # activation needs `mamba shell hook`, which is not initialised here,
+        # and conda activates a mamba-created env perfectly well.
         conda activate "$ENV_NAME"
     fi
     info "Installing dependencies into '$ENV_NAME' environment..."
     DEP_ENV="$ENV_NAME"
+    # Ask conda where the env actually landed instead of assuming
+    # $CONDA_BASE/envs/$ENV_NAME. When base is read-only -- the normal case for
+    # a cluster module -- conda silently creates it under ~/.conda/envs, and the
+    # assumed path would produce aliases pointing at a python that is not there.
+    ENV_PREFIX="${CONDA_PREFIX:-$CONDA_BASE/envs/$ENV_NAME}"
+    [ "$ENV_PREFIX" = "$CONDA_BASE/envs/$ENV_NAME" ] \
+        || info "Environment prefix: $ENV_PREFIX"
 else
     info "Using base environment for installation..."
     DEP_ENV="base"
+    ENV_PREFIX="$CONDA_BASE"
 fi
 
 #----------------------------------------------
 # 6. Install Dependencies
 #----------------------------------------------
 
-# Use libmamba — the classic solver can hang for 10+ minutes on conda-forge
-# packages like openbabel/xtb. It is the default in conda >= 23.10; installing
-# it covers older bases. Note we pass --solver=libmamba per command rather than
-# running `conda config --set solver libmamba`, which would permanently rewrite
-# the user's global ~/.condarc and is never undone by the uninstaller.
-conda install -n base -c conda-forge conda-libmamba-solver -y 2>/dev/null || true
+# The package manager (mamba or conda) and its solver flags were chosen back in
+# step 1, before anything was created, so the same tool builds the environment
+# and fills it. See select_package_manager().
 
 # Single combined solve (one solver pass instead of two), everything from
 # conda-forge. --override-channels keeps `defaults` out of the solve entirely:
@@ -569,7 +829,8 @@ conda install -n base -c conda-forge conda-libmamba-solver -y 2>/dev/null || tru
 # umotifs_ folder found" at the end of an otherwise green run. Pinning the
 # floor forces a working build (or a loud solver error instead of silent
 # breakage). 6.7.x is statically linked and runs cleanly.
-conda install -n "$DEP_ENV" --override-channels -c conda-forge --solver=libmamba -y \
+info "Resolving dependencies with $PKG_LABEL..."
+pkg_run install -n "$DEP_ENV" --override-channels -c conda-forge -y \
     numpy scipy matplotlib cclib openbabel "xtb>=6.7"
 
 # orca-pi parses ORCA 6.1+ structured property output. Optional: only used
@@ -605,7 +866,7 @@ fi
 info "Configuring shortcuts..."
 
 if [ "$INSTALL_PY11" = "TRUE" ]; then
-    ENV_BIN="$CONDA_BASE/envs/$ENV_NAME/bin"
+    ENV_BIN="$ENV_PREFIX/bin"
     PYTHON_BIN="$ENV_BIN/python"
 else
     ENV_BIN=""
@@ -644,6 +905,14 @@ echo "> Reload your shell configuration:"
 echo "    source ~/.bashrc"
 echo ">"
 echo "> Then use 'ascec' and 'cosmic' directly -- no environment activation needed."
+if [ "$USING_EXTERNAL_CONDA" = "TRUE" ]; then
+    echo ">"
+    echo "> This install reuses the conda at $CONDA_BASE."
+    echo "> Dependencies were resolved with $PKG_LABEL."
+echo "> The aliases point straight at $ENV_PREFIX/bin,"
+    echo "> so they work in batch jobs without a 'module load' first. Add the"
+    echo "> module line to your job script anyway if your site expects it."
+fi
 echo ">"
 echo "> Quick sanity check:"
 echo "    ascec --version"
