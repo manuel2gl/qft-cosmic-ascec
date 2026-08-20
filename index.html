@@ -3853,8 +3853,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                             <label>Rescue Method</label>
                             <div class="custom-inline-control">
                                 <select id="adv-opt-rescue-method" onchange="markAdvOptRescueManual(); toggleCustomInput('adv-opt-rescue-method', 'adv-opt-rescue-method-custom'); updateAllPreviews()">
-                                    <option value="none" selected>None (no rescue)</option>
-                                    <option value="GFN2-xTB">GFN2-xTB</option>
+                                    <option value="GFN2-xTB" selected>GFN2-xTB</option>
                                     <option value="GFN1-xTB">GFN1-xTB</option>
                                     <option value="GFN0-xTB">GFN0-xTB</option>
                                     <option value="GFN-FF">GFN-FF</option>
@@ -3871,8 +3870,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
                         <div class="form-group">
                             <label>Rescue Job</label>
                             <select id="adv-opt-rescue-hess" onchange="markAdvOptRescueManual(); updateAllPreviews()">
-                                <option value="num" selected>NumFreq</option>
-                                <option value="freq">Freq</option>
+                                <option value="freq" selected>Freq</option>
+                                <option value="num">NumFreq</option>
                             </select>
                         </div>
                     </div>
@@ -4000,8 +3999,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                             <label>Rescue Method</label>
                             <div class="custom-inline-control">
                                 <select id="adv-ref-rescue-method" onchange="markAdvRefRescueManual(); toggleCustomInput('adv-ref-rescue-method', 'adv-ref-rescue-method-custom'); updateAllPreviews()">
-                                    <option value="none" selected>None (no rescue)</option>
-                                    <option value="HF-3c">HF-3c</option>
+                                    <option value="HF-3c" selected>HF-3c</option>
                                     <option value="GFN2-xTB">GFN2-xTB</option>
                                     <option value="GFN1-xTB">GFN1-xTB</option>
                                     <option value="GFN0-xTB">GFN0-xTB</option>
@@ -10402,10 +10400,10 @@ end
         function getAdvOptRescueMethodValue() {
             const select = document.getElementById('adv-opt-rescue-method');
             const custom = document.getElementById('adv-opt-rescue-method-custom');
-            // '' means rescue is off: no #rescue(...) line is written, and the
-            // engine then never computes a Hessian to repair a structure.
-            if (!select) return '';
-            if (select.value === 'none') return '';
+            // Rescue is always on. A missing control or a stale 'none' from an
+            // older saved state falls back to the engine-matched suggestion
+            // rather than dropping the #rescue(...) line.
+            if (!select || select.value === 'none') return getSuggestedAdvancedOptRescue().method;
             if (select.value === 'Other') return custom?.value?.trim() || 'HF-3c';
             return select.value;
         }
@@ -10413,10 +10411,10 @@ end
         function getAdvRefRescueMethodValue() {
             const select = document.getElementById('adv-ref-rescue-method');
             const custom = document.getElementById('adv-ref-rescue-method-custom');
-            // '' means rescue is off: no #rescue(...) line is written, and the
-            // engine then never computes a Hessian to repair a structure.
-            if (!select) return '';
-            if (select.value === 'none') return '';
+            // Rescue is always on. A missing control or a stale 'none' from an
+            // older saved state falls back to the engine-matched suggestion
+            // rather than dropping the #rescue(...) line.
+            if (!select || select.value === 'none') return getSuggestedAdvancedRefRescue().method;
             if (select.value === 'Other') return custom?.value?.trim() || 'HF-3c';
             return select.value;
         }
@@ -10450,8 +10448,6 @@ end
             const custom = document.getElementById('adv-opt-rescue-method-custom');
             const hess = document.getElementById('adv-opt-rescue-hess');
             if (!select || !hess) return;
-            // Rescue off is a deliberate state - never auto-fill a method over it.
-            if (select.value === 'none') return;
 
             const suggested = getSuggestedAdvancedOptRescue();
             const options = Array.from(select.options).map(o => o.value);
@@ -10496,8 +10492,6 @@ end
             const custom = document.getElementById('adv-ref-rescue-method-custom');
             const hess = document.getElementById('adv-ref-rescue-hess');
             if (!select || !hess) return;
-            // Rescue off is a deliberate state - never auto-fill a method over it.
-            if (select.value === 'none') return;
 
             const suggested = getSuggestedAdvancedRefRescue();
             const options = Array.from(select.options).map(o => o.value);
