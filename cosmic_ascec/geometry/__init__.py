@@ -20,6 +20,15 @@ from cosmic_ascec.geometry.box import (
     calculate_optimal_box_length,
     has_primary_hydrogen_bonds,
 )
+from cosmic_ascec.geometry.fragments import (
+    POLAR_HEAVY_SYMBOLS,
+    POLAR_HEAVY_Z,
+    XH_DISTANCE_TOLERANCE,
+    count_fragments,
+    find_fragments,
+    iter_bonds,
+    polar_xh_bonds,
+)
 from cosmic_ascec.geometry.inertia import (
     calculate_inertia_tensor,
     calculate_mass_center,
@@ -49,9 +58,12 @@ __all__ = [
     "DEFAULT_INTERMOLECULAR_OVERLAP_SCALE",
     "HBondAnalysis",
     "Molecule",
+    "POLAR_HEAVY_SYMBOLS",
+    "POLAR_HEAVY_Z",
     "PlacementOutcome",
     "PlacementResult",
     "PlacementSettings",
+    "XH_DISTANCE_TOLERANCE",
     "calculate_hydrogen_bond_potential",
     "calculate_inertia_tensor",
     "calculate_mass_center",
@@ -63,8 +75,12 @@ __all__ = [
     "calculate_rotational_constants",
     "check_intermolecular_overlap",
     "check_intramolecular_overlap",
+    "count_fragments",
     "find_connected_atoms",
+    "find_fragments",
     "find_rotatable_bonds",
     "has_primary_hydrogen_bonds",
     "initialize_cluster",
+    "iter_bonds",
+    "polar_xh_bonds",
 ]

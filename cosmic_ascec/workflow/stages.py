@@ -100,6 +100,12 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 import numpy as np
 
 from cosmic_ascec import levels as _levels
+from cosmic_ascec.elements.data import SYMBOL_TO_Z
+from cosmic_ascec.quantum_chemistry.xtb import (
+    DEFAULT_CONSTRAIN_FORCE_CONSTANT,
+    XCONTROL_EXTENSION,
+    write_xcontrol_constraints,
+)
 from cosmic_ascec.workflow.context import WorkflowContext
 from cosmic_ascec.workflow.job_registry import (
     _adopt_ascec_job,
@@ -219,6 +225,11 @@ __all__ = [
     "parse_xtb_options_from_template",
     "parse_xtb_options_from_launcher",
     "build_xtb_runtime_options",
+    "parse_constrain_stage_arg",
+    "parse_xtb_constrain_from_template",
+    "write_xtb_constraints_for_atoms",
+    "xtb_namespace_flag_list",
+    "xtb_namespace_flags",
     "is_xtb_method",
     "convert_xtb_for_orca_version",
     "detect_xtb_in_template",
@@ -1022,7 +1033,10 @@ def _process_xyz_file_for_calc(xyz_file_data):
     This is a module-level function to support multiprocessing.
     Used by both simple and standard calculation workflows.
     """
-    xyz_file, template_content, optimization_dir_path, qm_program, input_ext, total_xyz_files, use_combined_naming = xyz_file_data
+    # Trailing fields are optional so older 7-tuple callers keep working.
+    (xyz_file, template_content, optimization_dir_path, qm_program, input_ext,
+     total_xyz_files, use_combined_naming, *_extra) = xyz_file_data
+    constrain_fc = _extra[0] if _extra else None
 
     configurations = extract_configurations_from_xyz(xyz_file)
     if not configurations:
@@ -1073,7 +1087,7 @@ def _process_xyz_file_for_calc(xyz_file_data):
         input_path = os.path.join(optimization_dir_path, input_name)
 
         if qm_program == 'xtb':
-            if create_xyz_input_file(config, input_path):
+            if create_xyz_input_file(config, input_path, constrain_fc):
                 file_input_files.append(input_name)
         else:
             if create_qm_input_file(config, template_content, input_path, qm_program):
@@ -1091,8 +1105,10 @@ def _process_xyz_file_for_opt(xyz_file_data):
     Process a single XYZ file for optimization system creation.
     This is a module-level function to support multiprocessing.
     """
-    xyz_file, template_content, opt_dir, qm_program, input_ext = xyz_file_data
-    
+    # Trailing fields are optional so older 5-tuple callers keep working.
+    xyz_file, template_content, opt_dir, qm_program, input_ext, *_extra = xyz_file_data
+    constrain_fc = _extra[0] if _extra else None
+
     # Extract configurations
     configurations = extract_configurations_from_xyz(xyz_file)
     if not configurations:
@@ -1131,7 +1147,7 @@ def _process_xyz_file_for_opt(xyz_file_data):
         
         # Create input file
         if qm_program == 'xtb':
-            if create_xyz_input_file(config, input_path):
+            if create_xyz_input_file(config, input_path, constrain_fc):
                 file_input_files.append(input_name)
         else:
             if create_qm_input_file(config, template_content, input_path, qm_program):
@@ -2404,6 +2420,8 @@ _XTB_RESERVED_DIRECTIVES = frozenset({
     'nprocs', 'maxiter', 'maxcycle', 'maxcycles',
     'charge', 'chrg', 'uhf', 'mult', 'multiplicity',
     'freq', 'num',                      # spelled --hess by the keyword scan
+    'constrain',                        # consumed by parse_xtb_constrain_from_template;
+                                        # xtb has no --constrain flag, only --input
     'xtb', 'orca', 'gaussian',          # stray template headers
 })
 
@@ -2573,6 +2591,31 @@ def parse_xtb_options_from_template(template_content: str) -> str:
     return ' '.join(flags).strip()
 
 
+def parse_xtb_constrain_from_template(template_content: str) -> Optional[float]:
+    """Read a ``# constrain [force_constant]`` directive out of an ``#xtb`` block.
+
+    Returns the force constant in au, or ``None`` when the block has no
+    ``# constrain`` line. Deliberately kept out of
+    :func:`parse_xtb_options_from_template`: that function returns a flag
+    string, and constraints do not become a flag. xtb has no ``--constrain``
+    option -- the force constant has to travel out of band so the input-file
+    writer can render an xcontrol ``$constrain`` block per structure, which the
+    command builders then pass with ``--input``.
+
+    A bare ``# constrain`` means :data:`DEFAULT_CONSTRAIN_FORCE_CONSTANT`.
+    """
+    match = re.search(r'#\s*constrain\b(?:\s+([0-9]*\.?[0-9]+))?',
+                      template_content or '', re.IGNORECASE)
+    if not match:
+        return None
+    if match.group(1):
+        try:
+            return float(match.group(1))
+        except ValueError:
+            pass
+    return DEFAULT_CONSTRAIN_FORCE_CONSTANT
+
+
 # --- def parse_xtb_options_from_launcher  (ascec-v04.py 6079-6096) ---
 def parse_xtb_options_from_launcher(launcher_content: str) -> str:
     """Extract xTB command-line options from an existing launcher."""
@@ -2589,6 +2632,9 @@ def parse_xtb_options_from_launcher(launcher_content: str) -> str:
             if opts:
                 # Namespace is injected by command builders; keep launcher-parsed options portable.
                 opts = re.sub(r'\s--namespace(?:\s+\S+|=\S+)?', '', f' {opts}').strip()
+                # Same reason: the xcontrol file is per-structure, so a stem
+                # captured from one launcher must not follow another structure.
+                opts = re.sub(r'\s(?:--input|-I)(?:\s+\S+|=\S+)?', '', f' {opts}').strip()
                 return opts
 
     return '--gfn 2 --opt'
@@ -2611,6 +2657,9 @@ def build_xtb_runtime_options(xtb_options: str, qm_nproc: Optional[int] = None,
     opts = re.sub(r'\s--parallel(?:\s+\S+|=\S+)?', '', f' {opts}').strip()
     opts = re.sub(r'\s--cycles(?:\s+\S+|=\S+)?', '', f' {opts}').strip()
     opts = re.sub(r'\s--namespace(?:\s+\S+|=\S+)?', '', f' {opts}').strip()
+    # The xcontrol path is per-structure and is re-injected by
+    # xtb_namespace_flags() at each command site, so drop any stale one here.
+    opts = re.sub(r'\s(?:--input|-I)(?:\s+\S+|=\S+)?', '', f' {opts}').strip()
 
     if qm_nproc and qm_nproc > 0:
         opts = f"{opts} --parallel {qm_nproc}".strip()
@@ -2631,6 +2680,58 @@ def build_xtb_runtime_options(xtb_options: str, qm_nproc: Optional[int] = None,
             opts = f"{opts} --uhf {uhf}".strip()
 
     return opts
+
+
+def parse_constrain_stage_arg(arg: str) -> Optional[float]:
+    """Read ``--constrain`` / ``--constrain=<fc>`` from a stage argument.
+
+    Returns the force constant in au, or ``None`` when ``arg`` is not the
+    constrain flag. A bare ``--constrain`` means
+    :data:`DEFAULT_CONSTRAIN_FORCE_CONSTANT`; a malformed value falls back to
+    the same default rather than aborting the stage.
+    """
+    if arg == '--constrain':
+        return DEFAULT_CONSTRAIN_FORCE_CONSTANT
+    if arg.startswith('--constrain='):
+        try:
+            return float(arg.split('=', 1)[1])
+        except ValueError:
+            return DEFAULT_CONSTRAIN_FORCE_CONSTANT
+    return None
+
+
+def xtb_namespace_flags(basename: str, working_dir: str = '') -> str:
+    """``--namespace <basename>``, plus ``--input <basename>.xcontrol`` if present.
+
+    Every xtb command this module emits is namespaced by the input stem so
+    concurrent jobs in one directory cannot collide over ``xtbrestart`` and
+    friends. The constraint file rides the same stem, so the two belong
+    together -- keeping them in one helper is what stops the six command
+    sites from drifting apart.
+
+    Gating on the file *existing* rather than on a flag means resumes, restarts
+    and structures with no polar X-H bond all behave correctly with no extra
+    bookkeeping: no file, no ``--input``, byte-identical command to before.
+
+    Args:
+        basename: Input stem, without extension (also the xtb namespace).
+        working_dir: Directory the command will run in; the constraint file is
+            looked up there. Defaults to the current directory, which is where
+            the generated launchers run.
+
+    Returns:
+        A command-line fragment, e.g. ``--namespace opt_conf_1 --input opt_conf_1.xcontrol``.
+    """
+    return ' '.join(xtb_namespace_flag_list(basename, working_dir))
+
+
+def xtb_namespace_flag_list(basename: str, working_dir: str = '') -> List[str]:
+    """List form of :func:`xtb_namespace_flags`, for ``subprocess`` arg lists."""
+    flags = ['--namespace', basename]
+    control_name = basename + XCONTROL_EXTENSION
+    if os.path.exists(os.path.join(working_dir or '.', control_name)):
+        flags += ['--input', control_name]
+    return flags
 
 
 # Files a QM engine drops next to a real calculation: ORCA's optimization
@@ -2749,7 +2850,8 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
                           qm_nproc: Optional[int] = None,
                           xtb_cycles: Optional[int] = None,
                           charge: Optional[int] = None,
-                          multiplicity: Optional[int] = None) -> str:
+                          multiplicity: Optional[int] = None,
+                          constrain_fc: Optional[float] = None) -> str:
     """
     Unified function to create QM input files and launcher scripts for both
     optimization and refinement stages.
@@ -2945,13 +3047,21 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
     total_xyz_files = len(xyz_files)
     use_combined_naming = (auto_select == 'combined')
     
+    # Constraints: the stage flag (--constrain[=fc]) wins over the template's
+    # "# constrain" directive, so a one-off command-line override beats the
+    # setting baked into the .asc. Only xTB has an xcontrol file to write.
+    effective_constrain_fc = None
+    if qm_program == 'xtb':
+        effective_constrain_fc = (constrain_fc if constrain_fc is not None
+                                  else parse_xtb_constrain_from_template(template_content))
+
     # Prepare arguments
     if stage_type == "optimization":
-        xyz_file_args = [(xyz_file, template_content, output_dir, qm_program, input_ext, total_xyz_files, use_combined_naming) 
+        xyz_file_args = [(xyz_file, template_content, output_dir, qm_program, input_ext, total_xyz_files, use_combined_naming, effective_constrain_fc)
                          for xyz_file in xyz_files]
         process_func = _process_xyz_file_for_calc
     else: # refinement
-        xyz_file_args = [(xyz_file, template_content, output_dir, qm_program, input_ext) 
+        xyz_file_args = [(xyz_file, template_content, output_dir, qm_program, input_ext, effective_constrain_fc)
                          for xyz_file in xyz_files]
         process_func = _process_xyz_file_for_opt
         
@@ -2978,6 +3088,24 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
     
     if not all_input_files:
         return "No input files were created successfully."
+
+    if effective_constrain_fc is not None:
+        # State the bias plainly. xtb's printed TOTAL ENERGY includes the
+        # constraint term, so these energies are not comparable with
+        # unconstrained ones and must not be ranked against them directly.
+        control_files = [f for f in os.listdir(output_dir)
+                         if f.endswith(XCONTROL_EXTENSION)]
+        n_constraints = 0
+        for name in control_files:
+            try:
+                with open(os.path.join(output_dir, name), encoding='utf-8') as handle:
+                    n_constraints += handle.read().count('distance:')
+            except OSError:
+                pass
+        print(f"  Constraints: {len(control_files)}/{len(all_input_files)} structures, "
+              f"{n_constraints} polar X-H bonds held, FC = {effective_constrain_fc} au")
+        print("               energies include the bias term - "
+              "use 'cosmic --sp' for an unconstrained ranking")
         
     # Deduplicate input files: keep only flat filenames (basenames)
     # This prevents duplicate commands like motif_29/motif_29_opt.inp AND motif_29_opt.inp
@@ -3070,7 +3198,8 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
                         cmd = f"{qm_executable} < {input_file} > {output_file}"
                     elif qm_program == 'xtb':
                         xtb_namespace = os.path.splitext(input_file)[0]
-                        cmd = f"{qm_executable} {input_file} {xtb_options} --namespace {xtb_namespace} > {output_file} 2>&1"
+                        ns_flags = xtb_namespace_flags(xtb_namespace, output_dir)
+                        cmd = f"{qm_executable} {input_file} {xtb_options} {ns_flags} > {output_file} 2>&1"
                     else:  # orca
                         cmd = f"{qm_executable} {input_file} > {output_file}"
 
@@ -3109,7 +3238,8 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
                 for i, input_file in enumerate(launcher_input_files):
                     output_file = input_file.replace(input_ext, output_ext)
                     xtb_namespace = os.path.splitext(input_file)[0]
-                    cmd = f"xtb {input_file} {xtb_options} --namespace {xtb_namespace} > {output_file} 2>&1"
+                    ns_flags = xtb_namespace_flags(xtb_namespace, output_dir)
+                    cmd = f"xtb {input_file} {xtb_options} {ns_flags} > {output_file} 2>&1"
                     if i < len(launcher_input_files) - 1:
                         f.write(f"{cmd} ; \\\n")
                     else:
@@ -7146,6 +7276,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     max_critical = 0  # Default: 0% critical threshold (retry all)
                     max_skipped = None
                     concurrent_jobs = 1
+                    constrain_fc = None
                     _skipped_set = False
                     _concurrent_given = False
 
@@ -7164,6 +7295,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 _concurrent_given = True
                             except ValueError:
                                 pass
+                        elif parse_constrain_stage_arg(arg) is not None:
+                            constrain_fc = parse_constrain_stage_arg(arg)
 
                     # If --skipped given, use skipped threshold instead of default critical=0
                     if _skipped_set:
@@ -7357,6 +7490,10 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
                         # Add concurrent jobs count and total CPU time for protocol summary
                         calc_result['concurrent_jobs'] = concurrent_jobs
+                        # Record the constraint setting so a constrained run stays
+                        # identifiable after the fact — its energies carry a bias term.
+                        if constrain_fc is not None:
+                            calc_result['constrain_fc'] = constrain_fc
                         if hasattr(context, 'optimization_total_cpu_time'):
                             calc_result['total_cpu_time'] = context.optimization_total_cpu_time
 
@@ -7690,6 +7827,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     max_critical = 0  # Default: 0% critical threshold (retry all)
                     max_skipped = None
                     concurrent_jobs = 1
+                    constrain_fc = None
                     _skipped_set = False
                     _concurrent_given = False
 
@@ -7708,6 +7846,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 _concurrent_given = True
                             except ValueError:
                                 pass
+                        elif parse_constrain_stage_arg(arg) is not None:
+                            constrain_fc = parse_constrain_stage_arg(arg)
 
                     # If --skipped given, use skipped threshold instead of default critical=0
                     if _skipped_set:
@@ -7897,6 +8037,10 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
 
                         # Add concurrent jobs count and total CPU time for protocol summary
                         opt_result['concurrent_jobs'] = concurrent_jobs
+                        # Record the constraint setting so a constrained run stays
+                        # identifiable after the fact — its energies carry a bias term.
+                        if constrain_fc is not None:
+                            opt_result['constrain_fc'] = constrain_fc
                         if hasattr(context, 'refinement_total_cpu_time'):
                             opt_result['total_cpu_time'] = context.refinement_total_cpu_time
 
@@ -8071,6 +8215,7 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                     max_critical = 0  # Default: 0% critical threshold (retry all)
                     max_skipped = None
                     concurrent_jobs = 1
+                    constrain_fc = None
                     _skipped_set = False
                     _concurrent_given = False
 
@@ -8089,6 +8234,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                                 _concurrent_given = True
                             except ValueError:
                                 pass
+                        elif parse_constrain_stage_arg(arg) is not None:
+                            constrain_fc = parse_constrain_stage_arg(arg)
 
                     # If --skipped given, use skipped threshold instead of default critical=0
                     if _skipped_set:
@@ -8309,6 +8456,8 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
                             opt_result['total'] = eref_t
 
                         opt_result['concurrent_jobs'] = concurrent_jobs
+                        if constrain_fc is not None:
+                            opt_result['constrain_fc'] = constrain_fc
                         eref_cpu = getattr(context, 'eref_total_cpu_time', None)
                         if eref_cpu is not None:
                             opt_result['total_cpu_time'] = eref_cpu
@@ -10298,7 +10447,7 @@ def _run_qm_job_direct(qm_program: str, calc_working_dir: str,
     if qm_program == 'xtb':
         env.setdefault('ASCEC_XTB_RUNTIME', '1')
         cmd = ['xtb', input_file_relative, *shlex.split(xtb_options or ''),
-               '--namespace', script_basename]
+               *xtb_namespace_flag_list(script_basename, calc_working_dir)]
     elif qm_program == 'orca':
         cmd = [orca_exe or 'orca', input_file_relative]
     elif qm_program == 'gaussian':
@@ -10392,7 +10541,8 @@ def _run_single_qm_job(job_info: Dict[str, Any]) -> Dict[str, Any]:
                     item.startswith(script_basename + '.') or
                     item.startswith(script_basename + '_')):
                 continue
-            if item.endswith(('.inp', '.com', '.gjf', '.hessian', '.hess')):
+            if item.endswith(('.inp', '.com', '.gjf', '.hessian', '.hess',
+                              XCONTROL_EXTENSION)):
                 continue
             if item.endswith('.xyz') and item == input_file_relative:
                 continue
@@ -10418,7 +10568,8 @@ def _run_single_qm_job(job_info: Dict[str, Any]) -> Dict[str, Any]:
                 f.write(f"$GAUSS_ROOT/g16 {input_file_relative}\n")
             elif qm_program == 'xtb':
                 f.write(f"export {_xtb_thread_env_prefix()}\n")
-                f.write(f"{_xtb_thread_env_prefix()} xtb {input_file_relative} {xtb_options} --namespace {script_basename} > {output_file_relative} 2>&1\n")
+                f.write(f"{_xtb_thread_env_prefix()} xtb {input_file_relative} {xtb_options} "
+                        f"{xtb_namespace_flags(script_basename, calc_working_dir)} > {output_file_relative} 2>&1\n")
 
         os.chmod(temp_script, 0o755)
         script_name = os.path.basename(temp_script)
@@ -11505,12 +11656,20 @@ def create_qm_input_file(config_data: Dict, template_content: str, output_path: 
         return False
 
 
-def create_xyz_input_file(config_data: Dict, output_path: str) -> bool:
+def create_xyz_input_file(config_data: Dict, output_path: str,
+                          constrain_fc: Optional[float] = None) -> bool:
     """
     Creates an XYZ file directly from configuration data.
 
     This is used by standalone xTB, which reads Cartesian coordinates
     from XYZ files directly instead of a separate QM input template.
+
+    When ``constrain_fc`` is given, an xcontrol file is written alongside the
+    deck as ``<stem>.xcontrol``, holding every polar X-H bond at its current
+    length. That is what stops a charged metal centre from deprotonating its
+    solvent mid-optimisation. The command builders pick the file up by
+    existence, so a structure with no polar X-H bond simply gets no file and
+    runs exactly as before.
     """
     try:
         atoms = config_data.get('atoms', [])
@@ -11531,10 +11690,42 @@ def create_xyz_input_file(config_data: Dict, output_path: str) -> bool:
                     symbol, x, y, z = atom
                     f.write(f"{symbol: <3} {x: 12.6f}  {y: 12.6f}  {z: 12.6f}\n")
 
+        if constrain_fc is not None:
+            write_xtb_constraints_for_atoms(atoms, output_path, constrain_fc)
+
         return True
     except IOError as e:
         print(f"Error creating XYZ input file '{output_path}': {e}")
         return False
+
+
+def write_xtb_constraints_for_atoms(atoms: List, xyz_path: str,
+                                    force_constant: float) -> int:
+    """Write ``<stem>.xcontrol`` next to ``xyz_path``; return the constraint count.
+
+    ``atoms`` is the config-data atom list -- either 4-tuples of
+    ``(symbol, x, y, z)`` or the 7-tuple variant carrying coordinate strings.
+    Returns 0 (and writes nothing) when the structure has no polar X-H bond or
+    when a symbol is unrecognised.
+    """
+    symbols, coords = [], []
+    for atom in atoms:
+        symbols.append(str(atom[0]).strip().capitalize())
+        coords.append([float(atom[1]), float(atom[2]), float(atom[3])])
+
+    atomic_numbers = [SYMBOL_TO_Z.get(sym) for sym in symbols]
+    if any(z is None for z in atomic_numbers):
+        # An unrecognised element means the bond criterion has no radius to
+        # work with; skip constraints rather than emit a wrong atom list.
+        return 0
+
+    control_path = os.path.splitext(xyz_path)[0] + XCONTROL_EXTENSION
+    return write_xcontrol_constraints(
+        np.array(coords, dtype=float),
+        atomic_numbers,
+        Path(control_path),
+        force_constant=force_constant,
+    )
 
 
 def get_box_size_recommendation(input_file_path: str, packing_percent: float = 20.0) -> Optional[float]:
@@ -12019,6 +12210,9 @@ def _run_xtb_rescue_hessian(xyz_file: str, rescue_method: str, working_dir: str,
     charge_flag = f'--chrg {charge}' if charge != 0 else ''
     uhf_flag = f'--uhf {multiplicity - 1}' if multiplicity > 1 else ''
     cmd_parts = ['xtb', xyz_basename, gfn_flags, '--hess',
+                 # No --input here on purpose: this is a Hessian on an already
+                 # optimised geometry, and a bias potential would contaminate
+                 # the force constants and hence the frequencies.
                  '--namespace', rescue_namespace]
     if charge_flag:
         cmd_parts.append(charge_flag)
@@ -12330,6 +12524,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
     max_skipped = None    # Not set by default (only --critical is used unless --skipped specified)
     max_stage_redos = 3   # default: 3 stage redos (--redo: redo entire optimization+cosmic)
     concurrent_jobs = 1   # default: 1 concurrent QM job for optimization
+    constrain_fc = None   # --constrain[=fc]: hold polar X-H bonds during opt
     _critical_set = False
     _skipped_set = False
     _concurrent_given = False
@@ -12354,6 +12549,8 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
         elif arg.startswith('--concurrent='):
             concurrent_jobs = max(1, int(arg.split('=')[1]))
             _concurrent_given = True
+        elif parse_constrain_stage_arg(arg) is not None:
+            constrain_fc = parse_constrain_stage_arg(arg)
         elif arg.startswith('--auto-select='):
             auto_select = arg.split('=')[1]
         elif arg == '-a':
@@ -12630,6 +12827,7 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
             xtb_cycles=getattr(context, 'xtb_cycles', None),
             charge=getattr(context, 'charge', None),
             multiplicity=getattr(context, 'multiplicity', None),
+            constrain_fc=constrain_fc,
         )
         # Check if calculate_input_files succeeded (returns string message)
         # Successfully created files contain "Created" in the message
@@ -12756,7 +12954,8 @@ def execute_optimization_stage(context: WorkflowContext, stage: Dict[str, Any]) 
                             if qm_program == 'orca':
                                 cmd = f"{orca_exe_for_launcher} {inp_base}.inp > {inp_base}.out"
                             elif qm_program == 'xtb':
-                                cmd = f"{_xtb_thread_env_prefix()} xtb {inp_base}.xyz {xtb_options_for_launcher} --namespace {inp_base} > {inp_base}.out 2>&1"
+                                ns_flags = xtb_namespace_flags(inp_base, optimization_dir_path)
+                                cmd = f"{_xtb_thread_env_prefix()} xtb {inp_base}.xyz {xtb_options_for_launcher} {ns_flags} > {inp_base}.out 2>&1"
                             else:
                                 cmd = f"g16 {inp_base}.com"
                             if i < len(launcher_inputs) - 1:
@@ -13707,6 +13906,7 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
     max_critical = 0  # Default: 0% critical structures allowed (retry all)
     max_skipped = None
     concurrent_jobs = 1   # default: 1 concurrent job for refinement (serial)
+    constrain_fc = None   # --constrain[=fc]: hold polar X-H bonds during refinement
     _critical_set = False
     _skipped_set = False
     _concurrent_given = False
@@ -13729,6 +13929,8 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
         elif arg.startswith('--concurrent='):
             concurrent_jobs = max(1, int(arg.split('=')[1]))
             _concurrent_given = True
+        elif parse_constrain_stage_arg(arg) is not None:
+            constrain_fc = parse_constrain_stage_arg(arg)
 
     # If --skipped given without explicit --critical, clear the default critical=0
     if _skipped_set and not _critical_set:
@@ -14048,7 +14250,12 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
         all_input_files = []
         for xyz_file in all_xyz_files:
             # Call _process_xyz_file_for_opt with the correct parameters
-            xyz_file_data = (xyz_file, template_content, opt_dir, qm_program, input_ext)
+            effective_constrain_fc = None
+            if qm_program == 'xtb':
+                effective_constrain_fc = (constrain_fc if constrain_fc is not None
+                                          else parse_xtb_constrain_from_template(template_content))
+            xyz_file_data = (xyz_file, template_content, opt_dir, qm_program,
+                             input_ext, effective_constrain_fc)
             result_files, message = _process_xyz_file_for_opt(xyz_file_data)
             all_input_files.extend(result_files)
         
@@ -14142,7 +14349,8 @@ def execute_refinement_stage(context: WorkflowContext, stage: Dict[str, Any], _s
                         getattr(context, 'xtb_cycles', None),
                     )
                     f.write(f"export {_xtb_thread_env_prefix()}\n")
-                    f.write(f"{_xtb_thread_env_prefix()} xtb {basename}.xyz {xtb_opts} --namespace {basename} > {basename}.out 2>&1")
+                    f.write(f"{_xtb_thread_env_prefix()} xtb {basename}.xyz {xtb_opts} "
+                            f"{xtb_namespace_flags(basename, opt_dir)} > {basename}.out 2>&1")
                 else:
                     # For Gaussian, use g16 or g09
                     f.write(f"g16 {basename}.com")

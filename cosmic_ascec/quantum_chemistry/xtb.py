@@ -20,23 +20,43 @@ keyword section to render.
 The clustering pipeline also pulls HOMO/LUMO, dipole, and rotational
 constants out of the xTB output — those regexes live alongside the
 adapter below.
+
+* **Constraints:** :func:`write_xcontrol_constraints` renders an xcontrol
+  ``$constrain`` block that holds polar X–H bonds, for the charged-metal case
+  where GFN2-xTB otherwise deprotonates the solvent. xtb has no ``--constrain``
+  command-line flag; constraints reach it only via ``--input <file>``.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
 
 from cosmic_ascec.elements import Z_TO_SYMBOL
 from cosmic_ascec.exceptions import QMError
+from cosmic_ascec.geometry.fragments import polar_xh_bonds
 from cosmic_ascec.file_formats.asc_schema import QMSpec
 from cosmic_ascec.geometry.molecule import Cluster
 from cosmic_ascec.quantum_chemistry.base import QMResult, QuantumChemistryAdapter
 from cosmic_ascec.quantum_chemistry.registry import register_adapter
 
+
+DEFAULT_CONSTRAIN_FORCE_CONSTANT: float = 0.5
+"""Force constant (au) for the generated ``$constrain`` block.
+
+xtb's own default is 0.05, which is far too weak to hold a bond: with a bond
+biased toward a 1.300 Å reference, 0.05 lets it relax to 1.050 Å — the
+constraint is effectively ignored. Measured against xtb 6.7.0, the same bond
+lands at 1.216 Å (FC 0.25), 1.257 (0.5), 1.278 (1.0) and 1.296 (5.0). 0.5 holds
+the bond while still letting the rest of the structure relax; raise it toward
+1.0 if a proton still migrates.
+"""
+
+XCONTROL_EXTENSION: str = ".xcontrol"
+"""Suffix for the per-structure detailed-input file, written next to the deck."""
 
 _TOTAL_ENERGY_RE = re.compile(r"TOTAL ENERGY\s+([-+]?\d+\.\d+)\s*Eh")
 _TERMINATION_STRING = "normal termination of xtb"
@@ -192,4 +212,86 @@ def _detect_method(content: str) -> str:
     return "GFN2-xTB"
 
 
-__all__ = ["XTBAdapter"]
+# --------------------------------------------------------------------------- #
+# xcontrol constraint generation                                              #
+# --------------------------------------------------------------------------- #
+
+
+def build_xcontrol_constraints(
+    coords,
+    atomic_numbers: Sequence[int],
+    *,
+    force_constant: float = DEFAULT_CONSTRAIN_FORCE_CONSTANT,
+) -> Optional[str]:
+    """Render a ``$constrain`` block holding every polar X–H bond.
+
+    Uses ``distance: i,j,auto`` — one biased pair per bond — and deliberately
+    *not* ``atoms: <list>``. The ``atoms`` form looks like the obvious way to
+    keep a fragment together, but repeated ``atoms:`` lines merge into a single
+    list and the bias then covers every internal coordinate among the union,
+    intermolecular distances included. Measured on two waters 5.52 Å apart:
+    unconstrained they close to 2.84 Å, but under ``atoms: 1-3`` + ``atoms: 4-6``
+    they stay pinned at 5.52 — the whole cluster freezes and the optimisation
+    does nothing. The pairwise ``distance`` form leaves the same pair free to
+    close to 2.84 while the O–H bonds hold.
+
+    ``auto`` means "hold at the value this structure already has", so no
+    reference geometry is needed.
+
+    Args:
+        coords: ``(N, 3)`` Cartesian coordinates in Ångström.
+        atomic_numbers: ``N`` atomic numbers, aligned with ``coords``.
+        force_constant: Bias strength in au; see
+            :data:`DEFAULT_CONSTRAIN_FORCE_CONSTANT`.
+
+    Returns:
+        The block text, or ``None`` when the structure has no polar X–H bond —
+        an empty ``$constrain`` block makes xtb warn, so there is nothing to
+        write in that case.
+    """
+    pairs = polar_xh_bonds(coords, atomic_numbers)
+    if not pairs:
+        return None
+
+    lines = ["$constrain", f"  force constant={force_constant}"]
+    for heavy, hydrogen in pairs:
+        # xtb atom indices are 1-based.
+        label_heavy = f"{Z_TO_SYMBOL.get(int(atomic_numbers[heavy]), 'X')}{heavy + 1}"
+        label_h = f"{Z_TO_SYMBOL.get(int(atomic_numbers[hydrogen]), 'X')}{hydrogen + 1}"
+        lines.append(
+            f"  distance: {heavy + 1},{hydrogen + 1},auto"
+            f"     # {label_heavy}-{label_h}"
+        )
+    lines.append("$end")
+    return "\n".join(lines) + "\n"
+
+
+def write_xcontrol_constraints(
+    coords,
+    atomic_numbers: Sequence[int],
+    path: Path,
+    *,
+    force_constant: float = DEFAULT_CONSTRAIN_FORCE_CONSTANT,
+) -> int:
+    """Write the ``$constrain`` block to ``path``; return the constraint count.
+
+    Writes nothing and returns ``0`` when the structure has no polar X–H bond.
+    Callers gate ``--input`` on the file existing, so a zero return needs no
+    further bookkeeping.
+    """
+    block = build_xcontrol_constraints(
+        coords, atomic_numbers, force_constant=force_constant
+    )
+    if block is None:
+        return 0
+    Path(path).write_text(block, encoding="utf-8")
+    return block.count("distance:")
+
+
+__all__ = [
+    "DEFAULT_CONSTRAIN_FORCE_CONSTANT",
+    "XCONTROL_EXTENSION",
+    "XTBAdapter",
+    "build_xcontrol_constraints",
+    "write_xcontrol_constraints",
+]

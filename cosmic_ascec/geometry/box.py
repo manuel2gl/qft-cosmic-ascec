@@ -33,6 +33,7 @@ import numpy as np
 
 from cosmic_ascec.elements.data import Z_TO_SYMBOL
 from cosmic_ascec.elements.radii import get_radius
+from cosmic_ascec.geometry.fragments import POLAR_HEAVY_SYMBOLS
 from cosmic_ascec.geometry.molecule import Molecule
 
 
@@ -41,8 +42,10 @@ _DEFAULT_PACKING_FRACTIONS: Tuple[float, ...] = (
     0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50,
 )
 
-# v04: ascec-v04.py lines 4370, 4403.
-_HB_ACCEPTOR_SYMBOLS = frozenset({"N", "P", "O", "S", "Se", "F", "Cl", "Br", "I"})
+# v04: ascec-v04.py lines 4370, 4403. Shared with the xTB constraint generator
+# in ``geometry.fragments`` — a good H-bond acceptor and a deprotonatable donor
+# are the same elements, so the set lives in one place.
+_HB_ACCEPTOR_SYMBOLS = POLAR_HEAVY_SYMBOLS
 
 # v04: ascec-v04.py lines 4278, 4322, 4395, 4399.
 _HULL_SURFACE_POINTS_PER_ATOM = 50
