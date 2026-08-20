@@ -96,6 +96,42 @@ Aliases are written into a fenced block in `~/.bashrc` (and `~/.zshrc` if presen
 
 Only that block is rewritten on reinstall and removed on uninstall, so your own aliases are never touched. Re-running `install.sh` on a checkout with uncommitted edits **skips** the `git pull` and tells you why, rather than discarding your work.
 
+##### 🖥️ HPC clusters (shared, module-provided conda)
+
+By default the installer looks for conda in the usual places and installs its own Miniconda into `$HOME` if it finds none. On a cluster, conda usually comes from a module and lives somewhere else entirely, so point the installer at it:
+
+```bash
+module load anaconda3                        # whatever your site calls it
+CONDA_ROOT="$(conda info --base)" bash install.sh
+```
+
+Nothing is ever written into that shared prefix. The `py11` environment is created in your own envs directory (normally `~/.conda/envs`) and the aliases point at its Python by absolute path, so they also work inside batch jobs.
+
+Three variables cover the awkward cases:
+
+| Variable | Meaning |
+|---|---|
+| `CONDA_ROOT` | Prefix of an existing conda to reuse — the path `conda info --base` prints. Skips the Miniconda download. |
+| `CONDA_SOLVER` | `auto` (default), `mamba`, `libmamba`, or `classic`. |
+| `INSTALL_MAMBA` | `AUTO` (default), `TRUE`, or `FALSE` — whether mamba may be added to the base environment. |
+
+**About mamba:** the installer prefers it, but never requires it. In `auto` mode it tries, in order:
+
+1. a `mamba` binary already on `PATH` or in the conda prefix;
+2. a conda that already carries the libmamba solver — the same solver engine, driven by conda, which is the normal case for conda 23.10 and newer;
+3. installing mamba, but **only into a base environment this script created itself**. An existing base — yours or the cluster's — is left untouched, because adding mamba to it can trigger a large re-solve of that environment. Pass `INSTALL_MAMBA=TRUE` if that base is yours to change;
+4. classic conda.
+
+So a shared cluster conda with no mamba simply gets driven by classic conda. That is the fallback, not a failure: the environment it produces is identical, the dependency solve is just slower — allow several minutes for the `openbabel` + `xtb` solve rather than assuming it has hung. Skip the probing entirely if you already know the answer:
+
+```bash
+CONDA_ROOT="$(conda info --base)" CONDA_SOLVER=classic bash install.sh
+```
+
+Conda version matters much less than it looks: anything from **conda 22.11** onward understands the `--solver` flag, conda **23.10+** ships libmamba as the default solver, and older conda still works through the classic solver. If the site conda is too old or too restricted for comfort, drop `CONDA_ROOT` and let the installer put a current Miniconda in your `$HOME` — no admin involvement needed, and that base is one it may set mamba up in.
+
+Uninstalling from a module conda takes the same variable: `CONDA_ROOT="$(conda info --base)" bash uninstall.sh`.
+
 #### 🪟 Windows
 
 **1.** Download [`win_install.bat`](https://raw.githubusercontent.com/manuel2gl/qft-cosmic-ascec/main/win_install.bat)
