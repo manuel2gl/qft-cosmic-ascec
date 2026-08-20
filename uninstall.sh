@@ -50,8 +50,12 @@ fi
 # -----------------------------------
 
 # Detect conda the same way install.sh does, so we can call it even if the
-# current shell hasn't been `conda init`-ed.
-if ! command -v conda &> /dev/null; then
+# current shell hasn't been `conda init`-ed. CONDA_ROOT matches the installer's
+# escape hatch for a cluster/module conda that lives outside the usual places:
+#     CONDA_ROOT="$(conda info --base)" bash uninstall.sh
+if [ -n "${CONDA_ROOT:-}" ] && [ -x "$CONDA_ROOT/bin/conda" ]; then
+    eval "$("$CONDA_ROOT/bin/conda" shell.bash hook)"
+elif ! command -v conda &> /dev/null; then
     for candidate in "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/conda" "$HOME/miniforge3" "$HOME/mambaforge" "/opt/conda" "/opt/miniconda3" "/opt/anaconda3"; do
         if [ -x "$candidate/bin/conda" ]; then
             eval "$("$candidate/bin/conda" shell.bash hook)"
