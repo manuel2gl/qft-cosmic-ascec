@@ -3848,6 +3848,17 @@ H  -0.757000  0.586000  0.000000"></textarea>
                             <input type="text" id="adv-opt-xtb-extra" placeholder="e.g. etemp 400, acc 0.5" title="Any xTB command-line options, comma separated, without the leading dashes. Written as '# flag args' lines in the template." oninput="updateAllPreviews()">
                         </div>
                     </div>
+                    <div class="form-row-3" id="adv-opt-xtb-constrain-group" style="display:none;">
+                        <div class="form-group">
+                            <label>Constrain X&ndash;H</label>
+                            <div class="flag-checkbox" title="Hold polar X&ndash;H bonds (O&ndash;H, N&ndash;H, S&ndash;H) at their current length during the optimization, so a coordinating metal cannot deprotonate the solvent. Writes an xcontrol $constrain block per structure. Energies then include the bias term &mdash; rank with 'cosmic --sp'.">
+                                <input type="checkbox" id="adv-opt-xtb-constrain" onchange="updateAllPreviews()">
+                                <span>FC</span>
+                                <input type="number" id="adv-opt-xtb-constrain-fc" value="0.5" min="0.05" step="0.05" oninput="updateAllPreviews()">
+                                <code>au</code>
+                            </div>
+                        </div>
+                    </div>
                     <div class="form-row">
                         <div class="form-group">
                             <label>Rescue Method</label>
@@ -3992,6 +4003,17 @@ H  -0.757000  0.586000  0.000000"></textarea>
                         <div class="form-group">
                             <label>Extra xTB flags</label>
                             <input type="text" id="adv-ref-xtb-extra" placeholder="e.g. etemp 400, acc 0.5" title="Any xTB command-line options, comma separated, without the leading dashes. Written as '# flag args' lines in the template." oninput="updateAllPreviews()">
+                        </div>
+                    </div>
+                    <div class="form-row-3" id="adv-ref-xtb-constrain-group" style="display:none;">
+                        <div class="form-group">
+                            <label>Constrain X&ndash;H</label>
+                            <div class="flag-checkbox" title="Hold polar X&ndash;H bonds (O&ndash;H, N&ndash;H, S&ndash;H) at their current length during the refinement, so a coordinating metal cannot deprotonate the solvent. Writes an xcontrol $constrain block per structure. Energies then include the bias term &mdash; rank with 'cosmic --sp'.">
+                                <input type="checkbox" id="adv-ref-xtb-constrain" onchange="updateAllPreviews()">
+                                <span>FC</span>
+                                <input type="number" id="adv-ref-xtb-constrain-fc" value="0.5" min="0.05" step="0.05" oninput="updateAllPreviews()">
+                                <code>au</code>
+                            </div>
                         </div>
                     </div>
                     <div class="form-row">
@@ -10187,7 +10209,10 @@ end
         const XTB_RESERVED_FLAGS = new Set([
             'name', 'rescue', 'namespace', 'nprocs', 'parallel', 'maxiter',
             'cycles', 'charge', 'chrg', 'uhf', 'mult', 'multiplicity', 'freq',
-            'num', 'hess', 'opt', 'gfn', 'gfnff', 'gfn0', 'gfn1', 'gfn2'
+            'num', 'hess', 'opt', 'gfn', 'gfnff', 'gfn0', 'gfn1', 'gfn2',
+            // Emitted by the dedicated Constrain X-H control below; xtb has no
+            // --constrain flag, so a hand-typed one would be a no-op anyway.
+            'constrain', 'input'
         ]);
 
         function populateXtbSolventSelects() {
@@ -10201,9 +10226,23 @@ end
         }
 
         function syncXtbExtrasVisibility(prefix, theory) {
+            const standalone = isStandaloneXtbTheory(theory);
             const group = document.getElementById(prefix + '-xtb-extras-group');
-            if (!group) return;
-            group.style.display = isStandaloneXtbTheory(theory) ? '' : 'none';
+            if (group) group.style.display = standalone ? '' : 'none';
+            // Only the opt/refinement stages have a constrain row: energy
+            // refinement is a single point, where a bias would change the
+            // energy without changing the geometry it was computed at.
+            const constrainGroup = document.getElementById(prefix + '-xtb-constrain-group');
+            if (constrainGroup) constrainGroup.style.display = standalone ? '' : 'none';
+        }
+
+        // Force constant for the "# constrain" directive, or '' when unticked.
+        // Mirrors parse_xtb_constrain_from_template() on the Python side.
+        function getXtbConstrainFc(prefix) {
+            const box = document.getElementById(prefix + '-xtb-constrain');
+            if (!box || !box.checked) return '';
+            const raw = parseFloat(document.getElementById(prefix + '-xtb-constrain-fc')?.value);
+            return (isFinite(raw) && raw > 0) ? String(raw) : '0.5';
         }
 
         function getXtbSolventValue(prefix) {
@@ -10226,6 +10265,12 @@ end
             if (model && solvent) {
                 lines.push(`# ${model} ${solvent}`);
                 seen.add(model);
+            }
+
+            const constrainFc = getXtbConstrainFc(prefix);
+            if (constrainFc) {
+                lines.push(`# constrain ${constrainFc}`);
+                seen.add('constrain');
             }
 
             const raw = (document.getElementById(prefix + '-xtb-extra')?.value || '').trim();
