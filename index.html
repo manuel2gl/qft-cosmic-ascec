@@ -5320,8 +5320,18 @@ H  -0.757000  0.586000  0.000000"></textarea>
             return parseFloat(document.getElementById('box-size')?.value) || 7;
         }
 
+        // Every substrate is defined relative to the floor, so its coordinates are
+        // only valid for one box length. Re-anchoring is therefore done as a
+        // normalisation step here, at each point that consumes the box, rather than
+        // from a listener on the box inputs: applyAscecAutoBoxLength (the auto
+        // packing box) rewrites all three input values programmatically and fires
+        // no 'input' event at all, so a listener would silently miss exactly the
+        // case that moves the box most often. reanchorSubstrates is idempotent and
+        // costs one pass over the coordinates, so calling it on every draw is safe.
+        //
         // Update basic box viewer (Smart Mode - elegant, animated)
         function updateBasicBoxViewer() {
+            reanchorSubstrates();
             // Recreate viewer from scratch to fully reset camera position, rotation & zoom
             const container = document.getElementById('basic-box-viewer');
             if (!container || typeof $3Dmol === 'undefined') return;
@@ -5519,6 +5529,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
         // Fragments flagged ``fixed`` are drawn at their exact input coordinates,
         // matching what the engine does with a ``*$``-delimited block.
         function randomizeBoxView(mode = 'smart') {
+            reanchorSubstrates();
             const advanced = mode === 'advanced';
 
             let viewer;
@@ -5633,6 +5644,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
         // Advanced box viewer (technical, no animation)
         function updateBoxViewer() {
+            reanchorSubstrates();
             // Refresh the readout first: it must stay correct even when the
             // viewer cannot be created yet (Advanced tab not shown).
             updateAdvancedBoxInfo(getAdvancedBoxSize());
@@ -7125,17 +7137,28 @@ H   2.219500  1.213600  0.000000`
         // Parse the pasted block into the shared preview. Coordinates are centred
         // the same way the Advanced manual path centres them; pin-at-exact-
         // coordinates lives in Advanced mode, and the list chips can pin after the fact.
-        // Shared by the paste box, the lattice shortcuts and the ASE tab, so all
-        // three centre coordinates the same way Advanced mode does.
-        function smartLoadXyzString(name, xyzText) {
+        // Shared by the paste box, the lattice shortcuts and the ASE tab, so by
+        // default all three centre coordinates the same way Advanced mode does.
+        //
+        // The ASE tab's lower-face placement is the one caller that passes
+        // { center: false }: those coordinates are already positioned against the
+        // box, so re-centring here would undo the placement. It pins with
+        // { fixed: true } for the same reason - an unpinned fragment is re-placed
+        // at random anyway. Both default off, so every other caller is unaffected.
+        // `quiet` suppresses the toasts: announcing the load is right when the user
+        // pressed a button, and wrong when the preview is only being kept in step
+        // with a box length they are still dragging.
+        function smartLoadXyzString(name, xyzText,
+                                    { center = true, fixed = false, anchor = null, quiet = false } = {}) {
+            const say = (m, kind) => { if (!quiet) toast(m, kind); };
             const text = (xyzText || '').trim();
-            if (!text) { toast('Enter XYZ coordinates', 'warning'); return false; }
+            if (!text) { say('Enter XYZ coordinates', 'warning'); return false; }
 
             const { atoms, coords } = parseXyzText(text);
-            if (atoms.length === 0) { toast('Could not parse coordinates', 'error'); return false; }
+            if (atoms.length === 0) { say('Could not parse coordinates', 'error'); return false; }
 
-            const centered = centerMolecule(atoms, coords);
-            currentMolData = { atoms: centered.atoms, coords: centered.coords };
+            const placed = center ? centerMolecule(atoms, coords) : { atoms, coords };
+            currentMolData = { atoms: placed.atoms, coords: placed.coords, fixed, anchor };
 
             const nameField = document.getElementById('basic-mol-name');
             if (nameField) nameField.value = name || 'molecule';
@@ -7144,13 +7167,56 @@ H   2.219500  1.213600  0.000000`
             hideNovoprolabsLink();
 
             showBasicMolViewer(currentMolData);
-            toast(`${atoms.length} atoms loaded into the preview`, 'success');
+            say(`${atoms.length} atoms loaded into the preview`, 'success');
             return true;
         }
 
         function smartLoadManualXyz() {
             const name = (document.getElementById('smart-manual-mol-name')?.value || '').trim() || 'molecule';
             return smartLoadXyzString(name, document.getElementById('smart-manual-xyz')?.value || '');
+        }
+
+        // The faces a fragment can be set on, each at -L/2 along one axis.
+        //
+        // `axis` indexes [x, y, z]; the other two lie in the face and get centred.
+        // `turn` carries ase.build's surface normal (+z, the axis it stacks slabs
+        // along) onto that face's outward direction, so the slab lies flat against
+        // the wall instead of standing edge-on to it. The back face needs no turn -
+        // ASE's frame already faces the camera - and the floor needs -90 deg about
+        // x. Both are proper rotations, so no fragment is ever mirrored.
+        //
+        // The cube is isotropic to the engine (moves.py only compares |coord|
+        // against half the edge), so which face a substrate sits on is a question
+        // of what the viewer shows, not of physics.
+        const SUBSTRATE_FACES = {
+            bottom: { axis: 1, label: 'lower face', turn: ([x, y, z]) => [x, z, -y] },
+            back:   { axis: 2, label: 'back face',  turn: ([x, y, z]) => [x, y, z] }
+        };
+        const AXIS_NAMES = ['x', 'y', 'z'];
+
+        // Set a fragment on one face of the box: turned to lie flat, centred on the
+        // two in-face axes, and pushed off the wall by `offset`.
+        function placeOnFace(atoms, coords, face, boxLength, offset = 0) {
+            const spec = SUBSTRATE_FACES[face];
+            if (!spec || coords.length === 0) return { atoms, coords };
+
+            const turned = coords.map(spec.turn);
+            const axis = spec.axis;
+
+            const sum = [0, 0, 0];
+            let nearest = Infinity;
+            for (const p of turned) {
+                sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2];
+                if (p[axis] < nearest) nearest = p[axis];
+            }
+            const n = turned.length;
+            const shift = [0, 1, 2].map(i =>
+                i === axis ? -boxLength / 2 + offset - nearest : -sum[i] / n);
+
+            return {
+                atoms,
+                coords: turned.map(p => [p[0] + shift[0], p[1] + shift[1], p[2] + shift[2]])
+            };
         }
 
         // ---------------------------------------------------------------
@@ -7207,25 +7273,68 @@ H   2.219500  1.213600  0.000000`
         // layer of. Graphite, experimental c/2.
         const ASE_GRAPHENE_INTERLAYER = 3.35;
 
-        // Where each instance sends the structure it built.
+        // Where each instance sends the structure it built, and which box-length
+        // field it measures against. `placement` is 'center' or 'bottom'. A
+        // bottom-face slab arrives already positioned, so deliver's job there is
+        // to stop the downstream centring from undoing that.
+        // An anchor records which face a fragment was set on and how far clear of
+        // it, which is what lets reanchorSubstrates re-place it after a resize.
+        const aseAnchor = (prefix, face) => ({ face, offset: aseOffset(prefix) });
+
+        // The Advanced tab stages its structure as plain text in a textarea, which
+        // carries no metadata, so the anchor is held here alongside the exact text
+        // it belongs to. Paste something else over it and the match fails, so the
+        // anchor is never applied to a fragment it did not come from.
+        let advPendingAnchor = null;
+
         const ASE_PANELS = {
             ase: {
                 host: 'smart-ase-panel',
-                deliver(label, xyz) {
+                stage: 'smart-manual-xyz',
+                deliver(label, xyz, face) {
                     const box = document.getElementById('smart-manual-xyz');
                     if (box) box.value = xyz;
                     const name = document.getElementById('smart-manual-mol-name');
                     if (name) name.value = label;
-                    smartLoadXyzString(label, xyz);
+                    smartLoadXyzString(label, xyz, {
+                        center: !face, fixed: !!face, anchor: face ? aseAnchor('ase', face) : null
+                    });
+                    if (face) {
+                        toast(`Substrate placed on the ${SUBSTRATE_FACES[face].label} and pinned`, 'success');
+                    }
+                },
+                // Same thing without the toast, for a re-place the user did not ask
+                // for by name: the box moved under a structure already staged.
+                restage(xyz, face) {
+                    const name = document.getElementById('smart-manual-mol-name')?.value || 'ase';
+                    smartLoadXyzString(name, xyz, {
+                        center: !face, fixed: !!face, anchor: face ? aseAnchor('ase', face) : null,
+                        quiet: true
+                    });
                 }
             },
             advase: {
                 host: 'ase-mode',
-                deliver(label, xyz) {
+                stage: 'manual-xyz',
+                restage(xyz, face) {
+                    advPendingAnchor = face ? { xyz, anchor: aseAnchor('advase', face) } : null;
+                },
+                deliver(label, xyz, face) {
                     document.getElementById('manual-mol-name').value = label;
                     document.getElementById('manual-xyz').value = xyz;
                     setInputMode('manual');
-                    toast(`${xyz.trim().split('\n').length} atoms ready — press Add Molecule(s)`, 'success');
+                    // 'as-is' is the only add mode that writes these coordinates
+                    // out verbatim; every other one re-centres the fragment, which
+                    // would lift the slab straight back off the floor.
+                    advPendingAnchor = face ? { xyz, anchor: aseAnchor('advase', face) } : null;
+                    if (face) {
+                        const cb = document.getElementById('adv-mol-fixed');
+                        if (cb) { cb.checked = true; toggleAdvMolFixed('adv-mol-fixed'); }
+                    }
+                    const n = xyz.trim().split('\n').length;
+                    toast(face
+                        ? `${n} atoms on the ${SUBSTRATE_FACES[face].label}, pinned — press Add Molecule(s)`
+                        : `${n} atoms ready — press Add Molecule(s)`, 'success');
                 }
             }
         };
@@ -7284,6 +7393,23 @@ H   2.219500  1.213600  0.000000`
                         </div>
                     </div>
 
+                    <div class="inline-group" style="align-items: flex-end; margin-bottom: 10px;">
+                        <div class="form-group" style="flex: 2; margin-bottom: 0;">
+                            <label>Placement in the box</label>
+                            <select id="${prefix}-placement">
+                                <option value="center" selected>Centre of the box (0, 0, 0)</option>
+                                <option value="bottom">Lower face — substrate (pinned)</option>
+                                <option value="back">Back face — substrate (pinned)</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="${prefix}-offset-group" style="flex: 1; margin-bottom: 0;">
+                            <label id="${prefix}-offset-label">Offset from face (Å)</label>
+                            <input id="${prefix}-offset" type="number" value="0" step="0.1">
+                        </div>
+                    </div>
+
+                    <div id="${prefix}-placement-note" style="color: #666; font-size: 0.85em; margin: -4px 0 10px;"></div>
+
                     <div class="form-group" style="margin-bottom: 10px;">
                         <label>Python (runs as-is; the object named <code>atoms</code> is read back)</label>
                         <textarea class="xyz-input" id="${prefix}-code" rows="4" spellcheck="false"></textarea>
@@ -7301,6 +7427,12 @@ H   2.219500  1.213600  0.000000`
             for (const id of ['structure', 'element', 'nx', 'ny', 'nz', 'a']) {
                 document.getElementById(`${prefix}-${id}`)
                     .addEventListener('input', () => aseSyncScript(prefix));
+            }
+            // Placement is applied to the coordinates ASE hands back, never to the
+            // ase.build call, so these two must not rewrite the script textarea.
+            for (const id of ['placement', 'offset']) {
+                document.getElementById(`${prefix}-${id}`)
+                    ?.addEventListener('input', () => { aseSyncFields(prefix); aseRestage(prefix); });
             }
             aseSyncScript(prefix);
         }
@@ -7395,6 +7527,111 @@ H   2.219500  1.213600  0.000000`
                         + ' — for any other element, fill in a.' : '');
                 note.style.display = note.textContent ? '' : 'none';
             }
+            aseSyncPlacement(prefix);
+        }
+
+        // The offset only means something when there is a face to offset from, so
+        // it greys out under the centred placement the same way an unused nz does.
+        // The note quotes the box length because that is the number the placement
+        // is measured against, and it is edited on a different tab.
+        function aseSyncPlacement(prefix) {
+            const placement = asePlacement(prefix);
+            const spec = SUBSTRATE_FACES[placement] || null;
+            const off = document.getElementById(`${prefix}-offset`);
+            const offLab = document.getElementById(`${prefix}-offset-label`);
+            const offGrp = document.getElementById(`${prefix}-offset-group`);
+            if (off) {
+                off.disabled = !spec;
+                off.title = spec ? '' : 'Only a face placement has a face to offset from';
+                if (offLab) offLab.textContent = spec
+                    ? 'Offset from face (Å)' : 'Offset from face (Å) — n/a';
+                if (offGrp) offGrp.style.opacity = spec ? '' : '0.45';
+            }
+            const place = document.getElementById(`${prefix}-placement-note`);
+            if (!place) return;
+            const L = substrateBoxLength();
+            place.textContent = spec
+                ? `Sits on the ${spec.label} at ${AXIS_NAMES[spec.axis]} = `
+                    + `${(-L / 2 + aseOffset(prefix)).toFixed(3)} Å of the ${L} Å box, pinned there`
+                    + ' as a *$ block. Follows the box if you resize it.'
+                : 'Centroid moved to (0, 0, 0), the centre of the box.';
+            place.title = spec
+                ? `The slab is turned to lie flat against the ${spec.label}, then set on it.`
+                    + ' It is re-placed automatically whenever the box length changes.'
+                : '';
+        }
+
+        // Either a key of SUBSTRATE_FACES or 'center'; anything unrecognised falls
+        // back to centring, which is the placement that needs no box length.
+        function asePlacement(prefix) {
+            const v = document.getElementById(`${prefix}-placement`)?.value;
+            return SUBSTRATE_FACES[v] ? v : 'center';
+        }
+
+        function aseOffset(prefix) {
+            const v = parseFloat(document.getElementById(`${prefix}-offset`)?.value);
+            return Number.isFinite(v) ? v : 0;
+        }
+
+        // A substrate is normally sized to cover the floor, so an overhang is a
+        // real mistake worth naming - but how big a slab to build is the user's
+        // call, so these warn and never block.
+        function aseFitWarnings(coords, boxLength, face) {
+            // "Across" is the two axes lying in the face; depth is the face's own
+            // axis - see SUBSTRATE_FACES.
+            const spec = SUBSTRATE_FACES[face];
+            if (!spec) return [];
+            const axis = spec.axis;
+            const name = AXIS_NAMES[axis];
+            const half = boxLength / 2;
+            let maxLateral = 0, far = -Infinity, near = Infinity;
+            for (const p of coords) {
+                for (let i = 0; i < 3; i++) {
+                    if (i !== axis) maxLateral = Math.max(maxLateral, Math.abs(p[i]));
+                }
+                if (p[axis] > far) far = p[axis];
+                if (p[axis] < near) near = p[axis];
+            }
+            const out = [];
+            if (maxLateral > half) {
+                out.push(`Slab spans ${(2 * maxLateral).toFixed(1)} Å across, wider than the`
+                    + ` ${boxLength} Å box — it pokes through the side walls.`);
+            }
+            if (far > half) {
+                out.push(`Slab reaches ${name} = ${far.toFixed(2)} Å, past the opposite face`
+                    + ` (${half.toFixed(2)} Å).`);
+            }
+            if (near < -half) {
+                out.push(`Slab starts at ${name} = ${near.toFixed(2)} Å, outside the`
+                    + ` ${spec.label} (${(-half).toFixed(2)} Å).`);
+            }
+            return out;
+        }
+
+        // The last structure each panel built, kept in ASE's own frame, and the
+        // exact text it last delivered. Every placement is a pure coordinate shift
+        // on top of the build, so a resize or an offset edit can re-place what is
+        // already staged without re-running Python. Comparing the staged text with
+        // what we delivered is the ownership check: if it no longer matches, the
+        // user has put something else there and it is not ours to rewrite.
+        const aseLastBuild = {};
+        const aseLastDelivered = {};
+
+        function aseRestage(prefix) {
+            const built = aseLastBuild[prefix];
+            const stage = document.getElementById(ASE_PANELS[prefix].stage);
+            if (!built || !stage) return;
+            if (stage.value.trim() !== (aseLastDelivered[prefix] || '').trim()) return;
+
+            const placement = asePlacement(prefix);
+            const face = SUBSTRATE_FACES[placement] ? placement : null;
+            const { atoms, coords } = face
+                ? placeOnFace(built.atoms, built.coords, face, substrateBoxLength(), aseOffset(prefix))
+                : built;
+            const xyz = latticeToXyz(atoms, coords);
+            stage.value = xyz;
+            aseLastDelivered[prefix] = xyz;
+            ASE_PANELS[prefix].restage(xyz, face);
         }
 
         function aseSyncScript(prefix) {
@@ -7507,13 +7744,34 @@ _ascec_xyz = "\\n".join(
                         throw new Error(`Trimming at ${minN} neighbours removed every atom — lower it or switch it off`);
                     }
                 }
+
+                // Cache post-trim but pre-placement: this is the fragment in ASE's
+                // own frame, and every placement is one shift away from it. Keeping
+                // it means a later resize costs a translation, not a Pyodide run.
+                aseLastBuild[prefix] = { atoms: [...atoms], coords: coords.map(c => [...c]) };
+
+                // 'center' leaves the coordinates in ASE's own frame and lets the
+                // delivery path centre them, exactly as it always has. A face
+                // placement has to be done here, because it is the only step that
+                // needs the box length.
+                const placement = asePlacement(prefix);
+                const face = SUBSTRATE_FACES[placement] ? placement : null;
+                const warnings = [];
+                if (face) {
+                    const boxLength = substrateBoxLength();
+                    ({ atoms, coords } = placeOnFace(atoms, coords, face, boxLength, aseOffset(prefix)));
+                    warnings.push(...aseFitWarnings(coords, boxLength, face));
+                }
                 xyz = latticeToXyz(atoms, coords);
 
                 const kind = document.getElementById(`${prefix}-structure`)?.value || 'ase';
                 const trimmed = before - atoms.length;
-                say(`${atoms.length} atoms${trimmed ? ` (${trimmed} trimmed)` : ''}.`);
+                say(`${atoms.length} atoms${trimmed ? ` (${trimmed} trimmed)` : ''}.`
+                    + (warnings.length ? ` ⚠ ${warnings.join(' ')}` : ''));
+                if (warnings.length) toast(warnings[0], 'warning');
                 if (DEBUG_LATTICE) console.log('[ase]', kind, verifyCoordination(xyz));
-                ASE_PANELS[prefix].deliver(kind, xyz);
+                ASE_PANELS[prefix].deliver(kind, xyz, face);
+                aseLastDelivered[prefix] = xyz;
             } catch (e) {
                 const lines = String(e.message).trim().split('\n');
                 say(`Failed: ${await aseExplain(lines[lines.length - 1])}`);
@@ -7526,6 +7784,24 @@ _ascec_xyz = "\\n".join(
         // Render both instances at parse time; their hosts are already in the DOM.
         (function renderAsePanels() {
             for (const prefix of Object.keys(ASE_PANELS)) aseRenderPanel(prefix);
+            // A substrate is defined relative to the floor, so the box length is
+            // one of its inputs: when it changes, the note, anything still staged
+            // and every fragment already added all have to be re-placed against the
+            // new edge. addEventListener leaves the inputs' own inline oninput
+            // alone, which is what already refreshes the viewers.
+            for (const id of ['box-size', 'smart-box-size', 'smart-box-size-top']) {
+                document.getElementById(id)?.addEventListener('input', () => {
+                    for (const prefix of Object.keys(ASE_PANELS)) {
+                        aseSyncPlacement(prefix);
+                        aseRestage(prefix);
+                    }
+                    if (reanchorSubstrates()) {
+                        updatePreview();
+                        updateBasicBoxViewer();
+                        updateBoxViewer();
+                    }
+                });
+            }
         })();
 
         function basicAddMolecule() {
@@ -7535,14 +7811,22 @@ _ascec_xyz = "\\n".join(
             }
 
             const baseName = document.getElementById('basic-mol-name').value.trim() || 'mol';
-            const count = parseInt(document.getElementById('basic-mol-count').value) || 1;
+            // A pinned fragment is always a single copy: N copies pinned at one set
+            // of coordinates would be N fragments sitting on top of each other.
+            const fixed = !!currentMolData.fixed;
+            const anchor = currentMolData.anchor || null;
+            const asked = parseInt(document.getElementById('basic-mol-count').value) || 1;
+            const count = fixed ? 1 : asked;
+            if (fixed && asked > 1) toast('A pinned fragment is added once, not ' + asked, 'warning');
 
             for (let i = 0; i < count; i++) {
                 const molName = count > 1 ? `${baseName}${molecules.length + 1}` : baseName;
                 molecules.push({
                     name: molName,
                     atoms: [...currentMolData.atoms],
-                    coords: currentMolData.coords.map(c => [...c])
+                    coords: currentMolData.coords.map(c => [...c]),
+                    fixed,
+                    anchor
                 });
             }
 
@@ -8078,6 +8362,14 @@ _ascec_xyz = "\\n".join(
 
             const advBoxInput = document.getElementById('box-size');
             if (advBoxInput) advBoxInput.value = newValue;
+
+            // Anything the ASE tab has built but not yet added lives in a textarea
+            // that no viewer reads, so the viewers' own re-anchoring cannot reach
+            // it. Re-place it here, where the automatic box length is applied.
+            for (const prefix of Object.keys(ASE_PANELS)) {
+                aseSyncPlacement(prefix);
+                aseRestage(prefix);
+            }
 
             updateBasicBoxViewer();
             updateBoxViewer();
@@ -11462,6 +11754,64 @@ end
             return { atoms, coords: centeredCoords };
         }
 
+        // The other placement rule: drop the fragment onto the floor of the box.
+        //
+        // "Floor" is the face the viewer draws along the bottom of the screen.
+        // Nothing here calls setView, so 3Dmol's default camera applies: it sits
+        // on +z looking back at the origin with +y up. That makes y the vertical
+        // axis and z the depth - so parking a slab at low z pins it to the BACK
+        // wall, not the floor. The floor is y = -L/2.
+        //
+        // ase.build stacks its slabs along z, so the fragment is first turned
+        // -90 deg about x, (x, y, z) -> (x, z, -y), which carries ASE's surface
+        // normal +z onto the viewer's up. The cube is isotropic to the engine
+        // (moves.py only ever compares |coord| against half the edge), so the
+        // rotation is physically free and is what makes the slab read as a
+        // substrate. x and z are then centred and the lowest atom set on
+        // y = -L/2 + offset; a positive offset lifts the slab clear of the face.
+        // The face placements (placeOnFace / SUBSTRATE_FACES) are declared above
+        // the ASE section instead of here: renderAsePanels runs at parse time and
+        // reads the face table, which a const declared this far down would still
+        // have in its temporal dead zone.
+
+        // One box length governs every substrate: the one written to the .asc,
+        // whose Line 2 reads #box-size. That is the cube the engine actually uses,
+        // and it is the only field kept in step by every path that resizes the box
+        // (syncSmartToAdvanced, applyAscecAutoBoxLength, the mode switches).
+        // #smart-box-size is not - editing the Advanced box never writes back to it
+        // - so placing against one field and re-anchoring against the other would
+        // leave the slab hanging by half their difference.
+        function substrateBoxLength() {
+            return getAdvancedBoxSize();
+        }
+
+        // A pinned substrate is measured from its face, so it has to follow when
+        // the box is resized - otherwise it is left hanging in mid-air (bigger box)
+        // or buried through the wall (smaller one). Only the face's own axis moves:
+        // the in-face centring already sits on the origin and does not depend on
+        // the edge. Returns whether anything actually moved, so the caller can skip
+        // redrawing.
+        function reanchorSubstrates() {
+            const half = substrateBoxLength() / 2;
+            let moved = false;
+            for (const mol of molecules) {
+                const spec = mol.anchor && SUBSTRATE_FACES[mol.anchor.face];
+                if (!spec) continue;
+                const axis = spec.axis;
+                let nearest = Infinity;
+                for (const c of mol.coords) if (c[axis] < nearest) nearest = c[axis];
+                const d = -half + (mol.anchor.offset || 0) - nearest;
+                if (Math.abs(d) < 1e-9) continue;
+                mol.coords = mol.coords.map(c => {
+                    const p = [...c];
+                    p[axis] += d;
+                    return p;
+                });
+                moved = true;
+            }
+            return moved;
+        }
+
         function calculateBoxLengthForPacking() {
             const packingPercent = getActiveAutoPackingPercent();
             if (packingPercent === null) return;
@@ -12123,17 +12473,24 @@ end
                 ? { atoms, coords }
                 : centerMolecule(atoms, coords);
 
+            // Only the ASE tab's lower-face build sets an anchor, and only while the
+            // box still holds the exact text it delivered - see advPendingAnchor.
+            const anchor = (advPendingAnchor && advPendingAnchor.xyz.trim() === xyzText
+                && fixedMode === 'as-is') ? advPendingAnchor.anchor : null;
+
             for (let i = 0; i < count; i++) {
                 const molName = count > 1 ? `${baseName}${molecules.length + 1}` : baseName;
                 molecules.push({
                     name: molName,
                     atoms: [...source.atoms],
                     coords: source.coords.map(c => [...c]),
-                    fixed: fixed
+                    fixed: fixed,
+                    anchor
                 });
             }
 
             document.getElementById('manual-mol-name').value = '';
+            advPendingAnchor = null;
             clearAdvMolFixed();
             document.getElementById('mol-count').value = '1';
 
@@ -12301,6 +12658,10 @@ H   1.981282  0.134064  0.000000`;
 
         // Generate full .asc file
         function generateAscFile() {
+            // The file is the other consumer of the box length, so normalise here
+            // too: whatever resized the box, the substrate is written on the floor
+            // of the cube this file declares on Line 2.
+            reanchorSubstrates();
             syncAdvancedQmProcs();
             const simName = document.getElementById('sim-name')?.value || 'simulation';
             const simMode = document.getElementById('sim-mode')?.value || '1';
