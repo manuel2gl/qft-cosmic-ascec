@@ -12,6 +12,23 @@ this single function. It moves *every* molecule in the system simultaneously
   molecule. No overlap check on this branch — a clashing geometry is sent
   straight to the QM program (deliberate: the QM cost is the search budget).
 
+The "send the clash to QM" rule holds for molecular clusters, where a clash
+costs one high-but-finite energy that Metropolis then rejects. It breaks down
+for a run with a ``*$`` frozen substrate: nothing stops a molecule from being
+translated *into* the pinned block, and a molecule embedded in, say, a gold
+slab does not produce a high energy — it produces an SCF that never converges,
+so the QM call returns no energy and the run dies. Substrate runs therefore
+enable a contact gate: a molecule whose proposed position violates the van der
+Waals floor (:func:`~cosmic_ascec.geometry.overlap.has_contact_clash`) against
+any other molecule, frozen or mobile, stays where it was for this cycle. That
+is a hard-wall rejection — the standard Metropolis treatment of a hard-core
+potential, and symmetric, so detailed balance is preserved.
+
+The gate is active **only** when the cluster contains a frozen molecule. ``*$``
+is a construct v04 cannot express, so every input without it keeps the verbatim
+v04 behaviour, bit-identical, and consumes exactly the same random numbers —
+the gate itself never draws.
+
 The RNG-draw order per molecule is load-bearing for replay; if you reorder
 draws you will not reproduce historical trajectories at the same seed:
 
@@ -36,7 +53,12 @@ from cosmic_ascec.elements.data import ATOMIC_WEIGHTS
 from cosmic_ascec.geometry.bonds import find_rotatable_bonds
 from cosmic_ascec.geometry.inertia import calculate_mass_center
 from cosmic_ascec.geometry.molecule import Cluster
-from cosmic_ascec.geometry.overlap import check_intramolecular_overlap
+from cosmic_ascec.geometry.overlap import (
+    DEFAULT_SUBSTRATE_CONTACT_SCALE,
+    check_intramolecular_overlap,
+    has_contact_clash,
+    vdw_contact_radii,
+)
 
 _AXIS_ROTATION_MIN_NORM = 1e-6
 """Axis-length floor for :func:`rotate_around_bond`.
@@ -106,6 +128,9 @@ class MoveParams:
       energetically-unfavorable middle band (e.g., cis-formic-acid OH at
       ~90° is the worst place to be — small nudges or full flips help; 90°
       itself does not).
+    * ``substrate_contact_scale`` — VDW scale factor for the contact gate that
+      runs only on ``*$`` substrate inputs (see the module docstring). Has no
+      effect on a run without a frozen block.
     """
 
     max_displacement: float
@@ -114,6 +139,7 @@ class MoveParams:
     conformational_move_prob: float
     use_standard_metropolis: bool = False
     flip_probability: float = 0.0
+    substrate_contact_scale: float = DEFAULT_SUBSTRATE_CONTACT_SCALE
 
     @classmethod
     def from_config(cls, config, *, use_standard_metropolis: bool = False) -> "MoveParams":
@@ -346,6 +372,36 @@ def propose_unified_move(
     half_box = cluster.half_box
     with_rb = cache.molecules_with_rotatable_bonds
 
+    # Contact gate — substrate runs only, so v04-expressible inputs are
+    # untouched (module docstring). Nothing below draws a random number, so the
+    # gate cannot perturb the RNG stream even when it is active.
+    gate_active = any(
+        getattr(mol, "frozen", False) for mol in cluster.molecules
+    )
+    contact_radii = (
+        vdw_contact_radii(cluster.atomic_numbers) if gate_active else None
+    )
+
+    def contact_clash(start: int, end: int, candidate: np.ndarray) -> bool:
+        """True if ``candidate`` violates the VDW floor against any other atom.
+
+        ``proposed`` is mutated in place as the sweep walks the molecules, so
+        this sees molecules below ``molecule_idx`` at their new positions and
+        those above at their current ones — an ordinary sequential Metropolis
+        sweep against a hard-core potential.
+        """
+        others = np.concatenate((proposed[:start, :], proposed[end:, :]), axis=0)
+        other_radii = np.concatenate(
+            (contact_radii[:start], contact_radii[end:]), axis=0
+        )
+        return has_contact_clash(
+            candidate,
+            contact_radii[start:end],
+            others,
+            other_radii,
+            scale=params.substrate_contact_scale,
+        )
+
     for molecule_idx in range(cluster.num_molecules):
         # A frozen molecule (``*$`` block in the .asc file) is never proposed
         # for a move — neither rigid-body nor conformational — so it keeps the
@@ -357,6 +413,12 @@ def propose_unified_move(
 
         start = int(offsets[molecule_idx])
         end = int(offsets[molecule_idx + 1])
+
+        # Where this molecule sits before the proposal, so the contact gate can
+        # put it back if the proposal turns out to be inside something.
+        pre_move_coords = (
+            np.copy(proposed[start:end, :]) if gate_active else None
+        )
 
         # v04 lines 3802-3806.
         molecule_has_rotatable_bond = (
@@ -417,8 +479,16 @@ def propose_unified_move(
                     mol_coords, bond_atom1, bond_atom2, moving_atoms, rotation_angle
                 )
 
-                # v04 line 3843 — accept only if no intramolecular clash.
-                if not check_intramolecular_overlap(new_mol_coords, mol_atomic_numbers):
+                # v04 line 3843 — accept only if no intramolecular clash. On a
+                # substrate run the dihedral must also clear the contact gate;
+                # a rotation that swings a branch into the frozen block falls
+                # through to the rigid branch, exactly as an intramolecular
+                # clash already does.
+                if not check_intramolecular_overlap(
+                    new_mol_coords, mol_atomic_numbers
+                ) and not (
+                    gate_active and contact_clash(start, end, new_mol_coords)
+                ):
                     proposed[start:end, :] = new_mol_coords
                     last_moved_mol_idx = molecule_idx
                     move_type_used = "conformational"
@@ -484,6 +554,13 @@ def propose_unified_move(
         proposed[start:end, :] = (
             rotated_relative_coords + new_rcm_after_translation
         )
+
+        # Hard-wall rejection: a rigid move that lands the molecule inside the
+        # frozen substrate — or inside another molecule — is undone, and the
+        # molecule simply holds still this cycle.
+        if gate_active and contact_clash(start, end, proposed[start:end, :]):
+            proposed[start:end, :] = pre_move_coords
+            continue
 
         last_moved_mol_idx = molecule_idx
 

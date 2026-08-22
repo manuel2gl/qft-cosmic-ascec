@@ -21,6 +21,14 @@ Implementation notes worth knowing if you touch this:
 * The overlap rule uses *covalent* radii with a 0.5 Å default for unknown
   elements — same rule the conformational-move overlap gate enforces, so a
   placement that passes here will pass move-time checks too.
+* That covalent rule is too permissive once a ``*$`` frozen substrate is in
+  the box — ``(r_Au + r_H) * 0.7`` is 1.17 Å, so it will happily certify a
+  hydrogen sitting inside a gold lattice. When any molecule is frozen the
+  placement switches to the van der Waals contact rule from
+  :mod:`~cosmic_ascec.geometry.overlap`, matching the gate the Monte Carlo
+  moves apply, so a placement that passes here still passes at move time.
+  Inputs with no frozen block keep the verbatim v04 covalent rule and the
+  identical random stream.
 """
 
 from __future__ import annotations
@@ -33,7 +41,11 @@ import numpy as np
 from cosmic_ascec.elements.data import COVALENT_RADII
 from cosmic_ascec.exceptions import GeometryError
 from cosmic_ascec.geometry.molecule import Cluster, Molecule
-from cosmic_ascec.geometry.overlap import DEFAULT_INTERMOLECULAR_OVERLAP_SCALE
+from cosmic_ascec.geometry.overlap import (
+    DEFAULT_INTERMOLECULAR_OVERLAP_SCALE,
+    DEFAULT_SUBSTRATE_CONTACT_SCALE,
+)
+from cosmic_ascec.elements.radii import get_radius
 
 # Fallback radius used when an atomic number is not in COVALENT_RADII.
 _PLACEMENT_RADIUS_DEFAULT = 0.5
@@ -51,6 +63,8 @@ class PlacementSettings:
     ``range_increase_factor``  v04 ``RANGE_INCREASE_FACTOR`` (line 1242: 1.1).
     ``max_range_factor``       v04 ``MAX_RANGE_FACTOR`` (line 1244: 2.0).
     ``overlap_scale``          v04 ``state.overlap_scale_factor`` (line 71: 0.7).
+    ``substrate_contact_scale`` VDW scale used instead of ``overlap_scale``
+                               when the input has a ``*$`` frozen block.
     """
 
     max_attempts: int = 100_000
@@ -58,6 +72,7 @@ class PlacementSettings:
     range_increase_factor: float = 1.1
     max_range_factor: float = 2.0
     overlap_scale: float = DEFAULT_INTERMOLECULAR_OVERLAP_SCALE
+    substrate_contact_scale: float = DEFAULT_SUBSTRATE_CONTACT_SCALE
 
 
 @dataclass(frozen=True)
@@ -115,6 +130,8 @@ def _placement_overlap_found(
     proposed_mol_atoms: list,
     placed_atoms_data: list,
     overlap_scale: float,
+    *,
+    use_vdw: bool = False,
 ) -> bool:
     """v04 ``config_molecules`` inter-molecular overlap loop (lines 1310-1331).
 
@@ -123,7 +140,15 @@ def _placement_overlap_found(
     atom already committed. Radii come from the covalent ``COVALENT_RADII``
     table (v04 ``state.r_atom``) with a ``0.5`` default — v04's placement loop
     does not use the monatomic/VDW distinction.
+
+    ``use_vdw`` switches to van der Waals radii for the substrate case; see the
+    module docstring for why the covalent rule is not strict enough there.
     """
+    def radius(z: int) -> float:
+        if use_vdw:
+            return get_radius(int(z), monatomic=True)
+        return COVALENT_RADII.get(z, _PLACEMENT_RADIUS_DEFAULT)
+
     for prop_atom_num, prop_coords in proposed_mol_atoms:
         for placed_atom_data in placed_atoms_data:
             placed_atom_num = placed_atom_data[0]
@@ -131,8 +156,8 @@ def _placement_overlap_found(
 
             distance = np.linalg.norm(prop_coords - placed_coords)
 
-            radius1 = COVALENT_RADII.get(prop_atom_num, _PLACEMENT_RADIUS_DEFAULT)
-            radius2 = COVALENT_RADII.get(placed_atom_num, _PLACEMENT_RADIUS_DEFAULT)
+            radius1 = radius(prop_atom_num)
+            radius2 = radius(placed_atom_num)
 
             min_distance_allowed = (radius1 + radius2) * overlap_scale
 
@@ -192,6 +217,15 @@ def initialize_cluster(
             )
 
     cfg = settings or PlacementSettings()
+
+    # A ``*$`` block puts a rigid substrate in the box, which the v04 covalent
+    # rule is too loose to place around (module docstring). Substrate inputs
+    # switch to the VDW contact rule the MC moves also enforce; everything else
+    # keeps v04's covalent rule and its exact random stream.
+    substrate_mode = any(getattr(mol, "frozen", False) for mol in molecules)
+    active_overlap_scale = (
+        cfg.substrate_contact_scale if substrate_mode else cfg.overlap_scale
+    )
 
     # v04 ``placed_atoms_data`` — list of (Z, x, y, z) for every committed atom.
     placed_atoms_data: list = []
@@ -285,7 +319,10 @@ def initialize_cluster(
 
             # v04 lines 1310-1331 — clash against every committed atom.
             overlap_found = _placement_overlap_found(
-                proposed_mol_atoms, placed_atoms_data, cfg.overlap_scale
+                proposed_mol_atoms,
+                placed_atoms_data,
+                active_overlap_scale,
+                use_vdw=substrate_mode,
             )
 
         if overlap_found and logger is not None:
