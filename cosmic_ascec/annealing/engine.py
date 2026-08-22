@@ -275,6 +275,7 @@ def anneal(
     placement_seed = initialize_cluster(
         molecules,
         box_length=config.box.cube_length_angstrom,
+        box_lengths=None if config.box.is_cubic else config.box.lengths,
         rng=rng,
         settings=placement_settings,
         logger=run_logger,
@@ -312,6 +313,7 @@ def anneal(
             pending_placement = initialize_cluster(
                 molecules,
                 box_length=config.box.cube_length_angstrom,
+                box_lengths=None if config.box.is_cubic else config.box.lengths,
                 rng=rng,
                 settings=placement_settings,
                 logger=run_logger,

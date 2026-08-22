@@ -128,6 +128,7 @@ from cosmic_ascec.workflow.protocol_cache import (
 )
 from cosmic_ascec.workflow.replicas import (
     create_replicated_runs,
+    input_box_is_cubic,
     is_protocol_marker_line,
 )
 from cosmic_ascec.workflow.rescue import (
@@ -798,7 +799,8 @@ class SystemState:
         # Configuration parameters read from input file
         self.random_generate_config: int = 0      # 0: Annealing; 1: Random configurations
         self.num_random_configs: int = 0          # Used if random_generate_config is 1
-        self.cube_length: float = 0.0             # Simulation Cube Length (Angstroms)
+        self.cube_length: float = 0.0             # Simulation box Lx (Angstroms)
+        self.box_lengths: tuple = (0.0, 0.0, 0.0) # (Lx, Ly, Lz); equal for a cube
         self.quenching_routine: int = 0           # 1: Linear, 2: Geometrical
         self.linear_temp_init: float = 0.0
         self.linear_temp_decrement: float = 0.0
@@ -1261,8 +1263,15 @@ def read_input_file(state: SystemState, source) -> List[MoleculeData]:
                 state.ivalE = 1 
                 state.mto = 0   
 
-        elif config_lines_parsed == 1: # Line 2: Simulation Cube Length
-            state.cube_length = float(parts[0])
+        elif config_lines_parsed == 1: # Line 2: Simulation Box (cube edge, or Lx Ly Lz)
+            # One value is a cube (all v04 could express); three are the edges
+            # of a rectangular prism. cube_length/xbox keep holding Lx so every
+            # existing reader of this state object is unaffected.
+            if len(parts) >= 3:
+                state.box_lengths = (float(parts[0]), float(parts[1]), float(parts[2]))
+            else:
+                state.box_lengths = (float(parts[0]),) * 3
+            state.cube_length = state.box_lengths[0]
             state.xbox = state.cube_length
 
         elif config_lines_parsed == 2: # Line 3: Annealing Quenching Routine
@@ -1407,8 +1416,14 @@ def read_input_file(state: SystemState, source) -> List[MoleculeData]:
 
         parts = line.split()
 
-        if parts[0] == "*":
-            if reading_molecule: # Found '*' and was reading a molecule -> this '*' closes the previous molecule
+        # ``*$`` is the frozen-block delimiter (a pinned substrate). It is a
+        # v05 construct v04 could not express, so this legacy reader only ever
+        # knew about ``*``. It has no use for the frozen flag itself — this
+        # path serves box advice, replication and the COSMIC workflow, none of
+        # which move atoms — but it must not choke on the delimiter, or every
+        # substrate input fails on those three routes.
+        if parts[0] in ("*", "*$"):
+            if reading_molecule: # Found a delimiter while reading a molecule -> it closes the previous molecule
                 if current_molecule_num_atoms_expected == atoms_read_in_current_molecule:
                     molecule_definitions.append(
                         MoleculeData(current_molecule_label, current_molecule_num_atoms_expected, current_molecule_atoms)
@@ -1424,7 +1439,7 @@ def read_input_file(state: SystemState, source) -> List[MoleculeData]:
                 reading_molecule = True 
                 continue 
 
-            else: # Found '*' and was NOT reading a molecule -> this must be the very first '*' opening the first molecule
+            else: # Not reading a molecule -> this is the very first delimiter, opening the first molecule
                 reading_molecule = True
                 continue 
 
@@ -8709,6 +8724,14 @@ def execute_replication_stage(context: WorkflowContext, stage: Dict[str, Any]) -
                 packing_str = arg.replace('--box', '')
                 if packing_str:
                     packing_percent = float(packing_str)
+                    # A packing percentage sizes one cube edge. A prism box has
+                    # no single edge to size — its footprint is the substrate's —
+                    # so the flag is reported and skipped rather than applied.
+                    if not input_box_is_cubic(context.input_file):
+                        if verbose:
+                            print(f"Ignoring --box{packing_percent:g}: the box is a "
+                                  "rectangular prism, sized by the substrate in it.")
+                        continue
                     # Get box size recommendation for this packing percentage
                     recommended_box = get_box_size_recommendation(context.input_file, packing_percent)
                     if recommended_box is not None:

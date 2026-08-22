@@ -174,6 +174,37 @@ def _to_float(value: str, line_no: int, path: str, what: str) -> float:
                             line=line_no, path=path) from exc
 
 
+def _parse_box(parts: List[str], line_no: int, path: str) -> BoxSpec:
+    """Line 2: one value is a cube edge, three are ``Lx Ly Lz``.
+
+    Two values are rejected rather than guessed at, and so is a fourth: the
+    box is the one header line where quietly ignoring a stray token would
+    change the physics of the run instead of a label on a report.
+    """
+    if len(parts) == 2 or len(parts) > 3:
+        raise AscParseError(
+            "box length takes either 1 value (cube edge) or 3 values "
+            f"(Lx Ly Lz), got {len(parts)}: '{' '.join(parts)}'",
+            line=line_no, path=path,
+        )
+
+    labels = ("cube edge",) if len(parts) == 1 else ("Lx", "Ly", "Lz")
+    lengths = tuple(
+        _to_float(part, line_no, path, f"box length {label}")
+        for part, label in zip(parts, labels)
+    )
+    for length, label in zip(lengths, labels):
+        if length <= 0:
+            raise AscParseError(
+                f"box length {label} must be positive, got {length}",
+                line=line_no, path=path,
+            )
+
+    if len(lengths) == 1:
+        return BoxSpec(cube_length_angstrom=lengths[0])
+    return BoxSpec(cube_length_angstrom=lengths[0], lengths_angstrom=lengths)
+
+
 def _parse_header(raw_lines: List[str], path: str) -> _HeaderResult:
     """Parse the 13-line fixed configuration block (v04 phase 1)."""
     config_lines_parsed = 0
@@ -217,9 +248,9 @@ def _parse_header(raw_lines: List[str], path: str) -> _HeaderResult:
                     )
                 mode = SimulationMode(raw_mode)
                 num_configurations = _to_int(parts[1], line_no, path, "number of configurations")
-            case 1:  # cube length
-                _require_parts(parts, 1, line_no, path, "cube length")
-                box = BoxSpec(cube_length_angstrom=_to_float(parts[0], line_no, path, "cube length"))
+            case 1:  # box: one value (cube) or three (rectangular prism)
+                _require_parts(parts, 1, line_no, path, "box length")
+                box = _parse_box(parts, line_no, path)
             case 2:  # quenching route
                 _require_parts(parts, 1, line_no, path, "quenching route")
                 raw_route = _to_int(parts[0], line_no, path, "quenching route")

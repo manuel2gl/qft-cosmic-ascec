@@ -150,6 +150,7 @@ def initialize_cluster(
     molecules: Sequence[Molecule],
     *,
     box_length: float,
+    box_lengths: Optional[Sequence[float]] = None,
     rng: np.random.RandomState,
     settings: Optional[PlacementSettings] = None,
     logger=None,
@@ -161,7 +162,10 @@ def initialize_cluster(
         molecules: One entry per *instance* to be placed, in the order v04
             iterates ``state.molecules_to_add`` (the ``.asc`` file order). A
             system of two identical waters → two :class:`Molecule` references.
-        box_length: Cube edge in Angstroms (v04 ``state.xbox`` / ``cube_length``).
+        box_length: Box edge in Angstroms along x (v04 ``state.xbox`` /
+            ``cube_length``). For a cube this is *the* edge.
+        box_lengths: ``(Lx, Ly, Lz)`` for a rectangular prism box, or ``None``
+            for a cube. When given it takes precedence over ``box_length``.
         rng: Explicit ``numpy.random.RandomState`` — never optional, never
             global (D-038).
         settings: Tuning knobs (see :class:`PlacementSettings`).
@@ -176,8 +180,16 @@ def initialize_cluster(
     """
     if not molecules:
         raise GeometryError("initialize_cluster: no molecules to place")
-    if box_length <= 0:
-        raise GeometryError(f"initialize_cluster: invalid box_length={box_length!r}")
+    if box_lengths is None:
+        if box_length <= 0:
+            raise GeometryError(f"initialize_cluster: invalid box_length={box_length!r}")
+        half_edges = None
+    else:
+        half_edges = np.asarray(box_lengths, dtype=np.float64) / 2.0
+        if half_edges.shape != (3,) or not np.all(half_edges > 0):
+            raise GeometryError(
+                f"initialize_cluster: invalid box_lengths={box_lengths!r}"
+            )
 
     cfg = settings or PlacementSettings()
 
@@ -242,11 +254,18 @@ def initialize_cluster(
                 next_increase_threshold += cfg.range_increase_step
 
             # v04 line 1275 — one uniform draw of size 3 (consumes 3 doubles).
-            translation = rng.uniform(
-                -box_length / 2 * local_translation_range_factor,
-                box_length / 2 * local_translation_range_factor,
-                size=3,
-            )
+            # The cubic call is kept scalar-for-scalar so the random stream of
+            # every pre-prism input is untouched; only a prism box takes the
+            # array-bounds branch, which draws the same 3 doubles per axis.
+            if half_edges is None:
+                translation = rng.uniform(
+                    -box_length / 2 * local_translation_range_factor,
+                    box_length / 2 * local_translation_range_factor,
+                    size=3,
+                )
+            else:
+                span = half_edges * local_translation_range_factor
+                translation = rng.uniform(-span, span, size=3)
 
             # v04 lines 1278-1280 — three scalar Euler-angle draws, in order.
             alpha = rng.uniform(0, 2 * np.pi * local_rotation_range_factor)
@@ -301,6 +320,7 @@ def initialize_cluster(
         molecules=molecules,
         per_molecule_coords=per_molecule_blocks,
         box_length=box_length,
+        box_lengths=None if box_lengths is None else tuple(float(v) for v in box_lengths),
     )
     return PlacementResult(cluster=cluster, outcomes=tuple(outcomes))
 

@@ -58,6 +58,7 @@ __all__ = [
     "PROTOCOL_MARKER_RE",
     "is_protocol_marker_line",
     "strip_protocol_from_content",
+    "input_box_is_cubic",
     "update_box_size_in_input",
     "create_launcher_script",
     "merge_launcher_scripts",
@@ -104,6 +105,36 @@ def strip_protocol_from_content(content: str) -> str:
     return content
 
 
+def _box_values(line: str) -> List[str]:
+    """The numeric fields of a Line-2 box declaration, comments stripped."""
+    return line.split('#', 1)[0].split('!', 1)[0].split()
+
+
+def input_box_is_cubic(input_file_path: str) -> bool:
+    """Whether Line 2 of an ``.asc`` declares a cube rather than a prism.
+
+    ``--box<percent>`` re-derives one cube edge from a packing percentage, so it
+    only applies to a cubic box; this is the check every caller of it makes
+    first. Text-level on purpose — it answers the question without requiring the
+    rest of the file to parse.
+    """
+    try:
+        with open(input_file_path, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
+    except OSError:
+        return True
+
+    line_count = 0
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        line_count += 1
+        if line_count == 2:
+            return len(_box_values(line)) < 3
+    return True
+
+
 def update_box_size_in_input(input_file_path: str, new_box_size: float) -> str:
     """
     Updates the box size (Line 2) in an ASCEC input file.
@@ -130,6 +161,15 @@ def update_box_size_in_input(input_file_path: str, new_box_size: float) -> str:
         
         # Line 2 is the box size
         if line_count == 2:
+            # A rectangular-prism box (``Lx Ly Lz``) is bound to the geometry
+            # sitting in it — a substrate's footprint comes from the slab, so
+            # there is no single edge to substitute and no way to re-place the
+            # slab from here, where all we have is the text of the file.
+            # Leave it exactly as it is: callers warn before getting this far
+            # (see :func:`input_box_is_cubic`), and silently returning the file
+            # unchanged is safer than writing one number over three.
+            if len(_box_values(line)) >= 3:
+                return ''.join(lines)
             # Preserve any inline comment
             if '#' in line:
                 comment_part = '#' + line.split('#', 1)[1]

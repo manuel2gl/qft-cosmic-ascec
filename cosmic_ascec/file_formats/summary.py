@@ -129,7 +129,11 @@ def _preamble(config: AscConfig, seed: int) -> list[str]:
 
     # --- Box length + box-volume advice (v04 lines 1063-1069) -------------- #
     lines.append("")
-    lines.append(f"Cube's length = {config.box.cube_length_angstrom:.2f} A")
+    if config.box.is_cubic:
+        lines.append(f"Cube's length = {config.box.cube_length_angstrom:.2f} A")
+    else:
+        lx, ly, lz = config.box.lengths
+        lines.append(f"Box lengths = {lx:.2f} x {ly:.2f} x {lz:.2f} A")
 
     molecules = [Molecule.from_spec(spec) for spec in config.molecules]
     report = calculate_optimal_box_length(molecules)

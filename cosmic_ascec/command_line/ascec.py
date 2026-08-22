@@ -43,7 +43,9 @@ import re
 import shlex
 import shutil
 import sys
+from dataclasses import replace as _replace
 from pathlib import Path
+from typing import Optional
 
 from cosmic_ascec.annealing import (
     AnnealingCallback,
@@ -53,6 +55,7 @@ from cosmic_ascec.annealing import (
 from cosmic_ascec.elements import Z_TO_SYMBOL
 from cosmic_ascec.exceptions import CosmicAscecError
 from cosmic_ascec.file_formats import (
+    BoxSpec,
     QMProgram,
     SimulationMode,
     SummaryWriter,
@@ -60,6 +63,7 @@ from cosmic_ascec.file_formats import (
     TvseWriter,
     parse_asc,
 )
+from cosmic_ascec.file_formats.trajectory_writer import box_corner_coords, box_label
 from cosmic_ascec.geometry.molecule import Molecule
 from cosmic_ascec.geometry.placement import initialize_cluster
 from cosmic_ascec.monte_carlo import (
@@ -104,6 +108,7 @@ from cosmic_ascec.workflow.stages import (
 )
 from cosmic_ascec.workflow.replicas import (
     create_replicated_runs,
+    input_box_is_cubic,
     merge_launcher_scripts,
 )
 
@@ -146,6 +151,21 @@ def _resolve_adapter_name(alias: str, program: QMProgram) -> str:
     return _PROGRAM_TO_ADAPTER.get(program, alias.lower() if alias else "")
 
 
+def _requested_box_packing(candidates) -> Optional[float]:
+    """The percentage from the first well-formed ``--box<percent>`` argument."""
+    for candidate in candidates:
+        if not isinstance(candidate, str) or not candidate.lower().startswith("--box"):
+            continue
+        packing_str = candidate.lower().replace("--box", "", 1)
+        if not packing_str:
+            continue
+        try:
+            return float(packing_str)
+        except ValueError:
+            continue
+    return None
+
+
 def _run_random_configurations(
     config,
     input_path: Path,
@@ -173,7 +193,6 @@ def _run_random_configurations(
     ``mtobox_<seed>.xyz`` (atoms + eight ``X`` markers at the cube
     corners), mirroring the annealing pair ``result_*`` / ``resultbox_*``.
     """
-    from dataclasses import replace as _replace
 
     n_configs = int(config.num_configurations)
     if n_configs <= 0:
@@ -185,6 +204,7 @@ def _run_random_configurations(
 
     molecules = [Molecule.from_spec(spec) for spec in config.molecules]
     box_length = float(config.box.cube_length_angstrom)
+    box_lengths = None if config.box.is_cubic else config.box.lengths
     xyz_path = run_dir / f"mto_{run_seed}.xyz"
     box_path = run_dir / f"mtobox_{run_seed}.xyz"
 
@@ -200,6 +220,7 @@ def _run_random_configurations(
     seed_placement = initialize_cluster(
         molecules,
         box_length=box_length,
+        box_lengths=box_lengths,
         rng=rng,
         logger=logger,
     )
@@ -226,14 +247,10 @@ def _run_random_configurations(
     else:
         print("  Conformational sampling: disabled (no rotatable bonds or max dihedral = 0)")
 
-    # Eight cube-corner markers for the box file (v04 dummy-atom convention).
-    half_box = box_length / 2.0
-    corners = [
-        (sx * half_box, sy * half_box, sz * half_box)
-        for sz in (-1.0, 1.0)
-        for sy in (-1.0, 1.0)
-        for sx in (-1.0, 1.0)
-    ]
+    # Eight box-corner markers for the box file (v04 dummy-atom convention),
+    # from the same helper the trajectory writer uses so mtobox_ and resultbox_
+    # cannot disagree about where the walls are.
+    corners = box_corner_coords(box_lengths or box_length)
 
     move_counts = {"conformational": 0, "translate_rotate": 0}
 
@@ -281,7 +298,7 @@ def _run_random_configurations(
             ]
             box_header = (
                 f"Configuration: {i} | random placement (mode 0) | "
-                f"BoxL={box_length:.1f} A (X box markers)"
+                f"{box_label(box_lengths or box_length)} (X box markers)"
             )
             fhb.write(f"{cluster.num_atoms + len(corner_lines)}\n{box_header}\n")
             fhb.write("\n".join(atom_lines + corner_lines) + "\n")
@@ -356,27 +373,36 @@ def _run_single_simulation(input_file: str, args: argparse.Namespace,
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # --box<percent> override for single-run mode (v04 lines 20325-20347).
-    # v05 reports the recommendation but does not yet rewrite ``config.box`` —
-    # the AscConfig dataclass is frozen and a re-port of v04's
-    # ``state.cube_length`` / ``state.xbox`` mutation is **carry-over for R8**.
-    box_candidates = list(unknown_args or []) + list(sys.argv[1:])
-    for candidate in box_candidates:
-        if not isinstance(candidate, str) or not candidate.lower().startswith("--box"):
-            continue
-        packing_str = candidate.lower().replace("--box", "")
-        if not packing_str:
-            continue
-        try:
-            packing_percent = float(packing_str)
-        except ValueError:
-            continue
-        recommended = get_box_size_recommendation(input_file, packing_percent)
-        if recommended is not None:
+    # v04 mutated ``state.cube_length`` / ``state.xbox`` in place; AscConfig is
+    # frozen, so the equivalent here is to rebuild it with a new BoxSpec.
+    #
+    # The flag re-derives one cube edge from a packing percentage, so it applies
+    # to a cubic box only: a prism's two in-face edges are the footprint of the
+    # substrate standing on them and its height is chosen, and there is no
+    # single edge for a percentage to set. Say so and leave the box alone rather
+    # than flattening a substrate box into a cube.
+    packing_percent = _requested_box_packing(list(unknown_args or []) + list(sys.argv[1:]))
+    if packing_percent is not None:
+        if not config.box.is_cubic:
+            lx, ly, lz = config.box.lengths
             print(
-                f"Using recommended box size: {recommended:.1f} Å "
-                f"({packing_percent}% effective packing)"
+                f"Ignoring --box{packing_percent:g}: the box is a rectangular prism "
+                f"({lx:.1f} x {ly:.1f} x {lz:.1f} Å), which a packing percentage "
+                "cannot size. Its footprint comes from the substrate in it."
             )
-        break
+        else:
+            recommended = get_box_size_recommendation(input_file, packing_percent)
+            if recommended is not None:
+                print(
+                    f"Using recommended box size: {recommended:.1f} Å "
+                    f"({packing_percent}% effective packing)"
+                )
+                config = _replace(config, box=BoxSpec(cube_length_angstrom=recommended))
+            else:
+                print(
+                    f"Warning: could not determine a box size for "
+                    f"{packing_percent}% packing. Using the box from the file."
+                )
 
     run_seed = resolve_run_seed()
     rng = make_rng(run_seed)
@@ -449,8 +475,11 @@ def _build_single_command_parser() -> argparse.ArgumentParser:
 COMMANDS:
   Run an annealing job (the COMMAND is the .asc input file itself):
     ascec input.asc                Run simulated annealing on input.asc
+    ascec input.asc --box10        Run it in a box sized for 10% effective packing
     ascec input.asc rN             Build N replicate runs (e.g. r3 = 3 replicas)
     ascec input.asc rN --box10     Replicas sized for 10% effective packing
+                                   (--boxP sizes one cube edge, so it is ignored
+                                   for a rectangular-prism substrate box)
     ascec input.asc box            Box / packing analysis for the input
     ascec box input.asc            Same box analysis, box as the command
 
@@ -1424,40 +1453,39 @@ def main_ascec_integrated(argv=None) -> int:
                 if unknown_args:
                     candidates.extend(unknown_args)
                 candidates.extend(argv[1:])
-                for candidate in candidates:
-                    try:
-                        if isinstance(candidate, str) and candidate.lower().startswith("--box"):
-                            packing_str = candidate.lower().replace("--box", "")
-                            if packing_str:
-                                packing_percent = float(packing_str)
-                                recommended_box = get_box_size_recommendation(
-                                    input_file, packing_percent
-                                )
-                                if recommended_box is not None:
-                                    box_size_override = recommended_box
-                                    print(
-                                        f"Using recommended box size: "
-                                        f"{box_size_override:.1f} Å "
-                                        f"({packing_percent}% effective packing)"
-                                    )
-                                else:
-                                    print(
-                                        f"Warning: Could not determine box size for "
-                                        f"{packing_percent}% packing. Using original box size."
-                                    )
-                                break
-                            else:
-                                print(
-                                    "Warning: Invalid --box flag format. "
-                                    "Expected --box<number> (e.g., --box10)"
-                                )
-                    except ValueError:
+                packing_percent = _requested_box_packing(candidates)
+                if packing_percent is None and any(
+                    isinstance(c, str) and c.lower().startswith("--box") for c in candidates
+                ):
+                    print(
+                        "Warning: Invalid --box flag format. "
+                        "Expected --box<number> (e.g., --box10)"
+                    )
+                elif packing_percent is not None:
+                    # A packing percentage sizes one cube edge, which a prism box
+                    # does not have — its footprint belongs to the substrate in it.
+                    if not input_box_is_cubic(input_file):
                         print(
-                            f"Warning: Could not parse packing percentage from "
-                            f"'{candidate}'. Using original box size."
+                            f"Ignoring --box{packing_percent:g}: the box is a "
+                            "rectangular prism, which a packing percentage cannot "
+                            "size. Replicas keep the box from the file."
                         )
-                    except Exception:
-                        continue
+                    else:
+                        recommended_box = get_box_size_recommendation(
+                            input_file, packing_percent
+                        )
+                        if recommended_box is not None:
+                            box_size_override = recommended_box
+                            print(
+                                f"Using recommended box size: "
+                                f"{box_size_override:.1f} Å "
+                                f"({packing_percent}% effective packing)"
+                            )
+                        else:
+                            print(
+                                f"Warning: Could not determine box size for "
+                                f"{packing_percent}% packing. Using original box size."
+                            )
                 create_replicated_runs(input_file, num_replicas, box_size=box_size_override)
                 return 0
             except ValueError as e:

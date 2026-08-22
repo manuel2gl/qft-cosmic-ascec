@@ -339,7 +339,11 @@ def propose_unified_move(
     last_moved_mol_idx = -1
     move_type_used = "translate_rotate"
 
-    half_xbox = cluster.box_length / 2.0  # v04 line 3865
+    # v04 line 3865 used one half-edge for all three axes. ``half_box`` is the
+    # per-axis generalisation and expands a cube to three equal halves, so the
+    # cubic case is arithmetically identical. Nothing here draws a random
+    # number, so the box shape cannot perturb the RNG stream.
+    half_box = cluster.half_box
     with_rb = cache.molecules_with_rotatable_bonds
 
     for molecule_idx in range(cluster.num_molecules):
@@ -441,7 +445,7 @@ def propose_unified_move(
 
         for dim in range(3):
             new_rcm_after_translation[dim] += random_displacement_vector[dim]
-            if np.abs(new_rcm_after_translation[dim]) > half_xbox:
+            if np.abs(new_rcm_after_translation[dim]) > half_box[dim]:
                 new_rcm_after_translation[dim] -= 2.0 * random_displacement_vector[dim]
                 actual_atom_displacement[dim] = -random_displacement_vector[dim]
 
@@ -489,6 +493,7 @@ def propose_unified_move(
         molecule_offsets=np.array(cluster.molecule_offsets, copy=True),
         molecules=cluster.molecules,
         box_length=cluster.box_length,
+        box_lengths=cluster.box_lengths,
     )
     return UnifiedMoveResult(
         cluster=proposed_cluster,

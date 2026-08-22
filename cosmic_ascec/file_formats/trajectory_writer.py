@@ -57,15 +57,38 @@ def _atom_line(symbol: str, x: float, y: float, z: float) -> str:
     return f"{symbol:<3}{x: 13.6f}{y: 13.6f}{z: 13.6f}"
 
 
-def _box_corner_coords(box_length: float) -> list[tuple[float, float, float]]:
-    """Eight cube corners at +/-box_length/2, x fastest then y then z (v04 order)."""
-    h = box_length / 2.0
+def box_corner_coords(box_lengths) -> list[tuple[float, float, float]]:
+    """Eight box corners at +/-L_i/2, x fastest then y then z (v04 order).
+
+    Accepts a single edge (a cube, what v04 could express) or ``(Lx, Ly, Lz)``
+    for a rectangular prism. Shared with the ``ascec <file> box`` command so
+    the two box files cannot drift apart.
+    """
+    if isinstance(box_lengths, (int, float)):
+        hx = hy = hz = float(box_lengths) / 2.0
+    else:
+        hx, hy, hz = (float(v) / 2.0 for v in box_lengths)
     return [
-        (sx * h, sy * h, sz * h)
+        (sx * hx, sy * hy, sz * hz)
         for sz in (-1.0, 1.0)
         for sy in (-1.0, 1.0)
         for sx in (-1.0, 1.0)
     ]
+
+
+def box_label(box_lengths) -> str:
+    """``BoxL=`` text for an XYZ comment line: one number for a cube, three
+    for a prism."""
+    if isinstance(box_lengths, (int, float)):
+        return f"BoxL={float(box_lengths):.1f} A"
+    lx, ly, lz = (float(v) for v in box_lengths)
+    if lx == ly == lz:
+        return f"BoxL={lx:.1f} A"
+    return f"BoxL={lx:.1f}x{ly:.1f}x{lz:.1f} A"
+
+
+# Backwards-compatible private alias (this module's original spelling).
+_box_corner_coords = box_corner_coords
 
 
 class TrajectoryWriter(AnnealingCallback):
@@ -103,11 +126,11 @@ class TrajectoryWriter(AnnealingCallback):
 
         box_header = (
             f"Configuration: {event.index} | E = {event.energy:.8f} a.u. "
-            f"| BoxL={cluster.box_length:.1f} A (X box markers)"
+            f"| {box_label(cluster.box_lengths or cluster.box_length)} (X box markers)"
         )
         corner_lines = [
             _atom_line(_BOX_MARKER_SYMBOL, x, y, z)
-            for x, y, z in _box_corner_coords(cluster.box_length)
+            for x, y, z in box_corner_coords(cluster.box_lengths or cluster.box_length)
         ]
         with self.resultbox_path.open("a", encoding='utf-8') as fh:
             fh.write(f"{cluster.num_atoms + len(corner_lines)}\n{box_header}\n")
@@ -176,4 +199,4 @@ class TrajectoryWriter(AnnealingCallback):
         self.rless_path.write_text("\n".join(lines) + "\n", encoding='utf-8')
 
 
-__all__ = ["TrajectoryWriter"]
+__all__ = ["TrajectoryWriter", "box_corner_coords", "box_label"]

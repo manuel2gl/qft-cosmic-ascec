@@ -52,9 +52,32 @@ class QMProgram(IntEnum):
 
 @dataclass(frozen=True)
 class BoxSpec:
-    """Simulation cube. Line 2 (v04: ``state.cube_length`` / ``state.xbox``)."""
+    """Simulation box. Line 2 (v04: ``state.cube_length`` / ``state.xbox``).
+
+    Line 2 carries either one value (a cube, the only thing v04 could express)
+    or three (an axis-aligned rectangular prism, ``Lx Ly Lz``). The box is
+    always centred on the origin, so it spans ``[-L_i/2, +L_i/2]`` per axis.
+
+    ``cube_length_angstrom`` stays the first, required field and holds ``Lx``,
+    so every caller that only ever wanted one number keeps reading one number.
+    Anything that has to respect a prism reads :attr:`lengths` instead.
+    """
 
     cube_length_angstrom: float
+    lengths_angstrom: Optional[Tuple[float, float, float]] = None
+
+    @property
+    def lengths(self) -> Tuple[float, float, float]:
+        """The three edge lengths, expanded from the cube edge when needed."""
+        if self.lengths_angstrom is not None:
+            return self.lengths_angstrom
+        edge = self.cube_length_angstrom
+        return (edge, edge, edge)
+
+    @property
+    def is_cubic(self) -> bool:
+        lx, ly, lz = self.lengths
+        return lx == ly == lz
 
 
 @dataclass(frozen=True)

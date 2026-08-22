@@ -19,7 +19,7 @@ keeps the engine easy to reason about and lets callbacks store the
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -80,6 +80,20 @@ class Molecule:
         return self.num_atoms == 1
 
 
+def _as_box_lengths(
+    box_lengths: Optional[Sequence[float]],
+) -> Optional[Tuple[float, float, float]]:
+    """Normalise a box-lengths argument to a 3-tuple of floats, or ``None``."""
+    if box_lengths is None:
+        return None
+    lengths = tuple(float(v) for v in box_lengths)
+    if len(lengths) != 3:
+        raise GeometryError(
+            f"box_lengths must have 3 entries, got {len(lengths)}: {lengths}"
+        )
+    return lengths
+
+
 @dataclass(frozen=True)
 class Cluster:
     """A placed system of one or more molecules inside the simulation cube.
@@ -95,7 +109,12 @@ class Cluster:
         molecules: Tuple of :class:`Molecule` templates indexed *parallel to*
             ``molecule_offsets`` — entry ``i`` is the template that was placed
             as molecule ``i`` in the box.
-        box_length: Cube edge in Angstroms (v04's ``state.xbox`` / ``cube_length``).
+        box_length: Box edge in Angstroms along x (v04's ``state.xbox`` /
+            ``cube_length``). For a cube this is *the* edge; for a prism it is
+            ``Lx``, so callers that only ever wanted one number keep working.
+        box_lengths: ``(Lx, Ly, Lz)`` when the box is a rectangular prism, or
+            ``None`` for a cube. Trailing and defaulted so every existing
+            construction site is untouched.
     """
 
     coords: np.ndarray
@@ -103,6 +122,7 @@ class Cluster:
     molecule_offsets: np.ndarray
     molecules: Tuple[Molecule, ...]
     box_length: float
+    box_lengths: Optional[Tuple[float, float, float]] = None
 
     def __post_init__(self) -> None:
         self.coords.setflags(write=False)
@@ -114,6 +134,7 @@ class Cluster:
         molecules: Sequence[Molecule],
         per_molecule_coords: Sequence[np.ndarray],
         box_length: float,
+        box_lengths: Optional[Tuple[float, float, float]] = None,
     ) -> "Cluster":
         """Stack a list of per-molecule coordinate blocks into a single Cluster.
 
@@ -152,6 +173,7 @@ class Cluster:
             molecule_offsets=offsets,
             molecules=tuple(molecules),
             box_length=float(box_length),
+            box_lengths=_as_box_lengths(box_lengths),
         )
 
     @property
@@ -161,6 +183,15 @@ class Cluster:
     @property
     def num_molecules(self) -> int:
         return len(self.molecules)
+
+    @property
+    def half_box(self) -> np.ndarray:
+        """``(3,)`` array of half-edges — what a coordinate is measured against.
+
+        A cube expands to three equal halves, so callers need no special case.
+        """
+        lengths = self.box_lengths or (self.box_length,) * 3
+        return np.asarray(lengths, dtype=np.float64) / 2.0
 
     def atoms_for(self, molecule_index: int) -> Tuple[np.ndarray, Tuple[int, ...]]:
         """Return ``(coords_slice, atomic_numbers_tuple)`` for a single molecule."""
@@ -175,7 +206,7 @@ class Cluster:
         fresh :class:`Cluster`. This helper avoids re-stacking every block when
         only one molecule changed. The replacement must have the same atom
         count as the original block; identities (``molecules`` tuple,
-        ``atomic_numbers``, ``box_length``) are preserved.
+        ``atomic_numbers``, ``box_length``, ``box_lengths``) are preserved.
         """
         start = int(self.molecule_offsets[molecule_index])
         end = int(self.molecule_offsets[molecule_index + 1])
@@ -194,6 +225,7 @@ class Cluster:
             molecule_offsets=np.array(self.molecule_offsets, copy=True),
             molecules=self.molecules,
             box_length=self.box_length,
+            box_lengths=self.box_lengths,
         )
 
 
