@@ -2689,9 +2689,17 @@ var root,factory;root=this,factory=()=>(()=>{var __webpack_modules__={3(e,t,i){v
                         <div class="smart-box-stage">
                             <div class="smart-box-viewer-shell">
                                 <div class="smart-box-top-controls">
+                                    <div class="form-group" id="smart-box-type-group" style="">
+                                        <label>Box type</label>
+                                        <select id="smart-box-type" onchange="setBoxTypeFromSelect('smart')"
+                                            title="A cubic box is sized by packing percentage or by hand. An ASE substrate prism takes its footprint from the slab the ASE tab built and its height from the ASE tab.">
+                                            <option value="cubic" selected>Cubic — packing / manual</option>
+                                            <option value="ase-prism">ASE substrate prism</option>
+                                        </select>
+                                    </div>
                                     <div class="form-group">
                                         <label>Box Length (Å)</label>
-                                        <input type="number" id="smart-box-size-top" value="7.0" step="0.5" min="3" oninput="applyTopSmartBoxControls('box')">
+                                        <input type="number" id="smart-box-size-top" value="7.0" step="0.5" min="3" oninput="onBoxLengthTyped(this,'top')">
                                     </div>
                                     <div class="smart-top-inline">
                                         <label class="smart-pack-mini" title="Packing %: The percentage of the box occupied by your system. Set a lower value for a sparse box with plenty of empty space, or a higher value to pack molecules tightly.">
@@ -3108,7 +3116,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                         </div>
                         <div class="form-group" style="flex:1; min-width:82px; margin-bottom:0;">
                             <label>Box (Å)</label>
-                            <input type="number" id="smart-box-size" value="7.0" step="0.5" min="3" oninput="document.getElementById('smart-use-packing').checked=false; toggleSmartUsePacking(); updateBasicBoxViewer(); syncSmartToAdvanced();">
+                            <input type="number" id="smart-box-size" value="7.0" step="0.5" min="3" oninput="onBoxLengthTyped(this,'smart')">
                         </div>
                     </div>
                 </div>
@@ -3654,7 +3662,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                                     auto box
                                 </span>
                             </label>
-                            <input type="number" id="box-size" value="7.0" step="0.5" min="3" oninput="document.getElementById('adv-use-packing').checked=false; toggleAdvUsePacking(); updateBoxViewer(); updatePreview();">
+                            <input type="number" id="box-size" value="7.0" step="0.5" min="3" oninput="onBoxLengthTyped(this,'adv')">
                         </div>
                     </div>
 
@@ -4516,6 +4524,14 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
                 <div class="card" id="advanced-sim-box-card">
                     <h2>Simulation Box</h2>
+                    <div class="form-group" id="adv-box-type-group" style="margin-bottom: 12px; max-width: 280px;">
+                        <label>Box type</label>
+                        <select id="adv-box-type" onchange="setBoxTypeFromSelect('adv')"
+                            title="A cubic box is sized by packing percentage or by hand. An ASE substrate prism takes its footprint from the slab the ASE tab built and its height from the ASE tab.">
+                            <option value="cubic" selected>Cubic — packing / manual</option>
+                            <option value="ase-prism">ASE substrate prism</option>
+                        </select>
+                    </div>
                     <div id="box-viewer" class="viewer-3d"></div>
                     <div id="adv-box-info" class="adv-box-info"></div>
                     <div class="btn-group" style="margin-top: 15px;">
@@ -4715,6 +4731,65 @@ H  -0.757000  0.586000  0.000000"></textarea>
         let protocolStages = [];
         let inputMode = 'manual';
         let currentMolData = null;
+
+        // ---------------------------------------------------------------
+        // Box type. There are two, and they are sized by opposite means.
+        //
+        //   'cubic'     — one edge for all three axes, the only thing v04
+        //                 could express. Sized from the packing percentage
+        //                 or typed by hand. This is what PubChem and XYZ
+        //                 input use, and its behaviour is unchanged.
+        //   'ase-prism' — an axis-aligned rectangular prism whose footprint
+        //                 is the substrate the ASE tab built (so it follows
+        //                 nx/ny) and whose height the user types. Packing
+        //                 percentage means nothing here: the two in-face
+        //                 edges are dictated by the slab, not chosen.
+        //
+        // Both are centred on the origin, matching the engine, which now
+        // reads either one value or three from Line 2 of the .asc.
+        // ---------------------------------------------------------------
+        let boxMode = 'cubic';
+        // { lengths: [Lx, Ly, Lz], axis, face } while boxMode === 'ase-prism'.
+        // `axis` is the height axis, i.e. SUBSTRATE_FACES[face].axis.
+        let asePrism = null;
+
+        const isPrismBox = () => boxMode === 'ase-prism' && asePrism !== null;
+
+        // The three edge lengths, whatever the box type. Every consumer —
+        // viewers, placement, fit warnings, the .asc writer — goes through
+        // here, so there is one definition of how big the box is.
+        function getBoxLengths() {
+            if (isPrismBox()) return asePrism.lengths.slice();
+            const edge = getAdvancedBoxSize();
+            return [edge, edge, edge];
+        }
+
+        // Half-edges, the form most callers actually want.
+        const getBoxHalves = () => getBoxLengths().map(v => v / 2);
+
+        // The eight corner markers in the engine's own order — x fastest, then
+        // y, then z (trajectory_writer.box_corner_coords). The viewer's
+        // boxCornerCoords walks the corners around each face instead, because
+        // it is drawing edges; keep the two apart so a downloaded preview file
+        // still lines up with mtobox_/resultbox_.
+        function boxMarkerCoords(half) {
+            const [hx, hy, hz] = halfTriple(half);
+            const out = [];
+            for (const sz of [-1, 1]) for (const sy of [-1, 1]) for (const sx of [-1, 1]) {
+                out.push([sx * hx, sy * hy, sz * hz]);
+            }
+            return out;
+        }
+
+        // "BoxL=" text for an XYZ comment line: one number for a cube, three
+        // for a prism. Matches trajectory_writer.box_label.
+        function describeBox() {
+            const [lx, ly, lz] = getBoxLengths();
+            return (lx === ly && ly === lz)
+                ? `BoxL=${lx.toFixed(1)} A`
+                : `BoxL=${lx.toFixed(1)}x${ly.toFixed(1)}x${lz.toFixed(1)} A`;
+        }
+
         let viewer = null;
         let boxViewer = null;
         let basicBoxViewer = null;
@@ -4846,6 +4921,10 @@ H  -0.757000  0.586000  0.000000"></textarea>
         // Initialize
         document.addEventListener('DOMContentLoaded', function () {
             populateXtbSolventSelects();
+            // Put the two box-type selectors and the cubic controls into the
+            // state boxMode already says they are in, before anything reads them.
+            syncBoxTypeControls();
+            applyBoxModeState();
             updatePreview();
             updateQuenchVisibility();
             initDefaultProtocol();
@@ -4862,7 +4941,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             notifyCOSMICRMSDChange('adv-sim2-rmsd');
             toggleAdvUsePacking();
             toggleAdvAutoNmo();
-            updateAdvancedBoxInfo(getAdvancedBoxSize());
+            updateAdvancedBoxInfo();
             updateSimModeUI();
             updateQmCommandFromProgram();
             toggleCustomInput('adv-annealing-basis', 'adv-annealing-basis-custom');
@@ -5309,13 +5388,6 @@ H  -0.757000  0.586000  0.000000"></textarea>
             animationFrameId = requestAnimationFrame(animate);
         }
 
-        // Use smart-box-size (Smart Mode), basic-box-size (legacy), or box-size (Advanced)
-        function getSmartBoxSize() {
-            return parseFloat(document.getElementById('smart-box-size')?.value) ||
-                   parseFloat(document.getElementById('basic-box-size')?.value) ||
-                   parseFloat(document.getElementById('box-size')?.value) || 7;
-        }
-
         function getAdvancedBoxSize() {
             return parseFloat(document.getElementById('box-size')?.value) || 7;
         }
@@ -5361,8 +5433,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 // this the coordinate callouts stack up on every redraw.
                 if (typeof basicBoxViewer.removeAllLabels === 'function') basicBoxViewer.removeAllLabels();
 
-                const boxSize = getSmartBoxSize();
-                const half = boxSize / 2;
+                const lengths = getBoxLengths();
+                const half = lengths.map(v => v / 2);
 
                 // Fixed display radii keep edge thickness identical between empty/full views.
                 const cornerModelId = drawBoxFrame(basicBoxViewer, half, SMART_BOX_STYLE);
@@ -5394,11 +5466,11 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 } else {
                     basicBoxViewer.zoomTo({elem: 'X'});
                 }
-                basicBoxViewer.zoom(1.3, 0);
+                basicBoxViewer.zoom(boxZoomFactor(half, 1.3), 0);
                 smartViewFramed = true;
                 basicBoxViewer.render();
                 
-                console.log('✓ Smart Mode box rendered (box size: ' + boxSize + ' Å)');
+                console.log('✓ Smart Mode box rendered (' + describeBox() + ')');
             } catch (e) {
                 console.error('Error updating Smart Mode box:', e);
             }
@@ -5406,23 +5478,46 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
         // The eight cube corners at +/-L/2 — the GUI's origin-centred convention
         // matches the engine (trajectory_writer._box_corner_coords).
+        // A cube passes one half-edge, a prism passes three. Normalising here
+        // means every caller below is written once, for the general case.
+        function halfTriple(half) {
+            return Array.isArray(half) ? half : [half, half, half];
+        }
+
         function boxCornerCoords(half) {
+            const [hx, hy, hz] = halfTriple(half);
             return [
-                [-half, -half, -half], [half, -half, -half], [half, half, -half], [-half, half, -half],
-                [-half, -half, half], [half, -half, half], [half, half, half], [-half, half, half]
+                [-hx, -hy, -hz], [hx, -hy, -hz], [hx, hy, -hz], [-hx, hy, -hz],
+                [-hx, -hy, hz], [hx, -hy, hz], [hx, hy, hz], [-hx, hy, hz]
             ];
         }
 
-        // The twelve cube edges as [start, end] corner pairs.
+        // The twelve box edges as [start, end] corner pairs, indexed into the
+        // corner order above so the two can never drift apart.
+        const BOX_EDGE_PAIRS = [
+            [0, 1], [1, 2], [2, 3], [3, 0],   // the -z quad
+            [4, 5], [5, 6], [6, 7], [7, 4],   // the +z quad
+            [0, 4], [1, 5], [2, 6], [3, 7]    // the four connecting edges
+        ];
+
         function boxEdgeCoords(half) {
-            return [
-                [[-half, -half, -half], [half, -half, -half]], [[half, -half, -half], [half, half, -half]],
-                [[half, half, -half], [-half, half, -half]], [[-half, half, -half], [-half, -half, -half]],
-                [[-half, -half, half], [half, -half, half]], [[half, -half, half], [half, half, half]],
-                [[half, half, half], [-half, half, half]], [[-half, half, half], [-half, -half, half]],
-                [[-half, -half, -half], [-half, -half, half]], [[half, -half, -half], [half, -half, half]],
-                [[half, half, -half], [half, half, half]], [[-half, half, -half], [-half, half, half]]
-            ];
+            const corners = boxCornerCoords(half);
+            return BOX_EDGE_PAIRS.map(([a, b]) => [corners[a], corners[b]]);
+        }
+
+        // How far the camera may zoom past zoomTo() before the box is cropped.
+        //
+        // zoomTo() frames the eight corner markers, so it fits the sphere through
+        // them — radius hypot(hx,hy,hz). What has to stay on screen is the
+        // furthest wall, at max(h). A cube has a comfortable sqrt(3) of slack,
+        // which is why a flat 1.3 always looked right; an elongated prism has far
+        // less (1.22 for an 11.5x22x10 box) and the same 1.3 cuts its ends off.
+        // Cap at what the box actually allows, keeping 5% as margin.
+        function boxZoomFactor(half, desired) {
+            const h = halfTriple(half);
+            const maxHalf = Math.max(...h);
+            if (!(maxHalf > 0)) return desired;
+            return Math.min(desired, (Math.hypot(...h) / maxHalf) * 0.95);
         }
 
         // Draw the wireframe cube plus eight invisible "X" marker atoms (3Dmol
@@ -5557,17 +5652,36 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 // this the coordinate callouts stack up on every redraw.
                 if (typeof viewer.removeAllLabels === 'function') viewer.removeAllLabels();
 
-                const boxSize = advanced ? getAdvancedBoxSize() : getSmartBoxSize();
-                const half = boxSize / 2;
+                const lengths = getBoxLengths();
+                const half = lengths.map(v => v / 2);
                 const cornerModelId = drawBoxFrame(
                     viewer, half, advanced ? ADVANCED_BOX_STYLE : SMART_BOX_STYLE
                 );
-                if (advanced) updateAdvancedBoxInfo(boxSize);
+                if (advanced) updateAdvancedBoxInfo();
 
                 // Each fragment gets its own model (prevents inter-fragment bonding),
                 // a random 3D rotation about its centroid, then placed at a random
                 // position inside the box — like ASCEC's random generation.
                 const margin = 0.3; // small margin so atoms don't clip box edges
+
+                // Per axis, because the box need not be a cube. (Subtracting the
+                // margin from the array itself yields NaN, which silently deletes
+                // every mobile fragment from the preview.)
+                const lo = half.map(h => -h + margin);
+                const hi = half.map(h => h - margin);
+
+                // Anything pinned to a face is solid: dropping a fragment inside
+                // the substrate is a picture the run would never produce, so the
+                // free space starts above it. Only the face axis is bounded — the
+                // slab spans the other two by construction.
+                for (const mol of molecules) {
+                    const spec = mol.anchor && SUBSTRATE_FACES[mol.anchor.face];
+                    if (!spec || !mol.fixed) continue;
+                    let top = -Infinity;
+                    for (const c of mol.coords) if (c[spec.axis] > top) top = c[spec.axis];
+                    lo[spec.axis] = Math.max(lo[spec.axis], top + margin);
+                }
+                for (let i = 0; i < 3; i++) if (lo[i] > hi[i]) lo[i] = hi[i] = (lo[i] + hi[i]) / 2;
 
                 molecules.forEach(mol => {
                     const n = mol.atoms.length;
@@ -5589,11 +5703,9 @@ H  -0.757000  0.586000  0.000000"></textarea>
 
                         const R = randRotMatrix();
 
-                        // Place centroid at a uniformly random position inside the box
-                        const range = half - margin;
-                        const tx = (Math.random() - 0.5) * 2 * range;
-                        const ty = (Math.random() - 0.5) * 2 * range;
-                        const tz = (Math.random() - 0.5) * 2 * range;
+                        // Place centroid at a uniformly random position in the free space
+                        const [tx, ty, tz] = [0, 1, 2].map(
+                            i => lo[i] + Math.random() * (hi[i] - lo[i]));
 
                         mol.atoms.forEach((atom, i) => {
                             const [x, y, z] = mol.coords[i];
@@ -5616,7 +5728,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                     viewer.zoomTo({elem: 'X'});
                 }
                 // Advanced mode reuses updateBoxViewer's framing convention.
-                viewer.zoom(advanced && inputMode === 'manual' ? 1.18 : 1.3, 0);
+                viewer.zoom(boxZoomFactor(half, advanced && inputMode === 'manual' ? 1.18 : 1.3), 0);
                 if (advanced) advancedViewFramed = true;
                 else smartViewFramed = true;
                 viewer.render();
@@ -5625,21 +5737,24 @@ H  -0.757000  0.586000  0.000000"></textarea>
             }
         }
 
-        // Numeric readout under the Advanced box: where the cube actually sits.
-        // The engine uses the same origin-centred convention (moves.py half_xbox,
-        // ascec.py half_box), so these numbers describe the real simulation cell.
-        function updateAdvancedBoxInfo(boxSize) {
+        // Numeric readout under the Advanced box: where the box actually sits.
+        // The engine uses the same origin-centred convention (moves.py half_box,
+        // ascec.py box_corner_coords), so these numbers describe the real cell.
+        function updateAdvancedBoxInfo() {
             const el = document.getElementById('adv-box-info');
             if (!el) return;
-            const size = Number.isFinite(boxSize) ? boxSize : getAdvancedBoxSize();
-            const half = size / 2;
-            const h = half.toFixed(3);
+            const [lx, ly, lz] = getBoxLengths();
+            const [hx, hy, hz] = [lx / 2, ly / 2, lz / 2].map(v => v.toFixed(3));
+            const cubic = (lx === ly && ly === lz);
             // Mirrors the three labels drawn inside the box.
             el.innerHTML =
                 `<span><b>Center</b> (0.000, 0.000, 0.000)</span>` +
-                `<span><b>Vertex</b> (-${h}, -${h}, -${h}) &nbsp; <b>Vertex</b> (${h}, ${h}, ${h})</span>` +
-                `<span><b>Length</b> ${size.toFixed(3)} &Aring; &nbsp; <b>Half</b> ${h} &Aring; ` +
-                `&nbsp; all 8 vertices are (&plusmn;${h}, &plusmn;${h}, &plusmn;${h})</span>`;
+                `<span><b>Vertex</b> (-${hx}, -${hy}, -${hz}) &nbsp; <b>Vertex</b> (${hx}, ${hy}, ${hz})</span>` +
+                (cubic
+                    ? `<span><b>Length</b> ${lx.toFixed(3)} &Aring; &nbsp; <b>Half</b> ${hx} &Aring; ` +
+                      `&nbsp; all 8 vertices are (&plusmn;${hx}, &plusmn;${hy}, &plusmn;${hz})</span>`
+                    : `<span><b>Lengths</b> ${lx.toFixed(3)} &times; ${ly.toFixed(3)} &times; ${lz.toFixed(3)} &Aring; ` +
+                      `&nbsp; all 8 vertices are (&plusmn;${hx}, &plusmn;${hy}, &plusmn;${hz})</span>`);
         }
 
         // Advanced box viewer (technical, no animation)
@@ -5647,7 +5762,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             reanchorSubstrates();
             // Refresh the readout first: it must stay correct even when the
             // viewer cannot be created yet (Advanced tab not shown).
-            updateAdvancedBoxInfo(getAdvancedBoxSize());
+            updateAdvancedBoxInfo();
 
             // Create viewer if it doesn't exist
             if (!boxViewer) {
@@ -5663,8 +5778,8 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 // this the coordinate callouts stack up on every redraw.
                 if (typeof boxViewer.removeAllLabels === 'function') boxViewer.removeAllLabels();
 
-                const boxSize = getAdvancedBoxSize();
-                const half = boxSize / 2;
+                const lengths = getBoxLengths();
+                const half = lengths.map(v => v / 2);
 
                 // Technical look: blue edges, magenta corner markers, green origin.
                 // Radii are fixed so thickness stays stable between empty/full views.
@@ -5697,12 +5812,12 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 
                 // Refit camera to box every update to keep box visually constant.
                 boxViewer.zoomTo({elem: 'X'});
-                const advZoom = inputMode === 'manual' ? 1.18 : 1.3;
+                const advZoom = boxZoomFactor(half, inputMode === 'manual' ? 1.18 : 1.3);
                 boxViewer.zoom(advZoom, 0);
                 advancedViewFramed = true;
                 boxViewer.render();
                 
-                console.log('✓ Advanced Mode box rendered (box size: ' + boxSize + ' Å)');
+                console.log('✓ Advanced Mode box rendered (' + describeBox() + ')');
             } catch (e) {
                 console.error('Error updating Advanced Mode box:', e);
             }
@@ -5712,7 +5827,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
             if (boxViewer) {
                 boxViewer.resize();
                 boxViewer.zoomTo();
-                boxViewer.zoom(1.3, 0);
+                boxViewer.zoom(boxZoomFactor(getBoxHalves(), 1.3), 0);
                 boxViewer.render();
             }
         }
@@ -5721,31 +5836,22 @@ H  -0.757000  0.586000  0.000000"></textarea>
             if (basicBoxViewer) {
                 basicBoxViewer.resize();
                 basicBoxViewer.zoomTo();
-                basicBoxViewer.zoom(1.08, 0);
+                basicBoxViewer.zoom(boxZoomFactor(getBoxHalves(), 1.08), 0);
                 basicBoxViewer.render();
             }
         }
 
         function buildMoleculesXYZ(includeBoxMarkers = false) {
-            const boxSize = parseFloat(document.getElementById('smart-box-size')?.value) ||
-                            parseFloat(document.getElementById('basic-box-size')?.value) ||
-                            parseFloat(document.getElementById('box-size')?.value) || 7;
-            const half = boxSize / 2;
-
-            const vertices = [
-                [-half, -half, -half], [half, -half, -half],
-                [-half, half, -half], [half, half, -half],
-                [-half, -half, half], [half, -half, half],
-                [-half, half, half], [half, half, half]
-            ];
+            const vertices = boxMarkerCoords(getBoxHalves());
+            const boxLabel = describeBox();
 
             let totalAtoms = includeBoxMarkers ? 8 : 0;
             molecules.forEach(mol => totalAtoms += mol.atoms.length);
 
             let xyzContent = `${totalAtoms}\n`;
             xyzContent += includeBoxMarkers
-                ? `Simulation box preview | BoxL=${boxSize.toFixed(1)} A (X = box markers)\n`
-                : `Molecule coordinates only | BoxL=${boxSize.toFixed(1)} A\n`;
+                ? `Simulation box preview | ${boxLabel} (X = box markers)\n`
+                : `Molecule coordinates only | ${boxLabel}\n`;
 
             molecules.forEach(mol => {
                 mol.atoms.forEach((atom, i) => {
@@ -6861,6 +6967,7 @@ H  -0.757000  0.586000  0.000000"></textarea>
                 }
             }
             document.getElementById(SMART_FOCUS_FIELD[mode])?.focus();
+            if (mode === 'ase') aseMaybeRestore('ase');
         }
 
         // Kept so the original two-way call site still works.
@@ -7196,12 +7303,24 @@ H   2.219500  1.213600  0.000000`
 
         // Set a fragment on one face of the box: turned to lie flat, centred on the
         // two in-face axes, and pushed off the wall by `offset`.
-        function placeOnFace(atoms, coords, face, boxLength, offset = 0) {
+        //
+        // `boxLengths` is either the three edge lengths or, for a cube, a single
+        // number. Only the face's own axis is read — the in-face centring sits on
+        // the origin and does not depend on any edge — so a prism and a cube of
+        // the same height place a slab identically.
+        //
+        // `planarCentre` (optional, already in the turned frame) is the point to
+        // put on the box axis instead of the centroid. It comes from the ASE cell:
+        // a periodic tile's atoms sit at 0, d, 2d ... (n-1)d, so their centroid is
+        // half a spacing below the cell centre, and centring on it would push the
+        // slab off-centre by that much.
+        function placeOnFace(atoms, coords, face, boxLengths, offset = 0, planarCentre = null) {
             const spec = SUBSTRATE_FACES[face];
             if (!spec || coords.length === 0) return { atoms, coords };
 
             const turned = coords.map(spec.turn);
             const axis = spec.axis;
+            const boxLength = halfTriple(boxLengths)[axis];
 
             const sum = [0, 0, 0];
             let nearest = Infinity;
@@ -7211,7 +7330,8 @@ H   2.219500  1.213600  0.000000`
             }
             const n = turned.length;
             const shift = [0, 1, 2].map(i =>
-                i === axis ? -boxLength / 2 + offset - nearest : -sum[i] / n);
+                i === axis ? -boxLength / 2 + offset - nearest
+                           : -(planarCentre ? planarCentre[i] : sum[i] / n));
 
             return {
                 atoms,
@@ -7232,10 +7352,38 @@ H   2.219500  1.213600  0.000000`
         // fetched until the user presses the load button.
         // ---------------------------------------------------------------
 
+        // Whether this browser has had the ASE runtime up before. Every file it
+        // needs is served immutable or with a year-long max-age (the PyPI wheel
+        // says `immutable` outright), so after the first success a reload finds
+        // them all in the HTTP cache. What a reload *cannot* keep is the
+        // interpreter itself, which lives in the page — so the panel used to fall
+        // back to its "Load ASE" button and make a cache-warm restart look like a
+        // fresh 32 MB download. Remembering the flag lets the tab bring itself
+        // back with no click, and a hard refresh still re-fetches for real
+        // because that is the browser bypassing its own cache.
+        const ASE_LOADED_KEY = 'ascec.ase.loaded';
+
+        function aseWasLoadedBefore() {
+            // Private windows and blocked site data throw on access, not just on
+            // write, so the read is guarded too.
+            try { return localStorage.getItem(ASE_LOADED_KEY) === '1'; }
+            catch (_) { return false; }
+        }
+
+        function aseRememberLoaded(on) {
+            try {
+                if (on) localStorage.setItem(ASE_LOADED_KEY, '1');
+                else localStorage.removeItem(ASE_LOADED_KEY);
+            } catch (_) { /* nothing to remember it with; the button still works */ }
+        }
+
         const PYODIDE_VERSION = '0.28.3';
         const PYODIDE_CDN = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
         const ASE_LOAD_LABEL = '⬇ Load ASE';
+        // Shown instead once the browser has the files: a restart is a cache read.
+        const ASE_RELOAD_LABEL = '↻ Start ASE';
         let asePyodide = null;
+        let aseLoadingPromise = null;
 
         // `nz` names what the third size field means for this builder, or is
         // null when the builder has no third dimension - the field is then
@@ -7243,31 +7391,51 @@ H   2.219500  1.213600  0.000000`
         // repeat. `a` false: no lattice/bond constant. There is no vacuum
         // field: vacuum only pads the ASE cell, and the cell is dropped on the
         // way out to XYZ, so it could never change anything you see here.
+        // `slab` marks the builders that make a surface — the ones you would put
+        // something *on*. They default to the lower-face placement, which is what
+        // turns the box into a substrate prism. bulk and molecule are not
+        // surfaces, so they keep the centred placement and the cubic box.
+        // `ortho` says how this builder can be made to tile a rectangle:
+        //   'param'     — it takes ASE's own orthogonal=True
+        //   'supercell' — hexagonal cell, rectangular via the supercell transform
+        //                 below (a1, a1+2*a2), which ASE has no flag for
+        //   absent      — already rectangular, or not a surface at all
+        // `evenY` marks the builders ASE can only make orthorhombic when ny is
+        // even; it raises otherwise, and aseExplain turns that into advice.
         const ASE_STRUCTURES = {
-            graphene: { label: 'graphene — sheet (nz stacks AB layers)', el: 'C', nz: 'layers' },
+            graphene: { label: 'graphene — sheet', el: 'C', nz: 'layers',
+                slab: true, ortho: 'supercell' },
             graphene_nanoribbon: {
-                label: 'graphene_nanoribbon — ribbon (n, m)', el: 'C', nz: null,
+                label: 'graphene_nanoribbon — ribbon', el: 'C', nz: null, slab: true,
                 note: 'One element throughout. A non-carbon ribbon keeps graphene geometry '
                     + 'unless you set the bond length yourself.'
             },
-            nanotube: { label: 'nanotube — single-walled (n, m)', el: 'C', nz: 'length' },
-            fcc111: { label: 'fcc111 — close-packed metal surface', el: 'Pt', nz: 'layers',
-                family: 'fcc' },
+            nanotube: { label: 'nanotube — single-walled', el: 'C', nz: 'length' },
+            fcc111: { label: 'fcc111 — metal surface', el: 'Pt', nz: 'layers',
+                family: 'fcc', slab: true, ortho: 'param', evenY: true },
             fcc100: { label: 'fcc100 — metal surface', el: 'Pt', nz: 'layers',
-                family: 'fcc' },
+                family: 'fcc', slab: true, ortho: 'param' },
             fcc110: { label: 'fcc110 — metal surface', el: 'Pt', nz: 'layers',
-                family: 'fcc' },
+                family: 'fcc', slab: true, ortho: 'param' },
             bcc100: { label: 'bcc100 — metal surface', el: 'Fe', nz: 'layers',
-                family: 'bcc' },
+                family: 'bcc', slab: true, ortho: 'param' },
             bcc110: { label: 'bcc110 — metal surface', el: 'Fe', nz: 'layers',
-                family: 'bcc' },
+                family: 'bcc', slab: true, ortho: 'param', evenY: true },
             hcp0001: { label: 'hcp0001 — metal surface', el: 'Ru', nz: 'layers',
-                family: 'hcp' },
-            mx2: { label: 'mx2 — MoS2-type monolayer', el: 'MoS2', nz: null,
+                family: 'hcp', slab: true, ortho: 'param', evenY: true },
+            mx2: { label: 'mx2 — MoS2-type monolayer', el: 'MoS2', nz: null, slab: true,
+                ortho: 'supercell',
                 note: 'A single 2H layer — ASE has no multilayer form here.' },
             bulk: { label: 'bulk — crystal unit cell', el: 'Si', nz: 'repeat' },
             molecule: { label: 'molecule — G2 database', el: 'H2O', nz: null, xy: false, a: false }
         };
+
+        // A hexagonal surface cell (a1, a2 at 120 deg) tiles a rectangle as
+        // (a1, a1 + 2*a2). The atoms are untouched: this is a different choice of
+        // repeating unit for the same lattice, so nearest-neighbour distances,
+        // coordination and layer registry all come out identical — verified
+        // against ASE 3.29 for graphene and mx2.
+        const ASE_ORTHO_SUPERCELL = '[[1, 0, 0], [1, 2, 0], [0, 0, 1]]';
 
         // Interlayer separation used when stacking a builder ASE only makes one
         // layer of. Graphite, experimental c/2.
@@ -7339,101 +7507,141 @@ H   2.219500  1.213600  0.000000`
             }
         };
 
+        const ASE_STRUCTURE_TIP = 'Which ase.build function to call. The surface builders'
+            + ' open pinned to the lower face; bulk and molecule sit in the centre of the box.';
+
         function aseRenderPanel(prefix) {
             const host = document.getElementById(ASE_PANELS[prefix].host);
             if (!host) return;
             const options = Object.entries(ASE_STRUCTURES)
                 .map(([k, m]) => `<option value="${k}">${m.label}</option>`).join('');
-            const field = (id, label, extra) =>
-                `<div class="form-group" id="${prefix}-${id}-group" style="flex: 1; margin-bottom: 0;">`
+            // Files already fetched once? Then this is a cache read, not a download.
+            const warm = aseWasLoadedBefore();
+            const field = (id, label, extra, tip = '') =>
+                `<div class="form-group" id="${prefix}-${id}-group" style="flex: 1; margin-bottom: 0;"`
+                + `${tip ? ` title="${tip.replace(/"/g, '&quot;')}"` : ''}>`
                 + `<label id="${prefix}-${id}-label">${label}</label>`
                 + `<input id="${prefix}-${id}" ${extra}></div>`;
 
+            // Everything explanatory lives in a title= tooltip rather than on the
+            // page. The panel is a dense form and the prose was crowding it out;
+            // hovering an option is how you ask what it does.
             host.innerHTML = `
-                <div class="alert alert-info" style="margin-top: 15px;">
-                    <strong>Build a structure with ASE</strong> — the real <code>ase.build</code>
-                    module, running in your browser.
-                </div>
-
-                <div id="${prefix}-loader">
-                    <button class="btn btn-primary" id="${prefix}-load-btn" style="height: 42px;">${ASE_LOAD_LABEL}</button>
+                <div id="${prefix}-loader" style="margin-top: 15px;">
+                    <button class="btn btn-primary" id="${prefix}-load-btn" style="height: 42px;"
+                        title="${warm
+                            ? 'Your browser already has these files, so this starts the interpreter from its cache rather than fetching anything. Opening this tab does it for you.'
+                            : 'Downloads the real ase.build module (~32 MB) with Pyodide and runs it in this page. Your browser keeps the files afterwards, so this is a one-off.'}">${warm ? ASE_RELOAD_LABEL : ASE_LOAD_LABEL}</button>
                     <div id="${prefix}-load-status" style="margin-top: 8px; color: #666; font-size: 0.9em;">
-                        Downloads ASE (~32 MB) using Pyodide. Your browser keeps it afterwards.
+                        ${warm ? 'Already in your browser — starting…' : '~32 MB, once per browser.'}
                     </div>
                 </div>
 
                 <div id="${prefix}-builder" style="display: none;">
+                    <div class="inline-group" style="align-items: center; margin: 15px 0 12px;">
+                        <button class="btn btn-primary" id="${prefix}-run-btn"
+                            style="height: 42px; min-width: 150px; white-space: nowrap;"
+                            title="Runs the Python below and reads back the object named atoms.">⚛ Build &amp; Load</button>
+                        <div id="${prefix}-run-status" style="color: #666; font-size: 0.9em;"></div>
+                    </div>
+
                     <div class="inline-group" style="align-items: flex-end; margin-bottom: 10px;">
                         <div class="form-group" style="flex: 2; margin-bottom: 0;">
                             <label>Structure</label>
                             <select id="${prefix}-structure">${options}</select>
                         </div>
-                        ${field('element', 'Element / formula', 'type="text" placeholder="C"')}
+                        ${field('element', 'Element', 'type="text" placeholder="C"',
+                            'Chemical symbol, or a formula where the builder takes one (MoS2, H2O).')}
                     </div>
 
                     <div class="inline-group" style="align-items: flex-end; margin-bottom: 10px;">
-                        ${field('nx', 'nx', 'type="number" value="4" min="1"')}
-                        ${field('ny', 'ny', 'type="number" value="4" min="1"')}
-                        ${field('nz', 'layers', 'type="number" value="1" min="1"')}
-                        ${field('a', 'a / bond (Å)', 'type="text" placeholder="default"')}
+                        ${field('nx', 'nx', 'type="number" value="4" min="1"',
+                            'Repeats along the first in-plane cell vector. Sets the box width.')}
+                        ${field('ny', 'ny', 'type="number" value="4" min="1"',
+                            'Repeats along the second in-plane cell vector. Sets the box depth.')}
+                        ${field('nz', 'layers', 'type="number" value="1" min="1"',
+                            'What the third size number means depends on the builder — the label says which.')}
+                        ${field('a', 'a / bond (Å)', 'type="text" placeholder="default"',
+                            'Lattice constant or bond length. Left blank, ASE uses its own reference value for the element.')}
                     </div>
 
-                    <div id="${prefix}-note" style="color: #666; font-size: 0.85em; margin: -4px 0 10px;"></div>
-
-                    <div style="margin-bottom: 10px;">
-                        <label style="display: flex; align-items: center; gap: 8px; font-weight: 500;">
+                    <div class="inline-group" style="align-items: center; margin-bottom: 10px; gap: 18px;">
+                        <label id="${prefix}-ortho-group"
+                            style="display: flex; align-items: center; gap: 8px; font-weight: 500; margin: 0;"
+                            title="A hexagonal surface cell is a rhombus, so a rectangular box around it is left empty at two corners. This cuts a rectangular repeating unit of the same lattice instead: identical bond lengths, coordination and layer stacking — a different tile, not a different crystal.">
+                            <input type="checkbox" id="${prefix}-ortho" checked style="width: auto; margin: 0;">
+                            Rectangular cell
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; margin: 0;"
+                            title="Making ASE's periodic cell finite leaves atoms dangling at the edge. This drops any atom left with fewer neighbours than the number given.">
                             <input type="checkbox" id="${prefix}-trim" checked style="width: auto; margin: 0;">
-                            Trim atoms with fewer than
+                            Trim edges below
                             <input type="number" id="${prefix}-trim-min" value="2" min="1" max="6"
                                 style="width: 54px; padding: 2px 4px; margin: 0;">
                             neighbours
                         </label>
-                        <div style="color: #666; font-size: 0.85em; margin-top: 4px;">
-                            Cleans up the ragged edge left when ASE's periodic cell is made finite.
-                        </div>
                     </div>
+
+                    <div id="${prefix}-ortho-note" style="color: #666; font-size: 0.85em; margin: -4px 0 10px; display: none;"></div>
 
                     <div class="inline-group" style="align-items: flex-end; margin-bottom: 10px;">
                         <div class="form-group" style="flex: 2; margin-bottom: 0;">
-                            <label>Placement in the box</label>
-                            <select id="${prefix}-placement">
-                                <option value="center" selected>Centre of the box (0, 0, 0)</option>
-                                <option value="bottom">Lower face — substrate (pinned)</option>
-                                <option value="back">Back face — substrate (pinned)</option>
+                            <label>Placement</label>
+                            <select id="${prefix}-placement"
+                                title="A face placement pins the fragment there as a frozen *$ block and turns the box into a substrate prism. Centring leaves it mobile in whatever box the rest of the page decided on.">
+                                <option value="center" selected>Centre of the box</option>
+                                <option value="bottom">Lower face — substrate</option>
+                                <option value="back">Back face — substrate</option>
                             </select>
                         </div>
                         <div class="form-group" id="${prefix}-offset-group" style="flex: 1; margin-bottom: 0;">
-                            <label id="${prefix}-offset-label">Offset from face (Å)</label>
-                            <input id="${prefix}-offset" type="number" value="0" step="0.1">
+                            <label id="${prefix}-offset-label">Offset (Å)</label>
+                            <input id="${prefix}-offset" type="number" value="0" step="0.1"
+                                title="Lifts the slab clear of the face it sits on.">
+                        </div>
+                    </div>
+
+                    <div id="${prefix}-box-group" style="display: none; border: 1px solid #d8d8e0;
+                        border-radius: 6px; padding: 10px; margin-bottom: 10px; background: #fafaff;"
+                        title="The simulation box for this substrate. Width and depth are the slab's own cell, so they follow nx and ny; height is the full extent of the box, measured through the substrate.">
+                        <div class="inline-group" style="align-items: flex-end;">
+                            ${field('box-w', 'Box W (Å)', 'type="text" readonly',
+                                "The slab's own cell width — follows nx. Build to fill it in.")}
+                            ${field('box-d', 'Box D (Å)', 'type="text" readonly',
+                                "The slab's own cell depth — follows ny. Build to fill it in.")}
+                            ${field('box-h', 'Box H (Å)', 'type="number" value="20" min="1" step="0.5"',
+                                'Total height of the box, substrate included. Yours to set.')}
                         </div>
                     </div>
 
                     <div id="${prefix}-placement-note" style="color: #666; font-size: 0.85em; margin: -4px 0 10px;"></div>
 
                     <div class="form-group" style="margin-bottom: 10px;">
-                        <label>Python (runs as-is; the object named <code>atoms</code> is read back)</label>
-                        <textarea class="xyz-input" id="${prefix}-code" rows="4" spellcheck="false"></textarea>
-                    </div>
-
-                    <div class="inline-group" style="align-items: center;">
-                        <button class="btn btn-primary" id="${prefix}-run-btn"
-                            style="height: 42px; min-width: 150px; white-space: nowrap;">⚛ Build &amp; Load</button>
-                        <div id="${prefix}-run-status" style="color: #666; font-size: 0.9em;"></div>
+                        <label title="This is exactly what runs. Edit it freely — the object left in atoms is what gets read back.">Python</label>
+                        <textarea class="xyz-input" id="${prefix}-code" rows="4" spellcheck="false"
+                            title="Runs as-is. The object named atoms is what gets read back."></textarea>
                     </div>
                 </div>`;
 
             document.getElementById(`${prefix}-load-btn`).addEventListener('click', () => aseLoadRuntime(prefix));
             document.getElementById(`${prefix}-run-btn`).addEventListener('click', () => aseRun(prefix));
-            for (const id of ['structure', 'element', 'nx', 'ny', 'nz', 'a']) {
+            for (const id of ['structure', 'element', 'nx', 'ny', 'nz', 'a', 'ortho']) {
                 document.getElementById(`${prefix}-${id}`)
                     .addEventListener('input', () => aseSyncScript(prefix));
             }
+            // Picking a different builder re-picks the placement default with it.
+            // Only on the structure change, never inside aseSyncFields: that runs
+            // on every keystroke and would keep overriding a placement the user
+            // deliberately chose.
+            document.getElementById(`${prefix}-structure`)
+                .addEventListener('change', () => aseApplyPlacementDefault(prefix));
             // Placement is applied to the coordinates ASE hands back, never to the
             // ase.build call, so these two must not rewrite the script textarea.
-            for (const id of ['placement', 'offset']) {
+            for (const id of ['placement', 'offset', 'box-h']) {
                 document.getElementById(`${prefix}-${id}`)
-                    ?.addEventListener('input', () => { aseSyncFields(prefix); aseRestage(prefix); });
+                    ?.addEventListener('input', () => { aseBoxEdited(prefix); });
             }
+            aseApplyPlacementDefault(prefix);
             aseSyncScript(prefix);
         }
 
@@ -7452,6 +7660,10 @@ H   2.219500  1.213600  0.000000`
             const nz = spec.nz ? (parseInt(val('nz'), 10) || 1) : 1;
             const c = val('a');
             const a = c ? `, a=${c}` : '';
+            // Only offered where the builder can honour it (see ASE_STRUCTURES.ortho).
+            const ortho = spec.ortho && aseOrthoWanted(prefix);
+            const orthoArg = (ortho && spec.ortho === 'param') ? ', orthogonal=True' : '';
+            const SUPER = 'from ase.build.supercells import make_supercell\n';
 
             switch (kind) {
                 case 'graphene':
@@ -7461,23 +7673,31 @@ H   2.219500  1.213600  0.000000`
                     // instead, offsetting every other layer by one C-C bond
                     // (the A->B sublattice vector, read off the primitive cell)
                     // so the result is graphite, not eclipsed AA.
+                    {
+                    // The rectangular form repeats an orthogonal supercell of the
+                    // 2-atom cell instead of passing size= straight through.
+                    const sheet = ortho
+                        ? `make_supercell(graphene(formula='${el}2'${a}), ${ASE_ORTHO_SUPERCELL})`
+                            + `.repeat((${nx}, ${ny}, 1))`
+                        : `graphene(formula='${el}2'${a}, size=(${nx}, ${ny}, 1))`;
+                    const head = `from ase.build import graphene\n` + (ortho ? SUPER : '');
                     if (nz <= 1) {
-                        return `from ase.build import graphene\n`
-                            + `atoms = graphene(formula='${el}2'${a}, size=(${nx}, ${ny}, 1))`;
+                        return head + `atoms = ${sheet}`;
                     }
-                    return `from ase.build import graphene\n`
+                    return head
                         + `\n`
                         + `prim = graphene(formula='${el}2'${a})\n`
                         + `shift = prim.positions[1] - prim.positions[0]   # one C-C bond\n`
                         + `shift[2] = 0.0\n`
                         + `\n`
-                        + `layer = graphene(formula='${el}2'${a}, size=(${nx}, ${ny}, 1))\n`
+                        + `layer = ${sheet}\n`
                         + `layer.set_pbc(False)\n`
                         + `atoms = layer.copy()\n`
                         + `for i in range(1, ${nz}):\n`
                         + `    up = layer.copy()\n`
                         + `    up.translate(shift * (i % 2) + [0.0, 0.0, ${ASE_GRAPHENE_INTERLAYER.toFixed(2)} * i])\n`
                         + `    atoms += up`;
+                    }
                 case 'graphene_nanoribbon':
                     return `from ase.build import graphene_nanoribbon\n`
                         + `atoms = graphene_nanoribbon(${nx}, ${ny}, type='armchair', saturated=False, `
@@ -7486,13 +7706,18 @@ H   2.219500  1.213600  0.000000`
                     return `from ase.build import nanotube\n`
                         + `atoms = nanotube(${nx}, ${ny}, length=${nz}, symbol='${el}'${c ? `, bond=${c}` : ''})`;
                 case 'mx2':
-                    return `from ase.build import mx2\natoms = mx2(formula='${el}'${a}, size=(${nx}, ${ny}, 1))`;
+                    return ortho
+                        ? `from ase.build import mx2\n` + SUPER
+                            + `atoms = make_supercell(mx2(formula='${el}'${a}), ${ASE_ORTHO_SUPERCELL})`
+                            + `.repeat((${nx}, ${ny}, 1))`
+                        : `from ase.build import mx2\natoms = mx2(formula='${el}'${a}, size=(${nx}, ${ny}, 1))`;
                 case 'bulk':
                     return `from ase.build import bulk\natoms = bulk('${el}'${a}).repeat((${nx}, ${ny}, ${nz}))`;
                 case 'molecule':
                     return `from ase.build import molecule\natoms = molecule('${el}')`;
                 default:
-                    return `from ase.build import ${kind}\natoms = ${kind}('${el}', size=(${nx}, ${ny}, ${nz})${a})`;
+                    return `from ase.build import ${kind}\n`
+                        + `atoms = ${kind}('${el}', size=(${nx}, ${ny}, ${nz})${a}${orthoArg})`;
             }
         }
 
@@ -7518,22 +7743,159 @@ H   2.219500  1.213600  0.000000`
             apply('ny', xy, 'ny');
             apply('nz', !!spec.nz, NZ_LABEL[spec.nz] || 'layers');
             apply('a', spec.a !== false, 'a / bond (Å)');
+            // The orthogonal option only exists for builders that can honour it.
+            const orthoGrp = document.getElementById(`${prefix}-ortho-group`);
+            const orthoBox = document.getElementById(`${prefix}-ortho`);
+            if (orthoGrp) orthoGrp.style.display = spec.ortho ? '' : 'none';
+            // The note is a warning line, not a description — it stays hidden
+            // unless the current combination is one ASE will refuse.
+            const orthoNote = document.getElementById(`${prefix}-ortho-note`);
+            if (orthoNote) {
+                // ASE can only cut an orthorhombic cell from these when ny is even.
+                const badY = spec.ortho && spec.evenY && orthoBox?.checked && (parseInt(
+                    document.getElementById(`${prefix}-ny`)?.value, 10) || 1) % 2 !== 0;
+                orthoNote.style.display = badY ? '' : 'none';
+                orthoNote.style.color = '#b04a00';
+                orthoNote.textContent = badY
+                    ? `${kind}() needs an even ny to be rectangular — use an even number, or`
+                        + ' clear "Rectangular cell".'
+                    : '';
+            }
+
             const elBox = document.getElementById(`${prefix}-element`);
             if (elBox) elBox.placeholder = spec.el || 'C';
-            const note = document.getElementById(`${prefix}-note`);
-            if (note) {
-                note.textContent = spec.note
-                    || (spec.family ? `ASE knows a only for elements whose reference state is ${spec.family}`
-                        + ' — for any other element, fill in a.' : '');
-                note.style.display = note.textContent ? '' : 'none';
-            }
+            // Whatever this particular builder needs saying goes onto the select
+            // it belongs to, so it is one hover away instead of a line of prose.
+            const detail = spec.note
+                || (spec.family ? `ASE knows a only for elements whose reference state is `
+                    + `${spec.family} — for any other element, fill in a.` : '');
+            const sel = document.getElementById(`${prefix}-structure`);
+            if (sel) sel.title = ASE_STRUCTURE_TIP + (detail ? `\n\n${kind}: ${detail}` : '');
             aseSyncPlacement(prefix);
+        }
+
+        // The height the user typed for this panel's prism box.
+        function aseBoxHeight(prefix) {
+            const v = parseFloat(document.getElementById(`${prefix}-box-h`)?.value);
+            return (Number.isFinite(v) && v > 0) ? v : 20;
+        }
+
+        // The prism this panel's build stands for: the slab's own footprint on the
+        // two in-face axes, and the typed height on the third.
+        //
+        // The footprint is measured from the built coordinates rather than from
+        // nx * a, because that is what nx and ny actually produce once the trim
+        // step has taken the ragged periodic edge off. Measuring the atoms keeps
+        // the walls on the slab however it was built or edited.
+        //
+        // placeOnFace centres the slab on its *centroid*, and the box is centred
+        // on the origin, so the half-edge that just contains the slab is the
+        // largest distance from that centroid — not half the width. The two agree
+        // for a symmetric slab and differ for a ragged one, where this is the
+        // reading that leaves no overhang.
+        // The two in-plane edge lengths of an ASE cell, but only when that cell is
+        // an axis-aligned rectangle. A hexagonal surface cell is a rhombus, and a
+        // rectangular box around a rhombus is empty at two corners, so there is
+        // nothing sensible to take from it — say so by returning null.
+        function aseRectangularCell(cell) {
+            if (!Array.isArray(cell) || cell.length < 2) return null;
+            const [a1, a2] = cell;
+            if (!Array.isArray(a1) || !Array.isArray(a2)) return null;
+            const flat = (v) => v.every(x => Number.isFinite(x));
+            if (!flat(a1) || !flat(a2)) return null;
+            const lx = Math.abs(a1[0]), ly = Math.abs(a2[1]);
+            if (!(lx > 0) || !(ly > 0)) return null;
+            // Off-axis components must vanish: a1 along x, a2 along y, both in plane.
+            const tol = 1e-6 * Math.max(lx, ly);
+            const off = [a1[1], a1[2], a2[0], a2[2]];
+            if (off.some(v => Math.abs(v) > tol)) return null;
+            return { lx, ly };
+        }
+
+        function asePrismFor(prefix, face) {
+            const spec = SUBSTRATE_FACES[face];
+            const built = aseLastBuild[prefix];
+            if (!spec || !built || built.coords.length === 0) return null;
+
+            const turned = built.coords.map(spec.turn);
+            const lo = [Infinity, Infinity, Infinity];
+            const hi = [-Infinity, -Infinity, -Infinity];
+            for (const p of turned) {
+                for (let i = 0; i < 3; i++) {
+                    if (p[i] < lo[i]) lo[i] = p[i];
+                    if (p[i] > hi[i]) hi[i] = p[i];
+                }
+            }
+            // Centre the slab on the middle of what it spans, so the leftover
+            // margin is split evenly between the two walls. Where the atoms sit
+            // inside a periodic cell is an arbitrary choice of origin — ASE puts
+            // one at the corner — and an even split is the one that leaves the
+            // substrate centred under the molecules, which are dropped
+            // symmetrically about the origin.
+            const centre = [0, 1, 2].map(i => (lo[i] + hi[i]) / 2);
+
+            const lengths = [0, 0, 0];
+            const cell = aseRectangularCell(built.cell);
+            if (cell) {
+                // Take the footprint from the cell, not from where the atoms
+                // happen to stop. A periodic tile has no atom on its far edge —
+                // that atom belongs to the next repeat — so measuring the atoms
+                // would cut one lattice spacing off the cell and stand a
+                // fractional cell against the wall. The cell is the whole tile.
+                //
+                // spec.turn permutes the axes, so turn the two in-plane cell
+                // vectors with it and read off which viewer axis each lands on.
+                // The surface normal always turns onto the face axis, so these
+                // two always land on the other two.
+                for (const v of [spec.turn([cell.lx, 0, 0]), spec.turn([0, cell.ly, 0])]) {
+                    let ax = 0;
+                    for (let i = 1; i < 3; i++) if (Math.abs(v[i]) > Math.abs(v[ax])) ax = i;
+                    lengths[ax] = Math.abs(v[ax]);
+                }
+            } else {
+                // No usable cell — a rhombic one, or a fragment with none at all.
+                // Fall back to what the atoms span, which fits them exactly but
+                // cuts the tile short.
+                for (let i = 0; i < 3; i++) {
+                    if (i !== spec.axis) lengths[i] = hi[i] - lo[i];
+                }
+            }
+
+            lengths[spec.axis] = aseBoxHeight(prefix);
+            return { lengths, axis: spec.axis, face, centre, fromCell: !!cell };
+        }
+
+        // Adopt this panel's prism as the box, and put the page into prism mode.
+        function aseAdoptPrism(prefix, face) {
+            const prism = asePrismFor(prefix, face);
+            if (!prism) return false;
+            asePrism = prism;
+            boxMode = 'ase-prism';
+            syncBoxTypeControls();
+            applyBoxModeState();
+            return true;
+        }
+
+        // A placement, offset or height edit: none of them re-run Python, they
+        // only move what is already built. Re-derive the box, re-place the staged
+        // structure, then let everything that draws the box catch up.
+        function aseBoxEdited(prefix) {
+            aseSyncFields(prefix);
+            const placement = asePlacement(prefix);
+            const face = SUBSTRATE_FACES[placement] ? placement : null;
+            if (face && isPrismBox() && asePrism.face === face) aseAdoptPrism(prefix, face);
+            aseRestage(prefix);
+            reanchorSubstrates();
+            aseSyncPlacement(prefix);
+            updateBasicBoxViewer();
+            updateBoxViewer();
+            updatePreview();
         }
 
         // The offset only means something when there is a face to offset from, so
         // it greys out under the centred placement the same way an unused nz does.
-        // The note quotes the box length because that is the number the placement
-        // is measured against, and it is edited on a different tab.
+        // The note quotes the box height because that is the number the placement
+        // is measured against.
         function aseSyncPlacement(prefix) {
             const placement = asePlacement(prefix);
             const spec = SUBSTRATE_FACES[placement] || null;
@@ -7547,9 +7909,28 @@ H   2.219500  1.213600  0.000000`
                     ? 'Offset from face (Å)' : 'Offset from face (Å) — n/a';
                 if (offGrp) offGrp.style.opacity = spec ? '' : '0.45';
             }
+
+            // Only a pinned substrate gets a prism; a centred fragment sits in
+            // whatever box the rest of the page decided on.
+            const boxGrp = document.getElementById(`${prefix}-box-group`);
+            if (boxGrp) boxGrp.style.display = spec ? '' : 'none';
+            const prism = spec ? asePrismFor(prefix, placement) : null;
+            const setBox = (id, v) => {
+                const el = document.getElementById(`${prefix}-${id}`);
+                if (el) el.value = v;
+            };
+            if (prism) {
+                const inFace = [0, 1, 2].filter(i => i !== prism.axis);
+                setBox('box-w', prism.lengths[inFace[0]].toFixed(3));
+                setBox('box-d', prism.lengths[inFace[1]].toFixed(3));
+            } else if (spec) {
+                setBox('box-w', '—');
+                setBox('box-d', '—');
+            }
+
             const place = document.getElementById(`${prefix}-placement-note`);
             if (!place) return;
-            const L = substrateBoxLength();
+            const L = spec ? substrateBoxLength(placement) : substrateBoxLength();
             place.textContent = spec
                 ? `Sits on the ${spec.label} at ${AXIS_NAMES[spec.axis]} = `
                     + `${(-L / 2 + aseOffset(prefix)).toFixed(3)} Å of the ${L} Å box, pinned there`
@@ -7557,8 +7938,22 @@ H   2.219500  1.213600  0.000000`
                 : 'Centroid moved to (0, 0, 0), the centre of the box.';
             place.title = spec
                 ? `The slab is turned to lie flat against the ${spec.label}, then set on it.`
-                    + ' It is re-placed automatically whenever the box length changes.'
+                    + ' It is re-placed automatically whenever the box changes.'
                 : '';
+        }
+
+        function aseOrthoWanted(prefix) {
+            return document.getElementById(`${prefix}-ortho`)?.checked !== false;
+        }
+
+        // A surface builder is something you put molecules *on*, so it opens on the
+        // lower face — the placement that makes the box a substrate prism. Anything
+        // else (bulk, a G2 molecule) opens centred in an ordinary cubic box.
+        function aseApplyPlacementDefault(prefix) {
+            const kind = document.getElementById(`${prefix}-structure`)?.value || 'graphene';
+            const sel = document.getElementById(`${prefix}-placement`);
+            if (sel) sel.value = ASE_STRUCTURES[kind]?.slab ? 'bottom' : 'center';
+            aseSyncFields(prefix);
         }
 
         // Either a key of SUBSTRATE_FACES or 'center'; anything unrecognised falls
@@ -7576,34 +7971,44 @@ H   2.219500  1.213600  0.000000`
         // A substrate is normally sized to cover the floor, so an overhang is a
         // real mistake worth naming - but how big a slab to build is the user's
         // call, so these warn and never block.
-        function aseFitWarnings(coords, boxLength, face) {
+        //
+        // Each axis is checked against its own edge. Under an ASE prism the two
+        // in-face edges are taken from the slab itself, so the lateral warnings
+        // cannot fire; the height is typed, so that one still can.
+        function aseFitWarnings(coords, boxLengths, face) {
             // "Across" is the two axes lying in the face; depth is the face's own
             // axis - see SUBSTRATE_FACES.
             const spec = SUBSTRATE_FACES[face];
             if (!spec) return [];
             const axis = spec.axis;
             const name = AXIS_NAMES[axis];
-            const half = boxLength / 2;
-            let maxLateral = 0, far = -Infinity, near = Infinity;
+            const lengths = halfTriple(boxLengths);
+            const half = lengths.map(v => v / 2);
+            const lateral = [0, 0, 0];
+            let far = -Infinity, near = Infinity;
             for (const p of coords) {
                 for (let i = 0; i < 3; i++) {
-                    if (i !== axis) maxLateral = Math.max(maxLateral, Math.abs(p[i]));
+                    if (i !== axis) lateral[i] = Math.max(lateral[i], Math.abs(p[i]));
                 }
                 if (p[axis] > far) far = p[axis];
                 if (p[axis] < near) near = p[axis];
             }
             const out = [];
-            if (maxLateral > half) {
-                out.push(`Slab spans ${(2 * maxLateral).toFixed(1)} Å across, wider than the`
-                    + ` ${boxLength} Å box — it pokes through the side walls.`);
+            // 1e-6 A of slack: a footprint measured from these very coordinates
+            // is equal to them, and floating-point equality should not warn.
+            for (let i = 0; i < 3; i++) {
+                if (i === axis || lateral[i] <= half[i] + 1e-6) continue;
+                out.push(`Slab spans ${(2 * lateral[i]).toFixed(1)} Å along ${AXIS_NAMES[i]},`
+                    + ` wider than the ${lengths[i].toFixed(1)} Å box — it pokes through`
+                    + ` the side wall.`);
             }
-            if (far > half) {
+            if (far > half[axis] + 1e-6) {
                 out.push(`Slab reaches ${name} = ${far.toFixed(2)} Å, past the opposite face`
-                    + ` (${half.toFixed(2)} Å).`);
+                    + ` (${half[axis].toFixed(2)} Å).`);
             }
-            if (near < -half) {
+            if (near < -half[axis] - 1e-6) {
                 out.push(`Slab starts at ${name} = ${near.toFixed(2)} Å, outside the`
-                    + ` ${spec.label} (${(-half).toFixed(2)} Å).`);
+                    + ` ${spec.label} (${(-half[axis]).toFixed(2)} Å).`);
             }
             return out;
         }
@@ -7625,8 +8030,11 @@ H   2.219500  1.213600  0.000000`
 
             const placement = asePlacement(prefix);
             const face = SUBSTRATE_FACES[placement] ? placement : null;
+            const centre = (face && isPrismBox() && asePrism.face === face)
+                ? asePrism.centre : null;
             const { atoms, coords } = face
-                ? placeOnFace(built.atoms, built.coords, face, substrateBoxLength(), aseOffset(prefix))
+                ? placeOnFace(built.atoms, built.coords, face, getBoxLengths(),
+                              aseOffset(prefix), centre)
                 : built;
             const xyz = latticeToXyz(atoms, coords);
             stage.value = xyz;
@@ -7650,13 +8058,36 @@ H   2.219500  1.213600  0.000000`
             }
         }
 
-        async function aseLoadRuntime(prefix) {
-            const btn = document.getElementById(`${prefix}-load-btn`);
-            const status = document.getElementById(`${prefix}-load-status`);
-            const say = (m) => { if (status) status.textContent = m; };
-            if (btn) { btn.disabled = true; btn.textContent = '⏳ Loading…'; }
+        // Loading is shared: the two panels drive one interpreter, so a second
+        // caller joins the first one's promise instead of starting its own.
+        // `quiet` is for the automatic restore after a reload, which should not
+        // announce itself the way a deliberate click does.
+        function aseLoadRuntime(prefix, { quiet = false } = {}) {
+            if (asePyodide) { aseShowBuilders(); return Promise.resolve(asePyodide); }
+            if (aseLoadingPromise) return aseLoadingPromise;
+            aseLoadingPromise = aseStartRuntime(prefix, quiet)
+                .finally(() => { aseLoadingPromise = null; });
+            return aseLoadingPromise;
+        }
+
+        async function aseStartRuntime(prefix, quiet) {
+            // Both panels show progress, so whichever tab is open follows along.
+            const buttons = Object.keys(ASE_PANELS)
+                .map(k => document.getElementById(`${k}-load-btn`)).filter(Boolean);
+            const say = (m) => {
+                for (const k of Object.keys(ASE_PANELS)) {
+                    const el = document.getElementById(`${k}-load-status`);
+                    if (el) el.textContent = m;
+                }
+            };
+            // A restart after the first success reads from the browser cache, so
+            // "downloading" would be a lie on every run but the first.
+            const cached = aseWasLoadedBefore();
+            const fetching = (what) => cached ? `Loading ${what}…` : `Downloading ${what}…`;
+
+            for (const b of buttons) { b.disabled = true; b.textContent = '⏳ Loading…'; }
             try {
-                say('Downloading the Pyodide runtime…');
+                say(fetching('the Pyodide runtime'));
                 const { loadPyodide } = await import(PYODIDE_CDN + 'pyodide.mjs');
                 asePyodide = await loadPyodide({ indexURL: PYODIDE_CDN });
 
@@ -7664,31 +8095,48 @@ H   2.219500  1.213600  0.000000`
                 // which imports ase.neighborlist, which imports scipy.sparse at
                 // module top level. Skipping ASE's own dependency resolution below
                 // still spares us matplotlib.
-                say('Downloading numpy and scipy…');
+                say(fetching('numpy and scipy'));
                 await asePyodide.loadPackage(['numpy', 'scipy', 'micropip', 'typing-extensions']);
 
-                say('Installing ASE…');
+                say(cached ? 'Loading ASE…' : 'Installing ASE…');
                 await asePyodide.runPythonAsync(
                     'import micropip\nawait micropip.install("ase", deps=False)\n'
                 );
                 const version = await asePyodide.runPythonAsync('import ase; ase.__version__');
 
+                aseRememberLoaded(true);
                 aseShowBuilders();
-                toast(`ASE ${version} loaded`, 'success');
+                if (!quiet) toast(`ASE ${version} loaded`, 'success');
+                return asePyodide;
             } catch (e) {
                 asePyodide = null;
-                if (btn) { btn.disabled = false; btn.textContent = ASE_LOAD_LABEL; }
-                say(`Could not download ASE: ${e.message}`);
-                toast('Could not load ASE', 'error');
+                // Don't keep promising an automatic restore that just failed —
+                // otherwise every visit to the tab retries it on its own.
+                aseRememberLoaded(false);
+                for (const b of buttons) { b.disabled = false; b.textContent = ASE_LOAD_LABEL; }
+                say(`Could not load ASE: ${e.message}`);
+                if (!quiet) toast('Could not load ASE', 'error');
+                return null;
             }
+        }
+
+        // Opening the ASE tab in a browser that has had it running before brings
+        // it straight back, no click. Only then: a first-time visitor should not
+        // be made to fetch 32 MB for a tab they were only looking at.
+        function aseMaybeRestore(prefix) {
+            if (asePyodide) { aseShowBuilders(); return; }
+            if (aseLoadingPromise || !aseWasLoadedBefore()) return;
+            aseLoadRuntime(prefix, { quiet: true });
         }
 
         // Read the `atoms` object back out as plain XYZ.
         const ASE_XYZ_TAIL = `
+import json as _ascec_json
 _ascec_xyz = "\\n".join(
     "%-2s %13.6f %13.6f %13.6f" % (s, p[0], p[1], p[2])
     for s, p in zip(atoms.get_chemical_symbols(), atoms.get_positions())
 )
+_ascec_cell = _ascec_json.dumps([[float(v) for v in row] for row in atoms.cell])
 `;
 
         // ASE's own lattice-constant error names neither the cause nor the way
@@ -7704,6 +8152,17 @@ _ascec_xyz = "\\n".join(
         };
 
         async function aseExplain(message) {
+            // ASE can only cut an orthorhombic cell out of a hexagonal surface when
+            // the second repeat is even. Its own message states the constraint but
+            // not the fix, and the fix is one field away.
+            const ortho = /Can't make orthorhombic cell with size=\((\d+), (\d+), (\d+)\)/.exec(message);
+            if (ortho) {
+                const ny = parseInt(ortho[2], 10);
+                return `ny must be even to cut a rectangular cell from this surface, and it is`
+                    + ` ${ny} — use ${ny + 1 === 1 ? 2 : ny + 1} (or any even number), or clear`
+                    + ' "Rectangular (orthogonal) cell" and accept a rhombic slab that leaves'
+                    + ' two corners of the box empty.';
+            }
             const m = /Can't guess lattice constant for ([a-z]+)-([A-Za-z]+)/.exec(message);
             if (!m || !asePyodide) return message;
             const [, wanted, el] = m;
@@ -7734,6 +8193,12 @@ _ascec_xyz = "\\n".join(
                 await asePyodide.runPythonAsync(source + '\n' + ASE_XYZ_TAIL);
                 let xyz = asePyodide.globals.get('_ascec_xyz');
                 if (!xyz) throw new Error('The script did not leave an `atoms` object behind');
+                // Handed over as JSON rather than a PyProxy so there is nothing to
+                // free and nothing to convert. A script that replaced `atoms` with
+                // something cell-less just gives zeros, which reads as "no cell".
+                let cell = null;
+                try { cell = JSON.parse(asePyodide.globals.get('_ascec_cell') || 'null'); }
+                catch (_) { cell = null; }
 
                 let { atoms, coords } = parseXyzText(xyz);
                 const before = atoms.length;
@@ -7748,19 +8213,33 @@ _ascec_xyz = "\\n".join(
                 // Cache post-trim but pre-placement: this is the fragment in ASE's
                 // own frame, and every placement is one shift away from it. Keeping
                 // it means a later resize costs a translation, not a Pyodide run.
-                aseLastBuild[prefix] = { atoms: [...atoms], coords: coords.map(c => [...c]) };
+                aseLastBuild[prefix] = { atoms: [...atoms], coords: coords.map(c => [...c]), cell };
 
                 // 'center' leaves the coordinates in ASE's own frame and lets the
                 // delivery path centre them, exactly as it always has. A face
                 // placement has to be done here, because it is the only step that
-                // needs the box length.
+                // needs the box.
+                //
+                // The order matters: a pinned substrate *defines* the box rather
+                // than fitting into one, so the prism is adopted from the build
+                // that was just cached, and only then is the slab set on its face.
                 const placement = asePlacement(prefix);
                 const face = SUBSTRATE_FACES[placement] ? placement : null;
                 const warnings = [];
                 if (face) {
-                    const boxLength = substrateBoxLength();
-                    ({ atoms, coords } = placeOnFace(atoms, coords, face, boxLength, aseOffset(prefix)));
-                    warnings.push(...aseFitWarnings(coords, boxLength, face));
+                    aseAdoptPrism(prefix, face);
+                    const lengths = getBoxLengths();
+                    const centre = (isPrismBox() && asePrism.face === face) ? asePrism.centre : null;
+                    ({ atoms, coords } = placeOnFace(atoms, coords, face, lengths,
+                                                     aseOffset(prefix), centre));
+                    warnings.push(...aseFitWarnings(coords, lengths, face));
+                    // A rhombic cell is the one case where the box cannot be filled,
+                    // and it has a one-click fix, so name it.
+                    if (isPrismBox() && !asePrism.fromCell && ASE_STRUCTURES[
+                            document.getElementById(`${prefix}-structure`)?.value]?.ortho) {
+                        warnings.push('This cell is not rectangular, so the slab leaves two'
+                            + ' corners of the box empty — tick "Rectangular (orthogonal) cell".');
+                    }
                 }
                 xyz = latticeToXyz(atoms, coords);
 
@@ -7772,6 +8251,9 @@ _ascec_xyz = "\\n".join(
                 if (DEBUG_LATTICE) console.log('[ase]', kind, verifyCoordination(xyz));
                 ASE_PANELS[prefix].deliver(kind, xyz, face);
                 aseLastDelivered[prefix] = xyz;
+                // The footprint fields and the placement note both read the build
+                // that only exists now, so refresh them after it lands.
+                aseSyncPlacement(prefix);
             } catch (e) {
                 const lines = String(e.message).trim().split('\n');
                 say(`Failed: ${await aseExplain(lines[lines.length - 1])}`);
@@ -8300,6 +8782,11 @@ _ascec_xyz = "\\n".join(
         }
 
         function getActiveAutoPackingPercent() {
+            // A prism box is sized by its substrate, not by a packing percentage.
+            // Returning null here is what stops every downstream resize — adding a
+            // PubChem molecule runs updateMoleculeList -> calculateBoxLengthForPacking,
+            // which would otherwise shrink the box out from under the slab.
+            if (isPrismBox()) return null;
             const smartAuto = document.getElementById('smart-use-packing')?.checked !== false;
             const advAuto = document.getElementById('adv-use-packing')?.checked !== false;
             const topAuto = document.getElementById('smart-use-packing-top')?.checked !== false;
@@ -8351,21 +8838,29 @@ _ascec_xyz = "\\n".join(
 
         function applyAscecAutoBoxLength(boxLength) {
             if (!Number.isFinite(boxLength) || boxLength <= 0) return;
+            // Belt and braces: getActiveAutoPackingPercent already returns null
+            // under a prism, so this should be unreachable — but this function is
+            // what actually overwrites the three box inputs, and it is the one
+            // place a stray caller could resize a substrate box by accident.
+            if (isPrismBox()) return;
 
-            const newValue = boxLength.toFixed(1);
+            fanOutCubicBoxLength(boxLength.toFixed(1));
+            syncSmartBoxControlsToTop();
+        }
 
-            const smartBoxInput = document.getElementById('smart-box-size');
-            if (smartBoxInput) smartBoxInput.value = newValue;
-
-            const topBoxInput = document.getElementById('smart-box-size-top');
-            if (topBoxInput) topBoxInput.value = newValue;
-
-            const advBoxInput = document.getElementById('box-size');
-            if (advBoxInput) advBoxInput.value = newValue;
+        // Write one cube edge into all three mirrored inputs and let everything
+        // that reads the box catch up. Both the automatic and the manual path go
+        // through here, so the box cannot end up meaning different things in the
+        // two modes depending on which one last wrote it.
+        function fanOutCubicBoxLength(newValue) {
+            for (const id of ['smart-box-size', 'smart-box-size-top', 'box-size']) {
+                const el = document.getElementById(id);
+                if (el) el.value = newValue;
+            }
 
             // Anything the ASE tab has built but not yet added lives in a textarea
             // that no viewer reads, so the viewers' own re-anchoring cannot reach
-            // it. Re-place it here, where the automatic box length is applied.
+            // it. Re-place it here, where the box length is applied.
             for (const prefix of Object.keys(ASE_PANELS)) {
                 aseSyncPlacement(prefix);
                 aseRestage(prefix);
@@ -8374,7 +8869,51 @@ _ascec_xyz = "\\n".join(
             updateBasicBoxViewer();
             updateBoxViewer();
             updatePackingAssessment();
-            syncSmartBoxControlsToTop();
+        }
+
+        // A box length was typed into one of the three mirrored inputs.
+        //
+        // The typed text is read *first* and kept in a local. Turning auto-box off
+        // runs the sync machinery, which rewrites those same inputs, so reading
+        // the element afterwards would hand back whatever the mirror had just put
+        // there instead of what the user typed. That was the whole of the
+        // Advanced-mode bug: the field could not be edited because its own
+        // oninput destroyed the edit before anything read it.
+        function onBoxLengthTyped(el, source) {
+            const typed = el.value;
+            const autoId = source === 'adv' ? 'adv-use-packing'
+                : source === 'top' ? 'smart-use-packing-top' : 'smart-use-packing';
+            const auto = document.getElementById(autoId);
+            if (auto) auto.checked = false;
+
+            if (source === 'adv') toggleAdvUsePacking();
+            else if (source === 'top') applyTopSmartBoxControls('auto');
+            else toggleSmartUsePacking();
+
+            applyManualBoxLength(typed, source);
+        }
+
+        // A box length the user typed, from whichever of the three inputs.
+        //
+        // The three inputs mirror one number, and the mirror used to run one way
+        // only (syncSmartBoxControlsToTop copies #smart-box-size over #box-size).
+        // So a value typed into the Advanced field survived exactly until the next
+        // sync — which its own oninput triggered, via toggleAdvUsePacking. Typing
+        // there appeared to do nothing at all. Fanning every manual edit out to all
+        // three inputs immediately is what makes the Advanced field editable: after
+        // this there is no stale copy left for a later mirror to restore.
+        function applyManualBoxLength(value, source) {
+            if (isPrismBox()) return;
+            const typed = String(value ?? '').trim();
+            if (typed === '') return;
+
+            isSyncingSmartBoxMirror = true;
+            try {
+                fanOutCubicBoxLength(typed);
+            } finally {
+                isSyncingSmartBoxMirror = false;
+            }
+            updatePreview();
         }
 
         function updatePackingAssessment() {
@@ -8436,7 +8975,118 @@ _ascec_xyz = "\\n".join(
             const advBox = document.getElementById('box-size');
             if (advPacking) advPacking.disabled = !enabled;
             if (advPackingCustom) advPackingCustom.disabled = !enabled;
-            if (advBox) advBox.disabled = false;
+            // Matches the two Smart fields. This used to stay enabled under auto
+            // box, which made it look editable while the packing calculation
+            // overwrote whatever was typed on the next molecule change.
+            if (advBox) {
+                advBox.disabled = enabled;
+                advBox.style.opacity = enabled ? '0.65' : '1';
+            }
+        }
+
+        // Every control that only makes sense for a cubic box: the three mirrored
+        // box-length inputs, the three auto checkboxes, and the three packing
+        // selectors with their custom editors.
+        const CUBIC_BOX_CONTROL_IDS = [
+            'smart-box-size', 'smart-box-size-top', 'box-size',
+            'smart-use-packing', 'smart-use-packing-top', 'adv-use-packing',
+            'smart-packing', 'smart-packing-custom',
+            'smart-packing-top-input', 'smart-packing-top-custom',
+            'adv-packing', 'adv-packing-custom'
+        ];
+
+        // Under an ASE prism there is nothing for these to do: two of the three
+        // edges are the substrate's footprint and the third is typed on the ASE
+        // tab, so a packing percentage has no box to size and a typed edge has
+        // nowhere to go. Grey them out rather than letting them look live.
+        function applyBoxModeState() {
+            const prism = isPrismBox();
+            for (const id of CUBIC_BOX_CONTROL_IDS) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                if (prism) {
+                    el.disabled = true;
+                    el.style.opacity = '0.5';
+                    el.title = 'The box is an ASE substrate prism — size it on the ASE tab.';
+                } else {
+                    el.style.opacity = '';
+                    el.title = '';
+                }
+            }
+            // Leaving prism mode hands the enable/disable pattern back to the
+            // auto-box rules, which own it for a cubic box.
+            if (!prism) applyAutoBoxState(getAutoBoxEnabled());
+
+            if (prism) stripBoxFlagsFromProtocol();
+        }
+
+        // Drop any --boxP already sitting on an rN stage. buildProtocolFromSettings
+        // rebuilds the stage list and would not emit one under a prism, but a
+        // protocol the user typed by hand, or one built while the box was still
+        // cubic, keeps its flag until something removes it.
+        function stripBoxFlagsFromProtocol() {
+            if (typeof protocolStages === 'undefined') return;
+            let changed = false;
+            for (const stage of protocolStages) {
+                if (stage.type !== 'rN' || typeof stage.args !== 'string') continue;
+                const cleaned = stage.args.replace(/(^|\s)--box[0-9.]*/gi, ' ')
+                    .replace(/\s+/g, ' ').trim();
+                if (cleaned !== stage.args) { stage.args = cleaned; changed = true; }
+            }
+            if (changed && typeof updateProtocolPreview === 'function') updateProtocolPreview();
+        }
+
+        // Whether auto-box is on, as the three mirrored checkboxes see it.
+        function getAutoBoxEnabled() {
+            return document.getElementById('smart-use-packing')?.checked !== false;
+        }
+
+        // Push the current box type onto both selectors without firing their
+        // change handlers back at us.
+        function syncBoxTypeControls() {
+            for (const id of ['smart-box-type', 'adv-box-type']) {
+                const el = document.getElementById(id);
+                if (el) el.value = boxMode;
+            }
+        }
+
+        // The user picked a box type by hand. Switching to a prism only works if
+        // the ASE tab has actually built a substrate to take the footprint from —
+        // otherwise there is no prism to switch to, and saying so beats silently
+        // staying cubic.
+        function setBoxTypeFromSelect(source) {
+            const el = document.getElementById(source === 'adv' ? 'adv-box-type' : 'smart-box-type');
+            const wanted = el?.value || 'cubic';
+
+            if (wanted === 'ase-prism') {
+                const prefix = Object.keys(ASE_PANELS).find(k => {
+                    const face = asePlacement(k);
+                    return SUBSTRATE_FACES[face] && asePrismFor(k, face);
+                });
+                if (!prefix) {
+                    toast('Build a substrate on the ASE tab first — a prism box takes its'
+                        + ' footprint from the slab', 'warning');
+                    syncBoxTypeControls();
+                    return;
+                }
+                aseAdoptPrism(prefix, asePlacement(prefix));
+            } else {
+                boxMode = 'cubic';
+                asePrism = null;
+                syncBoxTypeControls();
+                applyBoxModeState();
+                // Back under cubic rules, the packing box is the right size again.
+                calculateBoxLengthForPacking();
+            }
+
+            for (const prefix of Object.keys(ASE_PANELS)) {
+                aseSyncPlacement(prefix);
+                aseRestage(prefix);
+            }
+            reanchorSubstrates();
+            updateBasicBoxViewer();
+            updateBoxViewer();
+            updatePreview();
         }
 
         function setAutoBoxFromSource(source) {
@@ -8498,6 +9148,10 @@ _ascec_xyz = "\\n".join(
                     toggleCustomInput('smart-packing-top-input', 'smart-packing-top-custom', false);
                 }
 
+                // Only mirrors the Smart field onto the Advanced one, so it must
+                // not run on top of an Advanced edit — applyManualBoxLength holds
+                // isSyncingSmartBoxMirror for exactly that reason, and the guard at
+                // the top of this function is what honours it.
                 if (advBox && mainBox) advBox.value = mainBox.value;
                 if (advPacking && mainPacking) {
                     advPacking.value = mainPacking.value || '20';
@@ -9102,6 +9756,9 @@ _ascec_xyz = "\\n".join(
 
         // Auto-calculate box size based on packing percentage
         function updateSmartBoxSize() {
+            // A prism box owns its own dimensions; nothing here applies to it,
+            // including the empty-system default below.
+            if (isPrismBox()) return;
             if (document.getElementById('smart-use-packing')?.checked === false) {
                 syncSmartToAdvanced();
                 syncSmartBoxControlsToTop();
@@ -9501,7 +10158,7 @@ end
                 const advMult = document.getElementById('adv-multiplicity');
                 if (advMult) advMult.value = mult;
             }
-            if (boxSize !== undefined) {
+            if (boxSize !== undefined && !isPrismBox()) {
                 const advBoxSize = document.getElementById('box-size');
                 if (advBoxSize) advBoxSize.value = boxSize;
             }
@@ -9909,7 +10566,7 @@ end
                 const smartMult = document.getElementById('smart-multiplicity');
                 if (smartMult) smartMult.value = mult;
             }
-            if (boxSize !== undefined) {
+            if (boxSize !== undefined && !isPrismBox()) {
                 const smartBoxSize = document.getElementById('smart-box-size');
                 if (smartBoxSize) smartBoxSize.value = boxSize;
             }
@@ -11208,8 +11865,11 @@ end
             const replicas = document.getElementById('adv-replicas')?.value || '3';
             const packing = getAdvancedPackingValue().toString();
             const simMode = document.getElementById('sim-mode')?.value || '1';
-            const boxSize = document.getElementById('box-size')?.value || '7.0';
-            const autoBoxEnabled = document.getElementById('adv-use-packing')?.checked !== false;
+            const boxLengths = getBoxLengths();
+            // A prism box is sized by the substrate standing in it, so there is no
+            // packing percentage for --boxN to carry and nothing for it to resize.
+            const autoBoxEnabled = !isPrismBox()
+                && document.getElementById('adv-use-packing')?.checked !== false;
             const quenchRoute = document.getElementById('quench-route')?.value || '2';
             const qmProgram = document.getElementById('qm-program')?.value || '2';
             const nmo = document.getElementById('adv-nmo')?.value || '0';
@@ -11268,8 +11928,9 @@ end
                     args: rNArgs,
                     // Row 1: Simulation Mode & Number of Config
                     simMode: parseInt(simMode),
-                    // Row 2: Simulation Cube Length
-                    boxSize: parseFloat(boxSize),
+                    // Row 2: Simulation box — one edge for a cube, three for a prism
+                    boxSize: boxLengths[0],
+                    boxLengths: boxLengths.slice(),
                     // Row 3: Annealing Quenching route
                     route: parseInt(quenchRoute),
                     // Row 9: QM Program Index
@@ -11414,24 +12075,18 @@ end
             document.getElementById('orca-input2').value = input;
         }
 
-        function syncAdvancedOrcaFromBasic() {
-            document.getElementById('adv-orca-input1').value = document.getElementById('orca-input1').value;
-            document.getElementById('adv-orca-input2').value = document.getElementById('orca-input2').value;
-        }
-
-        function syncOrcaToBasic(inputId) {
-            if (inputId === 'input1') {
-                document.getElementById('orca-input1').value = document.getElementById('adv-orca-input1').value;
-            } else {
-                document.getElementById('orca-input2').value = document.getElementById('adv-orca-input2').value;
-            }
-        }
+        // --boxP tells ASCEC to re-derive the box from a packing percentage at
+        // run time. That only means something for a cube: a prism's two in-face
+        // edges are the substrate's footprint and its height is typed, so there
+        // is no single edge for a percentage to set. Leave the flag off entirely
+        // rather than emit one the engine would have to ignore.
+        const defaultRnArgs = () => (isPrismBox() ? '' : '--box10');
 
         // Initialize default protocol
         function initDefaultProtocol() {
             // Default pipeline: r3 -> opt -> cosmic -> ref -> cosmic
             protocolStages = [
-                { type: 'rN', n: 3, args: '--box10' },
+                { type: 'rN', n: 3, args: defaultRnArgs() },
                 { type: 'opt', args: '--concurrent=4 input1' },
                 { type: 'cosmic', args: '' },
                 { type: 'ref', args: 'input2' },
@@ -11447,7 +12102,7 @@ end
         }
 
         function getDefaultArgsForNewStage(type) {
-            if (type === 'rN') return '--box10';
+            if (type === 'rN') return defaultRnArgs();
             if (type === 'opt') return 'input1';
             if (type === 'cosmic') return '';
             if (type === 'ref') {
@@ -11467,7 +12122,7 @@ end
         }
 
         function getDefaultArgs(type) {
-            if (type === 'rN') return '--box10';
+            if (type === 'rN') return defaultRnArgs();
             if (type === 'opt') return 'input1';
             if (type === 'cosmic') return '';
             if (type === 'ref') return 'input2';
@@ -11764,25 +12419,26 @@ end
         //
         // ase.build stacks its slabs along z, so the fragment is first turned
         // -90 deg about x, (x, y, z) -> (x, z, -y), which carries ASE's surface
-        // normal +z onto the viewer's up. The cube is isotropic to the engine
-        // (moves.py only ever compares |coord| against half the edge), so the
-        // rotation is physically free and is what makes the slab read as a
-        // substrate. x and z are then centred and the lowest atom set on
-        // y = -L/2 + offset; a positive offset lifts the slab clear of the face.
-        // The face placements (placeOnFace / SUBSTRATE_FACES) are declared above
-        // the ASE section instead of here: renderAsePanels runs at parse time and
-        // reads the face table, which a const declared this far down would still
-        // have in its temporal dead zone.
+        // normal +z onto the viewer's up. x and z are then centred and the lowest
+        // atom set on y = -Ly/2 + offset; a positive offset lifts the slab clear
+        // of the face. The face placements (placeOnFace / SUBSTRATE_FACES) are
+        // declared above the ASE section instead of here: renderAsePanels runs at
+        // parse time and reads the face table, which a const declared this far
+        // down would still have in its temporal dead zone.
+        //
+        // Turning the slab used to be physically free, because the cube was
+        // isotropic to the engine. A prism box is not, so the turn now decides
+        // which edge is the height - which is exactly what SUBSTRATE_FACES.axis
+        // records, and what getBoxLengths indexes with.
 
-        // One box length governs every substrate: the one written to the .asc,
-        // whose Line 2 reads #box-size. That is the cube the engine actually uses,
-        // and it is the only field kept in step by every path that resizes the box
-        // (syncSmartToAdvanced, applyAscecAutoBoxLength, the mode switches).
-        // #smart-box-size is not - editing the Advanced box never writes back to it
-        // - so placing against one field and re-anchoring against the other would
-        // leave the slab hanging by half their difference.
-        function substrateBoxLength() {
-            return getAdvancedBoxSize();
+        // Every consumer of the box reads getBoxLengths(), so there is one answer
+        // to how big it is no matter which of the mirrored inputs was last edited.
+        // How tall the box is along the axis a substrate is measured from: for a
+        // cube that is the one edge, for an ASE prism it is the typed height.
+        function substrateBoxLength(face) {
+            const lengths = getBoxLengths();
+            const spec = face && SUBSTRATE_FACES[face];
+            return spec ? lengths[spec.axis] : lengths[0];
         }
 
         // A pinned substrate is measured from its face, so it has to follow when
@@ -11792,12 +12448,13 @@ end
         // the edge. Returns whether anything actually moved, so the caller can skip
         // redrawing.
         function reanchorSubstrates() {
-            const half = substrateBoxLength() / 2;
+            const lengths = getBoxLengths();
             let moved = false;
             for (const mol of molecules) {
                 const spec = mol.anchor && SUBSTRATE_FACES[mol.anchor.face];
                 if (!spec) continue;
                 const axis = spec.axis;
+                const half = lengths[axis] / 2;
                 let nearest = Infinity;
                 for (const c of mol.coords) if (c[axis] < nearest) nearest = c[axis];
                 const d = -half + (mol.anchor.offset || 0) - nearest;
@@ -12149,6 +12806,7 @@ end
                     btn.classList.toggle('btn-secondary', m !== mode);
                 }
             }
+            if (mode === 'ase') aseMaybeRestore('advase');
         }
 
         // Advanced mode's shortcuts fill the manual XYZ box; the user then hits
@@ -12666,7 +13324,16 @@ H   1.981282  0.134064  0.000000`;
             const simName = document.getElementById('sim-name')?.value || 'simulation';
             const simMode = document.getElementById('sim-mode')?.value || '1';
             const numConfigs = document.getElementById('adv-num-configs')?.value || '10';
-            const boxSize = document.getElementById('box-size')?.value || '7';
+            // Line 2 is either one value (a cube) or three (a prism). The cubic
+            // form is the raw text of the input, exactly as it always was, so a
+            // cubic file is byte-identical to what this generator wrote before.
+            // Three decimals for a prism: those lengths are the substrate's own
+            // cell, computed rather than typed, and rounding them to 0.1 Å would
+            // stand the box a few hundredths inside the tile it is meant to hold.
+            // The cubic form still passes the input's raw text straight through.
+            const boxLine = isPrismBox()
+                ? asePrism.lengths.map(v => v.toFixed(3)).join(' ')
+                : (document.getElementById('box-size')?.value || '7');
             const quenchRoute = document.getElementById('quench-route')?.value || '2';
 
             const linearTi = document.getElementById('linear-ti')?.value || '100.0';
@@ -12720,7 +13387,9 @@ H   1.981282  0.134064  0.000000`;
             content += `# Input for ${simName} Simulation\n\n`;
             content += formatLineWithComment(`${simMode} ${numConfigs}`, '# Line 1: Simulation Mode & Number of Config');
             content += `              # 1: Annealing; 0: Random configurations\n`;
-            content += formatLineWithComment(`${boxSize}`, '# Line 2: Simulation Cube Length (Angstroms)');
+            content += formatLineWithComment(boxLine, isPrismBox()
+                ? '# Line 2: Simulation Box Lengths Lx Ly Lz (Angstroms)'
+                : '# Line 2: Simulation Cube Length (Angstroms)');
             content += `\n`;
             content += formatLineWithComment(`${quenchRoute}`, '# Line 3: Annealing Quenching route');
             content += `              # (1: Linear, 2: Geometrical).\n\n`;
