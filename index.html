@@ -7603,15 +7603,24 @@ H   2.219500  1.213600  0.000000`
 
                     <div id="${prefix}-box-group" style="display: none; border: 1px solid #d8d8e0;
                         border-radius: 6px; padding: 10px; margin-bottom: 10px; background: #fafaff;"
-                        title="The simulation box for this substrate. Width and depth are the slab's own cell, so they follow nx and ny; height is the full extent of the box, measured through the substrate.">
+                        title="The simulation box for this substrate. All three edges are yours to set; width and depth start from the slab's own cell. The walls hold the molecules, never the substrate, so a box narrower than the slab keeps them over the interior and leaves the edge atoms outside.">
                         <div class="inline-group" style="align-items: flex-end;">
-                            ${field('box-w', 'Box W (Å)', 'type="text" readonly',
-                                "The slab's own cell width — follows nx. Build to fill it in.")}
-                            ${field('box-d', 'Box D (Å)', 'type="text" readonly',
-                                "The slab's own cell depth — follows ny. Build to fill it in.")}
+                            ${field('box-w', 'Box W (Å)', 'type="number" min="0.1" step="0.1"',
+                                "Box width. Starts at the slab's own cell — follows nx until you type over it. "
+                                + "A smaller number pulls the wall inside the slab edge, so molecules stay off the "
+                                + "under-coordinated edge atoms. Clear the field to go back to the slab.")}
+                            ${field('box-d', 'Box D (Å)', 'type="number" min="0.1" step="0.1"',
+                                "Box depth. Starts at the slab's own cell — follows ny until you type over it. "
+                                + "A smaller number pulls the wall inside the slab edge, so molecules stay off the "
+                                + "under-coordinated edge atoms. Clear the field to go back to the slab.")}
                             ${field('box-h', 'Box H (Å)', 'type="number" value="20" min="1" step="0.5"',
                                 'Total height of the box, substrate included. Yours to set.')}
                         </div>
+                        <div id="${prefix}-box-hint" style="color: #666; font-size: 0.85em; margin-top: 8px;
+                            display: none;"></div>
+                        <button type="button" id="${prefix}-box-fit" class="btn btn-secondary"
+                            style="margin-top: 8px; padding: 3px 10px; font-size: 0.85em; display: none;"
+                            title="Put the width and depth back to the slab's own cell.">Fit to slab</button>
                     </div>
 
                     <div id="${prefix}-placement-note" style="color: #666; font-size: 0.85em; margin: -4px 0 10px;"></div>
@@ -7641,6 +7650,17 @@ H   2.219500  1.213600  0.000000`
                 document.getElementById(`${prefix}-${id}`)
                     ?.addEventListener('input', () => { aseBoxEdited(prefix); });
             }
+            // Box W and Box D go through their own handler, which has to capture
+            // the typed text before the re-sync overwrites the field.
+            for (const id of ['box-w', 'box-d']) {
+                const el = document.getElementById(`${prefix}-${id}`);
+                el?.addEventListener('input', () => onAseBoxLateralTyped(prefix, id));
+                // Leaving an emptied field puts the slab's own number back in it,
+                // which the focus guard in aseSyncPlacement held off until now.
+                el?.addEventListener('blur', () => aseSyncPlacement(prefix));
+            }
+            document.getElementById(`${prefix}-box-fit`)
+                ?.addEventListener('click', () => aseBoxFitToSlab(prefix));
             aseApplyPlacementDefault(prefix);
             aseSyncScript(prefix);
         }
@@ -7780,6 +7800,46 @@ H   2.219500  1.213600  0.000000`
             return (Number.isFinite(v) && v > 0) ? v : 20;
         }
 
+        // The two viewer axes lying in the placement face, in the order the Box W
+        // and Box D fields show them. Null when the fragment is not on a face and
+        // so has no prism of its own.
+        function aseInFaceAxes(prefix) {
+            const spec = SUBSTRATE_FACES[asePlacement(prefix)];
+            return spec ? [0, 1, 2].filter(i => i !== spec.axis) : null;
+        }
+
+        // Box W or Box D typed into. Read the field into a local *first*: the work
+        // this kicks off runs back through aseSyncPlacement, which writes these
+        // same two inputs, so reading them afterwards would hand back whatever the
+        // sync had just put there instead of what was typed.
+        function onAseBoxLateralTyped(prefix, slot) {
+            const el = document.getElementById(`${prefix}-${slot}`);
+            if (!el) return;
+            const raw = (el.value || '').trim();
+            const inFace = aseInFaceAxes(prefix);
+            if (!inFace) return;
+            const axis = inFace[slot === 'box-w' ? 0 : 1];
+            const ov = (aseBoxOverride[prefix] ||= {});
+            // Number(), not parseFloat(): parseFloat stops at the first character it
+            // cannot use, so "1e" reads as 1 and "12abc" as 12 — a half-typed
+            // exponent would silently resize the box to 1 A.
+            const v = Number(raw);
+            if (raw === '') {
+                delete ov[axis];                // emptied: hand the axis back to the slab
+            } else if (Number.isFinite(v) && v > 0) {
+                ov[axis] = v;
+            } else {
+                return;                         // half-typed ("1e", "-"): leave it alone
+            }
+            aseBoxEdited(prefix);
+        }
+
+        // Drop every override this panel holds and let the slab size the box again.
+        function aseBoxFitToSlab(prefix) {
+            delete aseBoxOverride[prefix];
+            aseBoxEdited(prefix);
+        }
+
         // The prism this panel's build stands for: the slab's own footprint on the
         // two in-face axes, and the typed height on the third.
         //
@@ -7862,7 +7922,21 @@ H   2.219500  1.213600  0.000000`
             }
 
             lengths[spec.axis] = aseBoxHeight(prefix);
-            return { lengths, axis: spec.axis, face, centre, fromCell: !!cell };
+
+            // What the slab alone asks for, before the user has a say. Kept so the
+            // panel can show what an override is being measured against.
+            const derived = lengths.slice();
+            const ov = aseBoxOverride[prefix] || {};
+            for (let i = 0; i < 3; i++) {
+                if (i !== spec.axis && Number.isFinite(ov[i]) && ov[i] > 0) lengths[i] = ov[i];
+            }
+
+            // What the atoms actually span in the two in-face directions, which is
+            // shorter than the cell by one lattice spacing — the far edge of a
+            // periodic tile carries no atom of its own.
+            const span = [0, 1, 2].map(i => hi[i] - lo[i]);
+
+            return { lengths, derived, span, axis: spec.axis, face, centre, fromCell: !!cell };
         }
 
         // Adopt this panel's prism as the box, and put the page into prism mode.
@@ -7919,13 +7993,68 @@ H   2.219500  1.213600  0.000000`
                 const el = document.getElementById(`${prefix}-${id}`);
                 if (el) el.value = v;
             };
+            const ov = aseBoxOverride[prefix] || {};
+            const hint = document.getElementById(`${prefix}-box-hint`);
+            const fit = document.getElementById(`${prefix}-box-fit`);
             if (prism) {
                 const inFace = [0, 1, 2].filter(i => i !== prism.axis);
-                setBox('box-w', prism.lengths[inFace[0]].toFixed(3));
-                setBox('box-d', prism.lengths[inFace[1]].toFixed(3));
+                // Only write an axis the user has not claimed. Overwriting one they
+                // typed is the whole bug this guard exists for. The focus check
+                // covers the moment in between: clearing the field drops the
+                // override, and refilling it from the slab right then would put the
+                // old number back under a cursor that is mid-edit.
+                [['box-w', inFace[0]], ['box-d', inFace[1]]].forEach(([id, ax]) => {
+                    if (Number.isFinite(ov[ax])) return;
+                    const el = document.getElementById(`${prefix}-${id}`);
+                    if (el && el === document.activeElement) return;
+                    setBox(id, prism.lengths[ax].toFixed(3));
+                });
             } else if (spec) {
-                setBox('box-w', '—');
-                setBox('box-d', '—');
+                setBox('box-w', '');
+                setBox('box-d', '');
+            }
+
+            // Say what the typed numbers are being measured against. Without it the
+            // inset is guesswork: the cell, what the atoms actually span and where
+            // the wall now sits are three different numbers.
+            const inset = prism
+                ? [0, 1, 2].filter(i => i !== prism.axis)
+                    .filter(i => prism.derived[i] - prism.lengths[i] > 1e-6)
+                : [];
+            if (fit) fit.style.display = (prism && Object.keys(ov).length) ? '' : 'none';
+            if (hint && prism) {
+                const inFace = [0, 1, 2].filter(i => i !== prism.axis);
+                const pair = (v) => `${v[inFace[0]].toFixed(2)} × ${v[inFace[1]].toFixed(2)} Å`;
+                let text = `Slab cell ${pair(prism.derived)} · atoms span ${pair(prism.span)}.`;
+                if (inset.length) {
+                    text += ' Wall pulled in '
+                        + inset.map(i => `${((prism.derived[i] - prism.lengths[i]) / 2).toFixed(2)} Å`
+                            + ` per side on ${AXIS_NAMES[i]}`).join(' and ')
+                        + '. Molecules are held over the interior; the slab keeps every atom,'
+                        + ' its edge simply sits outside the box.';
+                }
+                // The wall bounce flips the sign of the proposed step and does not
+                // look again, so a step longer than the half-box lands outside on
+                // the far side and is kept. Harmless in a roomy box; the moment the
+                // box is pulled in past Line 7's displacement the wall starts
+                // leaking, which is exactly what shrinking it invites.
+                const step = parseFloat(document.getElementById('max-disp')?.value);
+                const halfMin = Math.min(...prism.lengths) / 2;
+                const leaks = Number.isFinite(step) && step > halfMin;
+                if (leaks) {
+                    text += ` Max displacement is ${step} Å but the smallest half-box is`
+                        + ` ${halfMin.toFixed(2)} Å — a step that long bounces straight out`
+                        + ` the far wall. Drop it to ${Math.floor(halfMin * 10) / 10} Å or less.`;
+                }
+                hint.textContent = text;
+                hint.style.color = leaks ? '#a05000' : '#666';
+                hint.title = 'The walls stop mobile molecules only, and they test the'
+                    + ' centre of mass rather than the atoms — a wide molecule can still'
+                    + ' reach past the wall by its own radius. Inset by about one lattice'
+                    + ' row plus that radius to keep it clear of the edge atoms.';
+                hint.style.display = '';
+            } else if (hint) {
+                hint.style.display = 'none';
             }
 
             const place = document.getElementById(`${prefix}-placement-note`);
@@ -7953,6 +8082,10 @@ H   2.219500  1.213600  0.000000`
             const kind = document.getElementById(`${prefix}-structure`)?.value || 'graphene';
             const sel = document.getElementById(`${prefix}-placement`);
             if (sel) sel.value = ASE_STRUCTURES[kind]?.slab ? 'bottom' : 'center';
+            // A width typed for graphene means nothing for fcc111 — a different
+            // builder is a different footprint. Rebuilding the *same* structure at
+            // new nx/ny keeps the override: that is a re-measure, not a new intent.
+            delete aseBoxOverride[prefix];
             aseSyncFields(prefix);
         }
 
@@ -7973,9 +8106,15 @@ H   2.219500  1.213600  0.000000`
         // call, so these warn and never block.
         //
         // Each axis is checked against its own edge. Under an ASE prism the two
-        // in-face edges are taken from the slab itself, so the lateral warnings
-        // cannot fire; the height is typed, so that one still can.
-        function aseFitWarnings(coords, boxLengths, face) {
+        // in-face edges start from the slab itself, so the lateral warnings stay
+        // quiet until the user types a smaller number — and then ``intentional``
+        // keeps them quiet, because that overhang is the point. The height is
+        // typed from the start, so that one can always fire.
+        // ``intentional`` names the in-face axes the user deliberately shrank. A
+        // slab poking through a wall the user pulled in is the feature working, not
+        // a mistake, so those axes are not warned about — the box hint says it in
+        // plain language instead.
+        function aseFitWarnings(coords, boxLengths, face, intentional = null) {
             // "Across" is the two axes lying in the face; depth is the face's own
             // axis - see SUBSTRATE_FACES.
             const spec = SUBSTRATE_FACES[face];
@@ -7997,7 +8136,7 @@ H   2.219500  1.213600  0.000000`
             // 1e-6 A of slack: a footprint measured from these very coordinates
             // is equal to them, and floating-point equality should not warn.
             for (let i = 0; i < 3; i++) {
-                if (i === axis || lateral[i] <= half[i] + 1e-6) continue;
+                if (i === axis || intentional?.has(i) || lateral[i] <= half[i] + 1e-6) continue;
                 out.push(`Slab spans ${(2 * lateral[i]).toFixed(1)} Å along ${AXIS_NAMES[i]},`
                     + ` wider than the ${lengths[i].toFixed(1)} Å box — it pokes through`
                     + ` the side wall.`);
@@ -8019,6 +8158,17 @@ H   2.219500  1.213600  0.000000`
         // already staged without re-running Python. Comparing the staged text with
         // what we delivered is the ownership check: if it no longer matches, the
         // user has put something else there and it is not ours to rewrite.
+        // Box edges the user typed over, per panel, keyed by viewer axis. An axis
+        // absent here is derived from the slab; an axis present is the user's and
+        // is never recomputed. Keyed by axis rather than by field slot so an
+        // override keeps its physical meaning when the placement face changes.
+        //
+        // The walls only ever test a *mobile* molecule's centre of mass — a frozen
+        // *$ substrate is skipped outright — so a box narrower than the slab is a
+        // deliberate, working configuration: the molecules are held over the
+        // interior while the slab keeps every atom it was built with.
+        const aseBoxOverride = {};   // prefix -> { [axis]: length }
+
         const aseLastBuild = {};
         const aseLastDelivered = {};
 
@@ -8232,7 +8382,8 @@ _ascec_cell = _ascec_json.dumps([[float(v) for v in row] for row in atoms.cell])
                     const centre = (isPrismBox() && asePrism.face === face) ? asePrism.centre : null;
                     ({ atoms, coords } = placeOnFace(atoms, coords, face, lengths,
                                                      aseOffset(prefix), centre));
-                    warnings.push(...aseFitWarnings(coords, lengths, face));
+                    warnings.push(...aseFitWarnings(coords, lengths, face,
+                        new Set(Object.keys(aseBoxOverride[prefix] || {}).map(Number))));
                     // A rhombic cell is the one case where the box cannot be filled,
                     // and it has a one-click fix, so name it.
                     if (isPrismBox() && !asePrism.fromCell && ASE_STRUCTURES[
