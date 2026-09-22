@@ -25,8 +25,11 @@ version = "* COSMIC-v01: Feb-2026 *"
 VERBOSE = False
 
 
-# cosmic-v01.py lines 51-82 — the banner body, verbatim including the trailing
-# whitespace that pads each line. Kept as an explicit line list (rather than a
+# cosmic-v01.py lines 51-82 — the banner body. Two paddings were corrected
+# against the 75-character rules that open and close it: the "C O S M I C" row
+# ran to 77 columns (the name box sat two columns right of the asterisk rows)
+# and the version row to 73. The acronym expansion line was added here too.
+# Keep every line except the ASCII logo art exactly 75 columns wide. Kept as an explicit line list (rather than a
 # triple-quoted blob) so the trailing spaces are visible and cannot be lost to
 # a whitespace-trimming edit; ``print_version_banner`` rejoins them exactly as
 # cosmic-v01's triple-quoted literal.
@@ -34,7 +37,7 @@ _VERSION_BANNER_LINES = (
     "===========================================================================",
     "",
     "                        ***************************                        ",
-    "                        *       C O S M I C       *                          ",
+    "                        *       C O S M I C       *                        ",
     "                        ***************************                        ",
     "",
     "                             √≈≠==≈                                  ",
@@ -50,14 +53,14 @@ _VERSION_BANNER_LINES = (
     "          ≠===≠           ≠==≠  ≠===≠     ≠===≠    ≈====≈     ≈====≈ ",
     "",
     "",
-    "               Universidad de Antioquia - Medellín - Colombia              ",
+    "              Universidad de Antioquia - Medellín - Colombia               ",
     "",
     "",
-    "           Clustering Analysis for Quantum Chemistry Calculations          ",
+    "      COnfigurational Similarity via Motif Identification Clustering       ",
     "",
-    "                          {version}                       ",
+    "                         {version}                          ",
     "",
-    "                        Química Física Teórica - QFT                       ",
+    "                       Química Física Teórica - QFT                        ",
     "",
     "",
     "===========================================================================",

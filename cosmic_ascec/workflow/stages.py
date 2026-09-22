@@ -101,6 +101,7 @@ import numpy as np
 
 from cosmic_ascec import levels as _levels
 from cosmic_ascec.elements.data import SYMBOL_TO_Z
+from cosmic_ascec.elements.formula import element_sort_key
 from cosmic_ascec.quantum_chemistry.xtb import (
     DEFAULT_CONSTRAIN_FORCE_CONSTANT,
     XCONTROL_EXTENSION,
@@ -11217,7 +11218,7 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
             # Header
             f.write("=" * 75 + "\n")
             f.write(center_text("C O S M I C  A S C E C") + "\n")
-            f.write(center_text("Configurational Similarity via Motif Identification Code") + "\n")
+            f.write(center_text("Configurational Similarity via Motif Identification Clustering") + "\n")
             f.write(center_text("Annealing Simulado Con Energía Cuántica") + "\n")
             f.write(center_text("Universidad de Antioquia - QFT") + "\n")
             f.write("=" * 75 + "\n\n")
@@ -15064,14 +15065,14 @@ def print_version_banner(script_name="ASCEC"):
           ≠===≠           ≠==≠  ≠===≠     ≠===≠    ≈====≈     ≈====≈ 
 
 
-               Universidad de Antioquia - Medellín - Colombia              
+              Universidad de Antioquia - Medellín - Colombia               
 
 
                   Annealing Simulado Con Energía Cuántica                  
 
-                           {version}                           
+                          {version}                          
 
-                        Química Física Teórica - QFT                       
+                       Química Física Teórica - QFT                        
 
 
 ===========================================================================
@@ -15108,8 +15109,11 @@ def get_molecular_formula(mol_def) -> str:
     remaining_elements = [e for e in element_counts.keys() if e not in ['C', 'H']]
     
     # Sort remaining elements by electronegativity (ascending)
-    # Elements not in the dictionary get a high value to be at the end
-    remaining_elements.sort(key=lambda e: electronegativity_values.get(e, 1000.0))
+    # element_sort_key already encodes "C, then H, then ascending
+    # electronegativity, unknowns last"; C and H are handled above, so only its
+    # electronegativity component matters here. The local dict this used to read
+    # no longer exists, which made every call raise NameError.
+    remaining_elements.sort(key=element_sort_key)
     
     sorted_elements.extend(remaining_elements)
     

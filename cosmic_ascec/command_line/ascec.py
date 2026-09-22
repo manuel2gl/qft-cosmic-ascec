@@ -466,8 +466,8 @@ def _build_single_command_parser() -> argparse.ArgumentParser:
         description=(
             "ASCEC - Annealing Simulado con Energía Cuántica\n"
             "(Simulated Annealing with Quantum Energy)\n"
-            "Configurational sampling via Monte Carlo with quantum mechanical "
-            "evaluation"
+            "Configurational and conformational sampling via Monte Carlo with "
+            "quantum mechanical evaluation"
         ),
         usage="ascec [OPTIONS] COMMAND [ARGUMENTS]",
         formatter_class=argparse.RawDescriptionHelpFormatter,

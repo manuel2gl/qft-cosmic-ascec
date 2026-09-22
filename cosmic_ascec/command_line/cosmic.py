@@ -505,7 +505,7 @@ def main(argv=None):
     ``return`` so the root ``cosmic.py`` shim can propagate the exit code.
     """
     parser = argparse.ArgumentParser(
-        description="COSMIC (COnfigurational Similarity via Motif Identification Code) - Hierarchical clustering for quantum chemistry structures\nPhysicochemical feature-based discrimination of conformational families",
+        description="COSMIC (COnfigurational Similarity via Motif Identification Clustering) - Hierarchical clustering for quantum chemistry structures\nPhysicochemical feature-based discrimination of conformational families",
         usage="cosmic [OPTIONS] [FOLDER]",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""DESCRIPTION:
