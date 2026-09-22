@@ -44,13 +44,18 @@ set -e  # Stop immediately if any command fails
 # TRUE  -> create a separate 'py11' env with Python 3.11 (recommended)
 # FALSE -> install into the base conda environment
 
-INSTALL_PY11=TRUE
+INSTALL_PY11="${INSTALL_PY11:-TRUE}"
 
-TARGET_DIR="$HOME/software/ascec04"
-ENV_NAME="py11"
-PY_VERSION="3.11"
-REPO_URL="https://github.com/manuel2gl/qft-cosmic-ascec.git"
-REPO_BRANCH="main"
+# Overridable per run, so an install can be redirected to /scratch, a project
+# directory, or an env name the site already expects:
+#     TARGET_DIR=/scratch/$USER/ascec ENV_NAME=ascec bash install.sh
+TARGET_DIR="${TARGET_DIR:-$HOME/software/ascec04}"
+ENV_NAME="${ENV_NAME:-py11}"
+PY_VERSION="${PY_VERSION:-3.11}"
+# Overridable so a fork or a test branch can be installed without editing this
+# file:  REPO_URL=... REPO_BRANCH=dev bash install.sh
+REPO_URL="${REPO_URL:-https://github.com/manuel2gl/qft-cosmic-ascec.git}"
+REPO_BRANCH="${REPO_BRANCH:-main}"
 REPO_TARBALL="https://github.com/manuel2gl/qft-cosmic-ascec/archive/refs/heads/${REPO_BRANCH}.tar.gz"
 
 # TRUE -> allow the no-git tarball install (a plain directory: no 'git pull',
@@ -64,8 +69,10 @@ ALLOW_TARBALL="${ALLOW_TARBALL:-FALSE}"
 # MINICONDA_SHA256 to the matching hash published at
 # https://docs.anaconda.com/miniconda/. When MINICONDA_SHA256 is left empty the
 # download is NOT verified and the script says so out loud.
-MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
-MINICONDA_SHA256=""
+# Override MINICONDA_URL on a non x86_64 machine (aarch64, ppc64le) or to pin a
+# specific release:  MINICONDA_URL=... MINICONDA_SHA256=... bash install.sh
+MINICONDA_URL="${MINICONDA_URL:-https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh}"
+MINICONDA_SHA256="${MINICONDA_SHA256:-}"
 
 # Existing conda on a cluster or shared machine.
 # Set CONDA_ROOT to the prefix of a conda you already have when it is not in
@@ -231,7 +238,11 @@ fi
 # way we obtain git when the system does not have it (step 2). The Windows
 # installer has always been ordered this way; this script now matches.
 
-DEFAULT_MINICONDA_DIR="$HOME/miniconda3"
+# Where a Miniconda installed BY THIS SCRIPT lands. Overridable because $HOME is
+# often quota limited on shared machines:
+#     CONDA_INSTALL_DIR=/scratch/$USER/miniconda3 bash install.sh
+# This is not where an EXISTING conda is looked for — that is CONDA_ROOT.
+DEFAULT_MINICONDA_DIR="${CONDA_INSTALL_DIR:-$HOME/miniconda3}"
 
 MINICONDA_DIR=""
 USING_EXTERNAL_CONDA=FALSE
@@ -252,12 +263,26 @@ if [ -n "$CONDA_ROOT" ]; then
     USING_EXTERNAL_CONDA=TRUE
     eval "$("$CONDA_ROOT/bin/conda" shell.bash hook)"
 else
-    for candidate in "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/conda" "$HOME/miniforge3" "$HOME/mambaforge" "/opt/conda" "/opt/miniconda3" "/opt/anaconda3"; do
-        if [ -x "$candidate/bin/conda" ]; then
-            MINICONDA_DIR="$candidate"
-            break
-        fi
-    done
+    # Ask conda where it lives rather than guessing at paths: `conda info --base`
+    # is authoritative on every distribution and for every install layout --
+    # Miniconda, Anaconda, miniforge, a site module, a container image. This is
+    # the normal case on a machine that already has conda.
+    if have conda; then
+        MINICONDA_DIR="$(conda info --base 2>/dev/null)"
+        [ -n "$MINICONDA_DIR" ] && [ -x "$MINICONDA_DIR/bin/conda" ] || MINICONDA_DIR=""
+    fi
+
+    # Only when conda is NOT on PATH do we look at well-known prefixes: an
+    # install that exists but was never initialised in this shell. The list is a
+    # fallback for that one case, never the primary way conda is located.
+    if [ -z "$MINICONDA_DIR" ]; then
+        for candidate in "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/conda" "$HOME/miniforge3" "$HOME/mambaforge" "$HOME/miniconda" "$HOME/anaconda" "/opt/conda" "/opt/miniconda3" "/opt/anaconda3" "/usr/local/conda" "/usr/share/miniconda"; do
+            if [ -x "$candidate/bin/conda" ]; then
+                MINICONDA_DIR="$candidate"
+                break
+            fi
+        done
+    fi
 
     if ! have conda; then
         if [ -n "$MINICONDA_DIR" ]; then
@@ -282,7 +307,7 @@ else
             trap - EXIT
         fi
     else
-        info "Conda found at $(command -v conda). Proceeding..."
+        info "Conda found at $(command -v conda), base $MINICONDA_DIR. Proceeding..."
         eval "$(conda shell.bash hook)"
         if ! grep -q "conda initialize" "$HOME/.bashrc" 2>/dev/null; then
             info "Adding conda initialization to .bashrc..."
@@ -877,6 +902,10 @@ install_shell_block "$HOME/.bashrc"
 # zsh is the default shell on macOS and increasingly common on Linux; the
 # readme has always documented ~/.zshrc but the installer never wrote to it.
 [ -f "$HOME/.zshrc" ] && install_shell_block "$HOME/.zshrc"
+# Cluster login shells are usually LOGIN shells, which read ~/.bash_profile
+# and never source ~/.bashrc unless that file says so. Without this the
+# aliases exist but are invisible in every batch job and every fresh ssh.
+[ -f "$HOME/.bash_profile" ] && install_shell_block "$HOME/.bash_profile"
 
 #----------------------------------
 # 8. Verify the install actually works
