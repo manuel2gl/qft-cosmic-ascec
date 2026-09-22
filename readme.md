@@ -1,7 +1,7 @@
 <div align="center">
 
 # COSMIC-ASCEC
-**Automated Configurational Sampling and Topological Screening of Molecular Clusters**
+**Automated Configurational and Conformational Sampling with Topological Screening of Molecular Clusters**
 
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/license-GPL_v3-coral.svg)](https://www.gnu.org/licenses/gpl-3.0)
@@ -20,7 +20,7 @@
 
 ## What is COSMIC-ASCEC?
 
-**COSMIC-ASCEC** is a Python tool that automatically samples the configurational potential energy surface of molecular clusters and screens their topological features. The name joins its two engines, the ASCEC annealing search (*Annealing Simulado Con Energía Cuántica*) and the COSMIC topological clustering module.
+**COSMIC-ASCEC** is a Python tool that automatically samples the configurational and conformational space of molecular clusters and screens their topological features. The name joins its two engines, the ASCEC annealing search (*Annealing Simulado Con Energía Cuántica*) and the COSMIC topological clustering module.
 
 Acting as an intelligent computational orchestrator, COSMIC-ASCEC pairs robust stochastic sampling (simulated annealing) with topological clustering to automate the discovery of low energy molecular conformations. It removes the tedious manual processing of thousands of configurations by automatically filtering redundancies, correcting imaginary frequencies, and refining unique minima with high level quantum mechanical (QM) evaluations.
 
@@ -38,7 +38,10 @@ Acting as an intelligent computational orchestrator, COSMIC-ASCEC pairs robust s
 
 For a comprehensive guide covering the theoretical background, detailed parameter explanations, calculation setups, and advanced tutorials (for example the water hexamer and formic acid dimer workflows), please consult the official User Manual.
 
-Worked examples for the systems discussed in the manual live in [`docs/`](./docs/) as PDFs (water clusters, formic acid dimer, methanol tetramer, gold clusters, and more).
+Ready to run input files for every system and mode used in the manual are in
+[`examples/`](./examples/) — see its [README](./examples/README.md) for what each one
+produces. Worked write ups of further systems live in [`docs/`](./docs/) as PDFs
+(water clusters, formic acid dimer, methanol tetramer, gold clusters, and more).
 
 <div align="center">
 
