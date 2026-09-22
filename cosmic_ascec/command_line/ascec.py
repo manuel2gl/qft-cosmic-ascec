@@ -89,6 +89,7 @@ from cosmic_ascec.workflow.stages import (
     _dedupe_paths,
     _rmtree,
     consume_protocol_maxprint_flag,
+    consume_protocol_review_flag,
     create_refinement_system,
     create_simple_optimization_system,
     execute_box_analysis,
@@ -562,6 +563,11 @@ Run 'ascec cosmic -h' for the full COSMIC clustering option reference.
     parser.add_argument("--maxprint", action="store_true",
                         help="Keep all intermediate files from every stage "
                              "(default: miniprint, clean up at end)")
+    parser.add_argument("--review", action="store_true",
+                        help="Preparation run: execute every protocol stage but "
+                             "carry only the lowest-energy annealing structure "
+                             "(putative global minimum) into opt/ref/eref. "
+                             "Implies --maxprint")
     parser.add_argument("-V", "--version", action="store_true",
                         help="Display version information and exit")
     return parser
@@ -888,6 +894,9 @@ def _dispatch_protocol(argv: list[str]) -> int:
     protocol, protocol_has_maxprint = consume_protocol_maxprint_flag(protocol)
     if protocol_has_maxprint:
         _stages_module._ascec_maxprint_requested = True
+    protocol, protocol_has_review = consume_protocol_review_flag(protocol)
+    if protocol_has_review:
+        _stages_module._ascec_review_requested = True
 
     protocol = re.sub(r"\.asc,?", input_file + ",", protocol, count=1)
     protocol = protocol.replace(",,", ",")
@@ -1025,7 +1034,7 @@ def _dispatch_protocol(argv: list[str]) -> int:
 
 def _is_auto_protocol_flag(token: str) -> bool:
     """v04 lines 19782-19783 — tokens permitted on the auto-detect path."""
-    return token in {"-v", "-v2", "-v3", "--maxprint", "--nobox", "--standard"}
+    return token in {"-v", "-v2", "-v3", "--maxprint", "--review", "--nobox", "--standard"}
 
 
 def _dispatch_auto_protocol(argv: list[str]) -> int | None:
@@ -1041,6 +1050,8 @@ def _dispatch_auto_protocol(argv: list[str]) -> int | None:
         return None
     if "--maxprint" in argv[2:]:
         _stages_module._ascec_maxprint_requested = True
+    if "--review" in argv[2:]:
+        _stages_module._ascec_review_requested = True
     protocol = extract_protocol_from_input(input_file)
     if not protocol:
         return None
@@ -1048,6 +1059,9 @@ def _dispatch_auto_protocol(argv: list[str]) -> int | None:
     protocol, protocol_has_maxprint = consume_protocol_maxprint_flag(protocol)
     if protocol_has_maxprint:
         _stages_module._ascec_maxprint_requested = True
+    protocol, protocol_has_review = consume_protocol_review_flag(protocol)
+    if protocol_has_review:
+        _stages_module._ascec_review_requested = True
     protocol = re.sub(r"\.asc,?", input_file + ",", protocol, count=1)
     protocol = protocol.replace(",,", ",")
     protocol_args = shlex.split(protocol)
@@ -1242,6 +1256,11 @@ def main_ascec_integrated(argv=None) -> int:
     if "--maxprint" in argv:
         _stages_module._ascec_maxprint_requested = True
     argv = [a for a in argv if a != "--maxprint"]
+
+    # Same treatment for --review (implies --maxprint; see execute_workflow_stages).
+    if "--review" in argv:
+        _stages_module._ascec_review_requested = True
+    argv = [a for a in argv if a != "--review"]
 
     # Queue support: ``... after <PID>`` / ``--after <PID>`` makes a workflow
     # run hold until that PID exits (see execute_workflow_stages). Strip the

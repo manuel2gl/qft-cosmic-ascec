@@ -165,6 +165,12 @@ except ImportError:
 # the v05 CLI (R7) sets ``stages._ascec_maxprint_requested`` the same way.
 _ascec_maxprint_requested = False
 
+# Same mechanism for ``--review``: a preparation run that executes every stage of
+# the protocol but lets only the lowest-energy annealing structure (the putative
+# global minimum) through the expensive per-structure stages. Set by the CLI, read
+# by ``execute_workflow_stages`` via ``globals().get(...)``.
+_ascec_review_requested = False
+
 # Queue target: when set (by the CLI from ``... after <PID>``), a workflow run
 # holds in ``execute_workflow_stages`` until this PID exits before launching.
 _ascec_after_pid = None
@@ -264,6 +270,7 @@ __all__ = [
     "print_version_banner",
     "extract_protocol_from_input",
     "consume_protocol_maxprint_flag",
+    "consume_protocol_review_flag",
     "parse_exclusion_pattern",
     "provide_box_length_advice",
     "get_molecular_formula",
@@ -2167,6 +2174,112 @@ def extract_configurations_from_xyz(xyz_file_path: str) -> List[Dict]:
     return configurations
 
 
+def select_lowest_energy_configuration(xyz_files: List[str], output_dir: str = ".",
+                                       quiet: bool = False) -> List[str]:
+    """Reduce a set of annealing XYZ files to the single lowest-energy frame.
+
+    This is what ``--review`` does at the annealing -> optimization boundary. Every
+    later stage consumes whatever survived the previous one, so collapsing here
+    propagates by itself: 1 structure -> 1 motif -> 1 refinement -> 1 motif -> 1
+    energy refinement. No per-stage limiting is needed anywhere else.
+
+    The winning frame is written to ``review_gmin.xyz`` with its original comment
+    line preserved verbatim, because ``_process_xyz_file_for_calc`` parses
+    ``Configuration: N`` out of that comment to name the QM input. Keeping it means
+    the single generated input still carries its true provenance.
+
+    *output_dir* must NOT be the stage's own directory: the QM runner treats every
+    ``.xyz`` it finds there as a job, so a reduced file dropped alongside the
+    generated inputs is optimized a second time under its own name. It is written to
+    the run root instead, where no stage-discovery pattern matches it
+    (``result_*``, ``combined_*`` and ``ANY_LABEL_RE`` all miss ``review_gmin``).
+
+    Args:
+        xyz_files: Annealing XYZ files already selected for this stage.
+        output_dir: Directory the reduced file is written into — the run root, not
+            the stage directory.
+        quiet: Suppress the informational lines (workflow mode prints its own).
+
+    Returns:
+        A one-element list holding the reduced file, or *xyz_files* unchanged if
+        nothing could be read from them.
+    """
+    best = None  # (energy, source_file, config)
+    total_frames = 0
+
+    for xyz_file in xyz_files:
+        try:
+            configurations = extract_configurations_from_xyz(xyz_file)
+        except Exception:
+            continue
+        for config in configurations:
+            total_frames += 1
+            # Re-derive the energy from the comment rather than trusting
+            # config['energy']: extract_configurations_from_xyz silently returns
+            # 0.0 when the comment cannot be parsed, and 0.0 outranks every real
+            # (negative) Hartree energy.
+            energy_match = re.search(r'E = ([-\d.]+) a\.u\.', config.get('comment', ''))
+            if not energy_match:
+                continue
+            try:
+                energy = float(energy_match.group(1))
+            except ValueError:
+                continue
+            if best is None or energy < best[0]:
+                best = (energy, xyz_file, config)
+
+    if total_frames == 0:
+        if not quiet:
+            print("Review run: no configurations found in the annealing output; "
+                  "leaving the structure set unchanged.")
+        return xyz_files
+
+    if best is None:
+        # Frames exist but none carried a parseable energy. Fall back to the first
+        # frame rather than failing the run, and say so loudly.
+        if not quiet:
+            print("Warning: review run could not read an energy from any annealing "
+                  "frame; falling back to the first configuration.")
+        first_file = xyz_files[0]
+        configurations = extract_configurations_from_xyz(first_file)
+        if not configurations:
+            return xyz_files
+        best = (float('nan'), first_file, configurations[0])
+
+    energy, source_file, config = best
+    atoms = config.get('atoms', [])
+
+    os.makedirs(output_dir, exist_ok=True)
+    review_path = os.path.join(output_dir, "review_gmin.xyz")
+    try:
+        with open(review_path, 'w', encoding='utf-8') as f:
+            f.write(f"{len(atoms)}\n")
+            f.write(f"{config.get('comment', '')}\n")
+            # Same column layout and precision handling as merge_xyz_files.
+            for atom in atoms:
+                if len(atom) == 7:
+                    symbol, x_str, y_str, z_str, _x, _y, _z = atom
+                    f.write(f"{symbol: <3} {x_str: >12}  {y_str: >12}  {z_str: >12}\n")
+                else:
+                    symbol, x, y, z = atom
+                    f.write(f"{symbol: <3} {x: 12.6f}  {y: 12.6f}  {z: 12.6f}\n")
+    except Exception as exc:
+        print(f"Warning: review run could not write {review_path} ({exc}); "
+              f"leaving the structure set unchanged.")
+        return xyz_files
+
+    if not quiet:
+        print(f"\nReview run: selected the lowest-energy annealing configuration "
+              f"({config.get('config_num', '?')}) out of {total_frames}")
+        if energy == energy:  # False only for the nan fallback above
+            print(f"  E = {energy:.6f} a.u.  from {os.path.basename(source_file)}")
+        else:
+            print(f"  from {os.path.basename(source_file)}")
+        print(f"  -> {review_path}")
+
+    return [review_path]
+
+
 # --- def interactive_xyz_file_selection  (ascec-v04.py 5650-5798) ---
 def interactive_xyz_file_selection(xyz_files: List[str], optimization_dir_path: str = ".", auto_select: Optional[str] = None,
                                    quiet: bool = False) -> List[str]:
@@ -3039,7 +3152,23 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
             auto_select=auto_select,
             quiet=workflow_mode,
         )
-        
+
+        # Review run (--review): keep only the putative global minimum. Done here
+        # rather than inside interactive_xyz_file_selection or
+        # _process_xyz_file_for_calc so the choice is made once across *all*
+        # replicas; filtering per file would yield one structure per replica
+        # under -a. The combined_r<N>.xyz written just above is left in place, so
+        # the full annealing record stays on disk.
+        _review_ctx = getattr(sys, '_current_workflow_context', None)
+        if _review_ctx is not None and getattr(_review_ctx, 'review', False):
+            # Deliberately the run root, not output_dir: anything left in the
+            # stage directory is picked up by the QM runner as an extra job.
+            selected_xyz_files = select_lowest_energy_configuration(
+                selected_xyz_files,
+                ".",
+                quiet=False,
+            )
+
     elif stage_type == "refinement":
         selected_xyz_files = interactive_optimization_file_selection(xyz_files, output_dir)
     else:
@@ -6298,7 +6427,14 @@ def execute_workflow_stages(input_file: str, stages: List[Dict[str, Any]],
     context.is_workflow = True  # We're in workflow mode
     context.workflow_verbose_level = parse_verbosity_level(sys.argv)
     context.cosmic_opt_only = False  # Determined after stages are parsed (opt-only when no ref/eref)
-    context.maxprint = globals().get('_ascec_maxprint_requested', False)  # Default: miniprint (clean up at end)
+    context.review = globals().get('_ascec_review_requested', False)
+    if context.review:
+        print("\nReview run (--review): every stage will execute, but only the")
+        print("lowest-energy annealing structure (the putative global minimum)")
+        print("will be carried into optimization, refinement and energy refinement.")
+    # A review run exists to be inspected, so it always keeps every intermediate
+    # file. This is the single place where --review implies --maxprint.
+    context.maxprint = globals().get('_ascec_maxprint_requested', False) or context.review  # Default: miniprint (clean up at end)
     
     # Read configuration from input file
     # - Line 9: QM program index and alias (e.g., "2 orca")
@@ -11225,6 +11361,17 @@ def generate_protocol_summary(cache_file: str = "protocol_cache.pkl",
             
             f.write(center_text("Protocol Workflow Summary") + "\n")
             f.write(center_text("-" * 30) + "\n\n")
+
+            # A review run carried a single structure through every stage, so its
+            # motif counts are 1 by construction and carry no information about the
+            # surface. Say so up front, where the counts below cannot be read
+            # without it.
+            if globals().get('_ascec_review_requested', False):
+                f.write(center_text("*** REVIEW RUN (--review) ***") + "\n")
+                f.write(center_text("Only the lowest-energy annealing structure") + "\n")
+                f.write(center_text("(putative global minimum) entered the") + "\n")
+                f.write(center_text("per-structure stages. Motif counts are") + "\n")
+                f.write(center_text("degenerate and must not be read as sampling.") + "\n\n")
             
             # ══════════════════════════════════════════════════════════════════════
             # EXECUTION OVERVIEW
@@ -15204,6 +15351,48 @@ def consume_protocol_maxprint_flag(protocol_text: str) -> Tuple[str, bool]:
         cleaned = cleaned.replace(',,', ',')
 
     return cleaned, found_maxprint
+
+
+def consume_protocol_review_flag(protocol_text: str) -> Tuple[str, bool]:
+    """Strip embedded --review token from protocol text and report if present.
+
+    ``--review`` marks a *preparation run*: every stage of the protocol still
+    executes, but only the lowest-energy structure produced by annealing (the
+    putative global minimum) is carried into the expensive per-structure stages.
+    It is a global modifier rather than a stage, so like ``--maxprint`` it is
+    consumed before ``parse_workflow_stages`` ever sees the text.
+
+    Supports both inline and split-line styles, e.g.:
+      .asc --review,
+      .asc,
+      --review,
+
+    Deliberately a sibling of ``consume_protocol_maxprint_flag`` rather than a
+    shared generic helper: that function is a verbatim v04 extract (D-039) and is
+    left byte-identical.
+    """
+    if not protocol_text:
+        return protocol_text, False
+
+    found_review = False
+
+    def _strip_flag(match: re.Match) -> str:
+        nonlocal found_review
+        found_review = True
+        return match.group(1) or ''
+
+    cleaned = re.sub(
+        r'(?i)(^|[\s,])--review(?=\s|,|$)\s*,?',
+        _strip_flag,
+        protocol_text,
+    )
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    cleaned = re.sub(r'\s+,', ',', cleaned)
+    cleaned = re.sub(r',\s+', ', ', cleaned)
+    while ',,' in cleaned:
+        cleaned = cleaned.replace(',,', ',')
+
+    return cleaned, found_review
 
 
 # --- def parse_exclusion_pattern  (ascec-v04.py 1950-1981) ---

@@ -93,6 +93,7 @@ class WorkflowContext:
     active_redo_max: int = 0
     generated_template_files: List[str] = dataclasses.field(default_factory=list)  # Temp files extracted from embedded template labels
     maxprint: bool = False  # If True, keep all intermediate files (legacy behavior). Default: miniprint (clean up at end)
+    review: bool = False  # If True, this is a preparation run: every stage executes, but only the lowest-energy annealing structure (putative global minimum) enters opt/ref/eref. Forces maxprint.
     _concurrent_prompted: Optional[int] = None  # Cached optimization concurrency selected interactively
 
     def get_previous_stage_output_dir(self, stage_type: str) -> Optional[str]:
