@@ -2183,21 +2183,26 @@ def select_lowest_energy_configuration(xyz_files: List[str], output_dir: str = "
     propagates by itself: 1 structure -> 1 motif -> 1 refinement -> 1 motif -> 1
     energy refinement. No per-stage limiting is needed anywhere else.
 
-    The winning frame is written to ``review_gmin.xyz`` with its original comment
-    line preserved verbatim, because ``_process_xyz_file_for_calc`` parses
-    ``Configuration: N`` out of that comment to name the QM input. Keeping it means
-    the single generated input still carries its true provenance.
+    A review run introduces **no new file names**. The reduced frame replaces the
+    stage's ordinary combined input (``combined_r<N>.xyz``), which is exactly what
+    that file means: the structures handed to the optimization stage. In a review
+    run that is one structure. The full annealing record is untouched in
+    ``annealing/*/result_*.xyz``.
 
-    *output_dir* must NOT be the stage's own directory: the QM runner treats every
-    ``.xyz`` it finds there as a job, so a reduced file dropped alongside the
-    generated inputs is optimized a second time under its own name. It is written to
-    the run root instead, where no stage-discovery pattern matches it
-    (``result_*``, ``combined_*`` and ``ANY_LABEL_RE`` all miss ``review_gmin``).
+    Keeping the ``combined_`` prefix is load-bearing, not cosmetic. The QM runner
+    treats every ``.xyz`` in the stage directory as a deck, and it is
+    ``_QM_INTERMEDIATE_PATTERNS`` (which contains ``'combined_'``) that keeps the
+    combined input from being optimized as a job of its own. A reduced file under
+    any other name is picked up and run a second time.
+
+    The original comment line is preserved verbatim, because
+    ``_process_xyz_file_for_calc`` parses ``Configuration: N`` out of it to name the
+    QM input — so the single generated deck is still ``opt_conf_<N>``, named for the
+    configuration it actually came from, exactly as in a normal run.
 
     Args:
         xyz_files: Annealing XYZ files already selected for this stage.
-        output_dir: Directory the reduced file is written into — the run root, not
-            the stage directory.
+        output_dir: The stage directory, where the combined input lives.
         quiet: Suppress the informational lines (workflow mode prints its own).
 
     Returns:
@@ -2250,7 +2255,16 @@ def select_lowest_energy_configuration(xyz_files: List[str], output_dir: str = "
     atoms = config.get('atoms', [])
 
     os.makedirs(output_dir, exist_ok=True)
-    review_path = os.path.join(output_dir, "review_gmin.xyz")
+    # Reuse the combined-input name so nothing new appears in the run tree. When
+    # the replicas were merged, that file already exists and is rewritten in
+    # place; with a single replica no merge happened, so fall back to the same
+    # convention with a count of one.
+    existing_combined = [f for f in xyz_files
+                         if os.path.basename(f).startswith("combined_")]
+    if existing_combined:
+        review_path = existing_combined[0]
+    else:
+        review_path = os.path.join(output_dir, "combined_r1.xyz")
     try:
         with open(review_path, 'w', encoding='utf-8') as f:
             f.write(f"{len(atoms)}\n")
@@ -2275,7 +2289,7 @@ def select_lowest_energy_configuration(xyz_files: List[str], output_dir: str = "
             print(f"  E = {energy:.6f} a.u.  from {os.path.basename(source_file)}")
         else:
             print(f"  from {os.path.basename(source_file)}")
-        print(f"  -> {review_path}")
+        print(f"  -> {review_path} (the other {total_frames - 1} are kept in annealing/)")
 
     return [review_path]
 
@@ -3157,15 +3171,14 @@ def calculate_input_files(template_file: str, launcher_template: Optional[str] =
         # rather than inside interactive_xyz_file_selection or
         # _process_xyz_file_for_calc so the choice is made once across *all*
         # replicas; filtering per file would yield one structure per replica
-        # under -a. The combined_r<N>.xyz written just above is left in place, so
-        # the full annealing record stays on disk.
+        # under -a. It reduces the combined input written just above rather than
+        # adding a file, so a review run introduces no new names; the full
+        # annealing record stays untouched in annealing/*/result_*.xyz.
         _review_ctx = getattr(sys, '_current_workflow_context', None)
         if _review_ctx is not None and getattr(_review_ctx, 'review', False):
-            # Deliberately the run root, not output_dir: anything left in the
-            # stage directory is picked up by the QM runner as an extra job.
             selected_xyz_files = select_lowest_energy_configuration(
                 selected_xyz_files,
-                ".",
+                output_dir,
                 quiet=False,
             )
 
