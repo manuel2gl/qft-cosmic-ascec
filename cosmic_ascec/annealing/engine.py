@@ -326,7 +326,11 @@ def anneal(
         except QMError as exc:
             last_initial_exc = exc
             if run_logger is not None:
-                run_logger.warning(
+                # Only the first failure is a WARNING; a repeat of the same
+                # failure 100 times would bury the run's .out (launcher folds
+                # stderr into it). Detail for every attempt stays at DEBUG.
+                log = run_logger.warning if attempt == 0 else run_logger.debug
+                log(
                     "initial QM attempt %d/%d failed: %s — redrawing placement",
                     attempt + 1, INITIAL_QM_RETRIES, exc,
                 )
@@ -367,6 +371,7 @@ def anneal(
         )
 
     last_history_qm_call = qm_call_count
+    failed_mc_qm_calls = 0
 
     current_cluster = initial_cluster
     current_energy = initial_energy
@@ -432,8 +437,12 @@ def anneal(
                 # v04 ``jo_status == 0``: the QM call was spent, the move is
                 # rejected, the loop continues (ascec-v04.py lines 20681-20683).
                 qm_call_count += 1
+                failed_mc_qm_calls += 1
                 if run_logger is not None:
-                    run_logger.warning(
+                    # First failure WARNING, the rest DEBUG (-v2); the count
+                    # is summarised once the schedule finishes.
+                    log = run_logger.warning if failed_mc_qm_calls == 1 else run_logger.debug
+                    log(
                         "QM evaluation failed (call %d): %s — rejecting move",
                         qm_call_count, exc,
                     )
@@ -489,6 +498,13 @@ def anneal(
             last_history_qm_call = qm_call_count
 
         maxstep = max(cycle_floor, int(maxstep * MAXSTEP_REDUCTION_FACTOR))
+
+    if failed_mc_qm_calls > 1 and run_logger is not None:
+        run_logger.warning(
+            "%d of %d annealing QM evaluations failed and were rejected "
+            "(per-call detail at -v2)",
+            failed_mc_qm_calls, qm_call_count,
+        )
 
     result = AnnealingResult(
         initial_cluster=initial_cluster,

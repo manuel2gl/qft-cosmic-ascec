@@ -38,7 +38,7 @@ import sys
 from pathlib import Path
 from typing import Optional, Tuple
 
-from cosmic_ascec.exceptions import QMError
+from cosmic_ascec.exceptions import QMError, QMExecutableNotFound
 from cosmic_ascec.file_formats.asc_schema import QMSpec
 from cosmic_ascec.geometry.molecule import Cluster
 from cosmic_ascec.monte_carlo import EnergyFn
@@ -111,11 +111,12 @@ class _PreserveState:
     ``anneal.<ext>``", which prevents later failures from clobbering it.
     """
 
-    __slots__ = ("call_count", "first_success_preserved")
+    __slots__ = ("call_count", "first_success_preserved", "exception_logged")
 
     def __init__(self) -> None:
         self.call_count = 0
         self.first_success_preserved = False
+        self.exception_logged = False
 
 
 def _preserve_last_qm_files(
@@ -289,7 +290,11 @@ def calculate_energy(
                         status = 0
     except Exception as exc:  # noqa: BLE001 - v04: any exception => status 0
         if logger is not None:
-            logger.error("QM calculation failed for call %d: %s", call_id, exc)
+            # ERROR once per run, DEBUG after: the same exception repeats on
+            # every call and the engine already logs each rejected call.
+            log = logger.debug if preserve_state.exception_logged else logger.error
+            log("QM calculation failed for call %d: %s", call_id, exc)
+            preserve_state.exception_logged = True
         status = 0
     finally:
         # v04 preserves the last files BEFORE cleaning the numbered scratch.
@@ -310,6 +315,55 @@ def calculate_energy(
                         logger.warning("could not clean %s: %s", fpath.name, exc)
 
     return energy, status
+
+
+# --------------------------------------------------------------------------- #
+# Preflight — resolve the QM binary once, before the first call               #
+# --------------------------------------------------------------------------- #
+
+
+def check_qm_executable(
+    adapter: QuantumChemistryAdapter,
+    spec: QMSpec,
+    run_dir: Path,
+) -> str:
+    """Return the path of the binary ``adapter`` would launch, or raise.
+
+    Without this, an unresolvable binary (``g09`` with no sourced site
+    profile, a typo in the .asc alias) is only discovered by the subprocess
+    launch inside :func:`calculate_energy` — once per call, so the initial
+    placement loop logs its 100 retries before the run dies. The lookup
+    mirrors ``subprocess.run``: a bare name is searched on ``PATH``; a name
+    with a separator is taken relative to ``run_dir`` (the child's ``cwd``).
+    Read-only, so a resolvable binary leaves the run unchanged. A command
+    that cannot even be built is left for :func:`calculate_energy` to report.
+    """
+    try:
+        exe = adapter.build_command(f"qm_input_0{adapter.input_ext}", spec)[0]
+    except (OSError, ValueError, IndexError):
+        return ""
+    if "/" in exe or "\\" in exe:
+        candidate = Path(exe)
+        if not candidate.is_absolute():
+            candidate = Path(run_dir) / candidate
+        resolved = shutil.which(str(candidate))
+    else:
+        resolved = shutil.which(exe)
+    if resolved is None:
+        hint = (
+            " Gaussian is usually made available by sourcing its site profile "
+            "(e.g. `. $g09root/g09/bsd/g09.profile`) in the shell or launcher "
+            "that runs ascec."
+            if adapter.name == "gaussian"
+            else " Load the program's environment (module, conda env or site "
+            "profile) in the shell or launcher that runs ascec."
+        )
+        raise QMExecutableNotFound(
+            f"QM executable '{exe}' (adapter '{adapter.name}', alias "
+            f"'{spec.alias}' on line 9 of the .asc) was not found on PATH."
+            f"{hint}"
+        )
+    return resolved
 
 
 # --------------------------------------------------------------------------- #
@@ -357,4 +411,4 @@ def make_energy_function(
     return _energy
 
 
-__all__ = ["calculate_energy", "make_energy_function"]
+__all__ = ["calculate_energy", "check_qm_executable", "make_energy_function"]

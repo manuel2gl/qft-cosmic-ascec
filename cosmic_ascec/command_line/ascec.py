@@ -74,6 +74,7 @@ from cosmic_ascec.monte_carlo import (
 )
 from cosmic_ascec.logging_setup import ROOT_LOGGER_NAME, configure_logging
 from cosmic_ascec.quantum_chemistry import get_adapter, list_adapters
+from cosmic_ascec.quantum_chemistry.runner import check_qm_executable
 from cosmic_ascec.random_numbers import make_rng, resolve_run_seed
 from cosmic_ascec.workflow import stages as _stages_module
 from cosmic_ascec.workflow.protocol import (
@@ -420,6 +421,7 @@ def _run_single_simulation(input_file: str, args: argparse.Namespace,
     adapter_name = _resolve_adapter_name(config.qm.alias, config.qm.program)
     try:
         adapter = get_adapter(adapter_name)
+        check_qm_executable(adapter, config.qm, run_dir)
     except CosmicAscecError as exc:
         print(f"ascec: {exc}", file=sys.stderr)
         return 2
