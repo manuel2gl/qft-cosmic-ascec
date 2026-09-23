@@ -1,0 +1,11 @@
+#name
+! NATIVE-XTB2 Opt
+%pal
+  nprocs 8
+end
+%geom
+  maxiter 100
+end
+* xyz 0 1
+#
+*

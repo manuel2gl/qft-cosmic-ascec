@@ -1,0 +1,12 @@
+#name
+! B3LYP 6-31G
+! Opt Freq
+%pal
+  nprocs 8
+end
+%geom
+  maxiter 80
+end
+* xyz 0 1
+#
+*
