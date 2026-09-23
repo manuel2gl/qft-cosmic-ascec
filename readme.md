@@ -1,7 +1,7 @@
 <div align="center">
 
 # COSMIC-ASCEC
-**Automated Configurational and Conformational Sampling with Topological Screening of Molecular Clusters**
+**Automated Configurational and Conformational Sampling <br> with Topological Screening of Molecular Clusters**
 
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/license-GPL_v3-coral.svg)](https://www.gnu.org/licenses/gpl-3.0)
