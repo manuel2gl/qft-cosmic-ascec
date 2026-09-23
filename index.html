@@ -9623,11 +9623,28 @@ _ascec_cell = _ascec_json.dumps([[float(v) for v in row] for row in atoms.cell])
             syncReviewState(reviewEnabled);
         }
 
+        // A review run carries a single structure past the annealing, so extra
+        // replicas only cost wall time for a structure that is then discarded.
+        // Ticking review drops to one replica; unticking restores the current
+        // mode's default. Applied only on an actual toggle, never on a sync
+        // reassert, so it cannot clobber a replica count the user set by hand.
+        function applyReviewReplicaRule(enabled) {
+            const mode = getSamplingPresetFromState();
+            const value = enabled ? '1' : ((mode === 'preliminary') ? '1' : '3');
+            ['smart-replicas', 'adv-replicas'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = value;
+            });
+            syncAnnealingConcurrentWithReplicas('smart-replicas', 'smart-annealing-concurrent', true);
+            syncAnnealingConcurrentWithReplicas('adv-replicas', 'adv-annealing-concurrent', true);
+        }
+
         function toggleReviewFromSmart(source) {
             const enabled = source
                 ? source.checked === true
                 : document.getElementById('smart-review')?.checked === true;
             syncReviewState(enabled);
+            applyReviewReplicaRule(enabled);
             updateProtocolPreview();
             updatePreview();
         }
@@ -9637,6 +9654,7 @@ _ascec_cell = _ascec_json.dumps([[float(v) for v in row] for row in atoms.cell])
                 ? source.checked === true
                 : document.getElementById('adv-review')?.checked === true;
             syncReviewState(enabled);
+            applyReviewReplicaRule(enabled);
             updateProtocolPreview();
             updatePreview();
         }
@@ -9689,7 +9707,9 @@ _ascec_cell = _ascec_json.dumps([[float(v) for v in row] for row in atoms.cell])
 
             // --- Replicas & Packing ---
             const replicas = document.getElementById('smart-replicas');
-            if (replicas) replicas.value = (selectedMode === 'preliminary') ? '1' : '3';
+            // Review pins this to one replica regardless of mode (see applyReviewReplicaRule).
+            if (replicas) replicas.value = isReviewEnabled() ? '1'
+                                         : ((selectedMode === 'preliminary') ? '1' : '3');
             syncAnnealingConcurrentWithReplicas('smart-replicas', 'smart-annealing-concurrent', true);
             syncAnnealingConcurrentWithReplicas('adv-replicas', 'adv-annealing-concurrent', true);
             const packing = document.getElementById('smart-packing');
