@@ -15,24 +15,22 @@
 
 ## What it does
 
-COSMIC–ASCEC performs an automated configurational and conformational search on the potential energy surface of atomic and molecular clusters. From a single input file, built with the web generator, it runs every stage without manual intervention and returns the distinct minima with their relative energies and Boltzmann populations.
+COSMIC–ASCEC performs an automated configurational and conformational search on the potential energy surface of atomic and molecular clusters. From a single input file, built with the web generator, it runs every stage without manual intervention and returns the distinct minima with their relative energies and Boltzmann populations at the chosen level of theory.
 
 1. **ASCEC** (*Annealing Simulado Con Energía Cuántica*) samples the surface by simulated annealing, with energies from xTB or ORCA.
 2. **COSMIC** groups the candidates by their physicochemical descriptors, with no atom numbering or superposition, and keeps one motif per family.
-3. The motifs are **refined** at a higher level of theory, with frequencies that confirm true minima, and screened again.
+3. The motifs are **refined** at a higher level of theory, with frequencies that confirm true minima.
 
 Every run is one of three modes: **preliminary** (a semiempirical map in minutes), **rigorous** (verified minima with Boltzmann populations) or **ultimate** (adds high level single point energies). COSMIC also works on its own, on any set of structures.
 
 ### Key features
 
-| Feature | Description |
-| :--- | :--- |
-| **Automated workflow** | Annealing, preoptimization, clustering and refinement from a single command, resumable after any interruption. |
-| **Failure recovery** | Relaunches crashed jobs and displaces structures with imaginary frequencies until they reach true minima. |
-| **Similarity screening** | Hierarchical clustering on physicochemical feature vectors, independent of atom numbering, with optional RMSD refinement. |
-| **Conformational sampling** | Internal dihedral rotations sampled together with the arrangement of the molecules. |
-| **QM backends** | xTB 6.7+ and ORCA 5.0.x or 6.1+. |
-| **Web input generator** | Fetches molecules from PubChem, previews the box in 3D and builds the whole protocol. |
+* **Automated:** one command runs the whole protocol, and resumes it after any interruption.
+* **Self correcting:** failed jobs and saddle points are recalculated automatically.
+* **Index free screening:** COSMIC compares descriptors, not atom numbering.
+* **Conformational:** internal rotations are sampled together with the cluster arrangement.
+* **Backends:** xTB 6.7+ and ORCA 5.0.x or 6.1+.
+* **Web generator:** PubChem search, 3D box preview and protocol builder.
 
 ## Installation
 
@@ -46,16 +44,7 @@ cd "$HOME" && wget \
   && bash install.sh && rm -f install.sh && source ~/.bashrc
 ```
 
-**Windows:**
-
-1. Download [`win_install.bat`](https://raw.githubusercontent.com/manuel2gl/qft-cosmic-ascec/main/win_install.bat).
-2. Double click it. If SmartScreen warns that it was downloaded from the internet, choose **More info → Run anyway**.
-3. Open a new terminal so the PATH change takes effect.
-
-Only preliminary runs have been tested on Windows, and `ascec status`, detaching and the `after` queue are Linux only.
-
-> [!NOTE]
-> Python 3.10 or newer is required. The installers create a 3.11 environment, so this only matters if you manage your own.
+**Windows:** download [`win_install.bat`](https://raw.githubusercontent.com/manuel2gl/qft-cosmic-ascec/main/win_install.bat) and double click it.
 
 Check the installation with `ascec --version`. Installing on a cluster, installing by hand, uninstalling and installing ORCA (needed for rigorous and ultimate runs) are covered in Section 2 of the [manual](./manual.pdf).
 
@@ -80,21 +69,10 @@ To try a ready made input first, copy the glycolaldehyde and water example and r
 cp -r ~/software/ascec04/examples/glyw2/preliminary glyw2 && cd glyw2 && ascec glyw2.asc
 ```
 
-Each stage can also be run on its own, for example to check the box and launch three annealing replicas at 20% packing:
-
-```bash
-ascec system.asc box
-ascec system.asc r3 --box20
-./launcher_ascec.sh
-```
-
 ## Output
 
-* `final_ensemble.xyz`: the unique minima, ranked by population; the first frame is the putative global minimum.
-* `boltzmann_distribution.txt`: Gibbs energies and Boltzmann populations.
-* `tvse_*.png`: energy evolution of each annealing replica.
-* `result_*.xyz`: every accepted configuration, ready for Avogadro, GaussView or IQmol.
-* Dendrograms and threshold diagnostics for every COSMIC pass.
+* `final_ensemble.xyz`: the unique minima, ranked by Boltzmann population.
+* `protocol_summary.txt`: every stage, its results and its wall time.
 
 ## Documentation
 
