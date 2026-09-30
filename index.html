@@ -4653,27 +4653,17 @@ H  -0.757000  0.586000  0.000000"></textarea>
                     <p class="install-step-note">Clones into <code>~/software/ascec04</code>. Aliases go into a fenced <code># &gt;&gt;&gt; COSMIC ASCEC &gt;&gt;&gt;</code> block in <code>~/.bashrc</code> (and <code>~/.zshrc</code> if present) — only that block is rewritten on reinstall, so your own aliases are never touched. Re-running on a checkout with uncommitted edits skips the <code>git pull</code> instead of discarding them.</p>
 
                     <div class="install-step">
-                        <div class="install-step-title">1. Download the installation script</div>
+                        <div class="install-step-title">Install with one command (downloads the script, runs it, removes it and reloads your shell)</div>
                         <div class="install-command-row">
-                            <pre class="install-code">wget https://raw.githubusercontent.com/manuel2gl/qft-cosmic-ascec/main/install.sh</pre>
-                            <button class="btn btn-sm install-action-btn install-copy-btn" onclick="copyCommandText('wget https://raw.githubusercontent.com/manuel2gl/qft-cosmic-ascec/main/install.sh')">Copy</button>
-                            <button class="btn btn-sm install-action-btn install-download-btn" onclick="downloadInstallScript()">Download</button>
+                            <pre class="install-code" style="white-space:pre-wrap; word-break:break-all;">cd "$HOME" &amp;&amp; wget https://raw.githubusercontent.com/manuel2gl/qft-cosmic-ascec/main/install.sh &amp;&amp; bash install.sh &amp;&amp; rm -f install.sh &amp;&amp; source ~/.bashrc</pre>
+                            <button class="btn btn-sm install-action-btn install-copy-btn" onclick="copyCommandText('cd &quot;$HOME&quot; && wget https://raw.githubusercontent.com/manuel2gl/qft-cosmic-ascec/main/install.sh && bash install.sh && rm -f install.sh && source ~/.bashrc')">Copy</button>
                         </div>
                     </div>
-
                     <div class="install-step">
-                        <div class="install-step-title">2. Run the script</div>
+                        <div class="install-step-title">Without <code>wget</code>, use <code>curl</code></div>
                         <div class="install-command-row">
-                            <pre class="install-code">bash install.sh</pre>
-                            <button class="btn btn-sm install-action-btn install-copy-btn" onclick="copyCommandText('bash install.sh')">Copy</button>
-                        </div>
-                    </div>
-
-                    <div class="install-step">
-                        <div class="install-step-title">3. Reload your terminal configuration</div>
-                        <div class="install-command-row">
-                            <pre class="install-code">source ~/.bashrc</pre>
-                            <button class="btn btn-sm install-action-btn install-copy-btn" onclick="copyCommandText('source ~/.bashrc')">Copy</button>
+                            <pre class="install-code" style="white-space:pre-wrap; word-break:break-all;">cd "$HOME" &amp;&amp; curl -fLO https://raw.githubusercontent.com/manuel2gl/qft-cosmic-ascec/main/install.sh &amp;&amp; bash install.sh &amp;&amp; rm -f install.sh &amp;&amp; source ~/.bashrc</pre>
+                            <button class="btn btn-sm install-action-btn install-copy-btn" onclick="copyCommandText('cd &quot;$HOME&quot; && curl -fLO https://raw.githubusercontent.com/manuel2gl/qft-cosmic-ascec/main/install.sh && bash install.sh && rm -f install.sh && source ~/.bashrc')">Copy</button>
                         </div>
                     </div>
 
@@ -4701,11 +4691,11 @@ H  -0.757000  0.586000  0.000000"></textarea>
                     </div>
 
                     <div class="install-callout">
-                        <strong>On Windows,</strong> running calculations is fully supported — annealing, preoptimization, clustering and refinement all work. <code>ascec status</code>, Ctrl+D detach and the <code>after &lt;PID&gt;</code> background queue are <strong>Linux-only</strong>, since they rely on process groups, signals and <code>/proc</code>.
+                        <strong>On Windows,</strong> only preliminary runs have been tested.
                     </div>
 
                     <div class="install-callout">
-                        Manual setup: open the <a href="https://manuel2gl.github.io/qft-cosmic-ascec/manual.pdf" target="_blank">User Manual</a> and follow <strong>Step-by-Step Conda Installation</strong>, or use the <code>environment.yml</code> shipped in the repository (<code>conda env create -f environment.yml</code>).
+                        Clusters, manual installation and ORCA: see Section 2 of the <a href="https://manuel2gl.github.io/qft-cosmic-ascec/manual.pdf" target="_blank">User Manual</a>.
                     </div>
                 </div>
 
