@@ -338,11 +338,17 @@ def write_cluster_dat_file(
                 'rotational_constants_B': 'Rotational Constant B',
                 'rotational_constants_C': 'Rotational Constant C',
             }
-            _missing_features = set()
+            # A key can back more than one row (Gibbs and Composite Gibbs share
+            # gibbs_free_energy), so a feature is missing only when none of its
+            # rows has a value for every member. Otherwise a run without an
+            # energy refinement, where composite_gibbs is None, would report the
+            # Gibbs energy it clustered on as not used.
+            _feature_available = {}
             for _, extractor, feat_key in _deviation_entries:
                 values = [extractor(d) for d in cluster_members_data]
-                if not all(v is not None for v in values):
-                    _missing_features.add(feat_key)
+                complete = all(v is not None for v in values)
+                _feature_available[feat_key] = _feature_available.get(feat_key, False) or complete
+            _missing_features = {k for k, ok in _feature_available.items() if not ok}
             if not pool_has_hbonds:
                 # No structure in the run has a hydrogen bond, so none of these
                 # four was a clustering feature. num_hydrogen_bonds is a valid
@@ -365,6 +371,10 @@ def write_cluster_dat_file(
                 if feat_key in _all_excluded:
                     continue
                 values = [extractor(d) for d in cluster_members_data]
+                # A row can be incomplete while its feature is active through
+                # another row (Composite Gibbs in a non-composite run).
+                if not all(v is not None for v in values):
+                    continue
                 _scored.append((display_name,) + difference_line_values(values))
 
             _label_w = max((len(name) for name, _, _ in _scored), default=0)

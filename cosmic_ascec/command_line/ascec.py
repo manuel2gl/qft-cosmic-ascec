@@ -468,110 +468,141 @@ def _build_single_command_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "ASCEC - Annealing Simulado con Energía Cuántica\n"
-            "(Simulated Annealing with Quantum Energy)\n"
-            "Configurational and conformational sampling via Monte Carlo with "
-            "quantum mechanical evaluation"
+            "Automated configurational and conformational sampling by simulated\n"
+            "annealing, with COSMIC screening of the results."
         ),
         usage="ascec [OPTIONS] COMMAND [ARGUMENTS]",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
-COMMANDS:
-  Run an annealing job (the COMMAND is the .asc input file itself):
-    ascec input.asc                Run simulated annealing on input.asc
-    ascec input.asc --box10        Run it in a box sized for 10% effective packing
-    ascec input.asc rN             Build N replicate runs (e.g. r3 = 3 replicas)
-    ascec input.asc rN --box10     Replicas sized for 10% effective packing
-                                   (--boxP sizes one cube edge, so it is ignored
-                                   for a rectangular-prism substrate box)
-    ascec input.asc box            Box / packing analysis for the input
-    ascec box input.asc            Same box analysis, box as the command
+START HERE:
+  ascec input                      Open the web input generator in the browser
+  ascec input local [PORT]         Serve the generator locally, offline (default 8080)
+  ascec input.asc                  Run the protocol embedded in input.asc
+                                   (annealing only if the file has no protocol)
 
-  Build downstream QM input decks from annealing results:
-    ascec opt TEMPLATE [LAUNCHER]  Create geometry-optimization inputs
-    ascec ref TEMPLATE [LAUNCHER]  Create refinement (single-point) inputs
-    ascec update TEMPLATE [PAT]    Re-stamp existing inputs from a new template
-       (LAUNCHER is optional; without it only the input files are written)
+  A run can take hours to days. Detach with Ctrl+D (or Ctrl+Z) and it keeps
+  running in the background; closing the terminal does not stop it.
 
-  Collect, rank and analyse results:
-    ascec sort                     Sort optimized structures + write summary
-       --nosum                       sort but skip the summary file
-       --justsum                     write the summary only, do not sort
-       --nobox                       skip box-visualization XYZ files
-    ascec cosmic [FOLDER] [OPTS]   Run COSMIC clustering (see: cosmic -h)
-    ascec diagram                  Energy diagram from tvse_*.dat
-       --scaled                      scaled-energy variant
-    ascec merge [result]           Merge launcher outputs (or merged results)
+AUTOMATED PROTOCOL:
+  ascec input.asc                  Run, or resume from the first unfinished stage
+  ascec input.asc --review         Rehearse every stage on one structure first
+  ascec input.asc protocol N       Restart from stage N (deletes N onwards)
+  ascec input.asc protocol N -i    Continue stage N, keeping its finished jobs
+  ascec input.asc protocol opt2    Stages can be named: opt, opt2, ref, ref2, ...
+  ascec input.asc exclude ref 3,7-9
+                                   Drop structures from a stage at a breakpoint
+                                   ('exclude' lists them, 'exclude clear' undoes)
+  ascec input.asc after PID        Start when job PID (from 'ascec status') ends
+  ascec status                     All jobs on this machine: V<id> attach and
+                                   watch, K<id> kill, R refresh, Q quit
 
-  Queue a run behind another (workflow/protocol runs only — the ones that
-  appear in 'ascec status'):
-    ascec input.asc after PID         Hold until job PID finishes, then start
-    ascec input.asc , r3 after PID    Same, with an explicit r3 stage
-       (PID is taken from 'ascec status'. Launched from a terminal the queued
-        run auto-backgrounds — your prompt returns immediately and output goes
-        to <input>_queue.log. It shows as HOLDING in 'ascec status' until PID
-        exits, then starts automatically. Cancel it there with K, or Ctrl+C if
-        you ran it in the foreground.)
+PROTOCOL BLOCK (written by the web generator at the end of the .asc):
+  .asc,                            Start of the protocol
+  --maxprint, --review,            Global options, one per line
+  r3 --concurrent=3,               Annealing: 3 replicas, run together
+  opt --concurrent=8 input1,       Optimization with template input1
+  cosmic -j4,                      Clustering (any 'cosmic -h' option)
+  ref --concurrent=2 input2,       Geometry refinement with template input2
+  cosmic --th=opt -j4,             Reuse the threshold of the first pass
+  eref input3,                     Single point energies (ultimate runs)
+  cosmic --th=opt -j4              Last clustering: final ensemble
+  A comma continues to the next stage; a dot stops there (breakpoint).
+  Stage flags on opt and ref lines:
+    --concurrent=N                 Jobs in parallel (default 1)
+    --redo=N                       Redo attempts for critical structures (default 3)
+    --critical=N                   % of critical structures allowed (default 0)
+    --skipped=N                    Use the % of all skipped structures instead
+  Stop after the first cosmic for a preliminary run, after the second for a
+  rigorous one, after the third for an ultimate one.
 
-  Housekeeping:
-    ascec status                   Show status of the current run
-    ascec launcher                 Merge launcher scripts in this folder
-    ascec cleanup                  Remove temporary calculation/cosmic folders
-    ascec <file> exclude [STAGE] [PATTERN]   Exclude structures from a protocol
-    ascec <file> protocol          Run a multi-stage protocol workflow
+TEMPLATES (embedded after the protocol, or separate files in stage mode):
+  #orca input2 / #xtb input1       Block header: program and label
+  #name                            Replaced by the structure name
+  #                                ORCA: where the coordinates go (inside * xyz *)
+  !name, !                         The same for Gaussian (.com)
+  #rescue(HF-3c/freq)              Cheap Hessian for structures that stall
+  # alpb water                     xTB: any xTB flag, written without dashes
 
-  Chaining: separate commands with a comma to run them in sequence, e.g.
-    ascec input.asc r3 , sort , cosmic
+STAGE BY STAGE (you run the launchers yourself):
+  ascec input.asc box              Box and packing analysis only
+  ascec input.asc --boxP           Anneal in a box sized for P% packing
+  ascec input.asc rN [--boxP]      Build N replica inputs + launcher_ascec.sh
+  ascec opt TEMPLATE [LAUNCHER]    Optimization inputs from the annealing results
+  ascec ref TEMPLATE [LAUNCHER]    Refinement inputs from the COSMIC representatives
+  ascec update TEMPLATE [PATTERN]  Restamp existing inputs with a new template
+  ascec sort [--nosum|--justsum]   Collect outputs into cosmic/ and write a summary
+  ascec cosmic [FOLDER] [OPTIONS]  Cluster with COSMIC (see 'cosmic -h')
+  ascec diagram [--scaled]         Energy plots from the tvse_*.dat files
+  The template extension sets the program: .inp ORCA, .com Gaussian, .xtb xTB.
+  Without LAUNCHER, one is written if ORCA is on the PATH.
+
+HOUSEKEEPING:
+  ascec launcher                   Merge the launcher scripts in this folder
+  ascec merge [result]             Merge launcher outputs, or result_*.xyz files
+  ascec cleanup                    Remove temporary calculation/cosmic folders
+  Commands can be chained with commas: ascec input.asc r3 , sort , cosmic
+
+MAIN OUTPUTS:
+  final_ensemble.xyz / .mol        Unique minima, ranked by Boltzmann population
+  boltzmann_distribution.txt       Energies and populations of the final motifs
+  protocol_summary.txt             Every stage, its results and its wall time
+  annealing/, geometry_optimization/, cosmic/, geometry_refinement/, cosmic_2/
+                                   One folder per stage
+  A preliminary run writes possible_final_ensemble.* (no frequencies, no
+  populations).
 
 EXAMPLES:
-    ascec water.asc                    # anneal a single input
-    ascec water.asc r5 --box15         # 5 replicas at 15% packing
-    ascec water.asc box                # box / packing analysis only
-    ascec opt template.inp run.sh      # optimization inputs + launcher
-    ascec sort --justsum               # summary only
-    ascec cosmic ./outputs --th auto   # cluster with the auto threshold
-    ascec water.asc protocol           # run the full automated protocol
-                                       #   (stages defined inside the .asc file)
+  ascec input                      # build water.asc in the browser
+  ascec water.asc                  # run its protocol, detach with Ctrl+D
+  ascec water.asc --review         # check the templates on one structure first
+  ascec water.asc r5 --box20       # 5 replicas at 20% packing
+  ascec opt opt.inp launcher.sh    # optimization inputs + launcher
+  COSMIC_ASCEC_SEED=42 ascec water.asc          # reproducible run
+  COSMIC_ASCEC_SEEDS=1,2,3 ascec water.asc r3   # one seed per replica
 
-Run 'ascec cosmic -h' for the full COSMIC clustering option reference.
+NOTES:
+  ORCA 6.0 is not supported: use ORCA 5.0.x or 6.1+.
+  Charge and multiplicity come from line 12 of the .asc; check them for ions
+  and radicals.
+  User manual: https://github.com/manuel2gl/qft-cosmic-ascec (manual.pdf)
 """,
     )
     parser.add_argument(
         "command", metavar="COMMAND",
-        help="Input file or command (opt, ref, sort, cosmic, diagram, etc.)"
+        help="the .asc input file, or a command (input, opt, ref, sort, cosmic, ...)"
     )
     parser.add_argument(
         "arg1", nargs='?', default=None, metavar="ARG1",
-        help="Command-specific argument (e.g., template file, mode)"
+        help="command argument (template, rN, box, protocol, ...)"
     )
     parser.add_argument(
         "arg2", nargs='?', default=None, metavar="ARG2",
-        help="Additional command-specific argument"
+        help="second command argument (launcher, stage, ...)"
     )
     parser.add_argument("-v", action="count", default=0,
-                        help="Increase verbosity level (use -v, -v2, -v3, etc.)")
+                        help="more detailed output (repeat for more: -vv)")
     parser.add_argument("--standard", action="store_true",
-                        help="Use standard Metropolis criterion instead of modified")
+                        help="use the standard Metropolis criterion instead of the modified one")
     parser.add_argument("--nosum", action="store_true",
-                        help="Skip summary file generation during sort")
+                        help="sort: skip the summary file")
     parser.add_argument("--justsum", action="store_true",
-                        help="Generate summary file only without sorting structures")
+                        help="sort: write the summary only, move nothing")
     # Hidden flags (v04 lines 20023-20024).
     parser.add_argument("--target-sim-folder", type=str, default=None,
                         help=argparse.SUPPRESS)
     parser.add_argument("--reuse-existing", action="store_true",
                         help=argparse.SUPPRESS)
     parser.add_argument("--nobox", action="store_true",
-                        help="Disable generation of box-visualization XYZ files")
+                        help="do not write the resultbox_* files (box drawn as dummy atoms)")
     parser.add_argument("--maxprint", action="store_true",
-                        help="Keep all intermediate files from every stage "
-                             "(default: miniprint, clean up at end)")
+                        help="keep every intermediate file (default: miniprint, which keeps "
+                             "only the files of the final motifs)")
     parser.add_argument("--review", action="store_true",
-                        help="Preparation run: execute every protocol stage but "
-                             "carry only the lowest-energy annealing structure "
-                             "(putative global minimum) into opt/ref/eref. "
-                             "Implies --maxprint")
+                        help="rehearse the protocol: run every stage, but carry only the "
+                             "lowest energy annealing structure through opt/ref/eref "
+                             "(implies --maxprint)")
     parser.add_argument("-V", "--version", action="store_true",
-                        help="Display version information and exit")
+                        help="show the version and exit")
     return parser
 
 

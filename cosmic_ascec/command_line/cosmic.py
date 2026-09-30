@@ -505,343 +505,165 @@ def main(argv=None):
     ``return`` so the root ``cosmic.py`` shim can propagate the exit code.
     """
     parser = argparse.ArgumentParser(
-        description="COSMIC (COnfigurational Similarity via Motif Identification Clustering) - Hierarchical clustering for quantum chemistry structures\nPhysicochemical feature-based discrimination of conformational families",
-        usage="cosmic [OPTIONS] [FOLDER]",
+        description="COSMIC - Configurational Similarity via Motif Identification Clustering\n"
+                    "Groups molecular structures into families by a physicochemical feature\n"
+                    "vector (energies, orbitals, dipole, rotational constants, frequencies,\n"
+                    "hydrogen bonds), with no atom numbering or superposition, and keeps one\n"
+                    "representative per family.",
+        usage="cosmic [OPTIONS] [FOLDER | FILE | TRAJECTORY]",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""DESCRIPTION:
-  COSMIC clusters molecular structures by a physicochemical feature vector
-  (up to 15 descriptors: electronic energy, HOMO-LUMO gap, dipole, rotational
-  constants, vibrational frequencies, H-bond geometry). The vector is dynamic —
-  it uses whatever each input provides and reports motifs from the largest
-  feature pool available. Redundant structures collapse into unique conformational
-  families; each family's lowest-energy structure is the representative motif.
+        epilog="""HOW IT WORKS:
+  1. Read every structure into a vector of up to 15 descriptors: electronic
+     and Gibbs energy, HOMO, HOMO-LUMO gap, dipole, nuclear repulsion, the
+     three rotational constants, lowest and highest frequency, and four
+     hydrogen bond descriptors (count, mean distance and angle, spread).
+  2. Standardize each descriptor (Z score); constant ones are dropped.
+  3. Build a UPGMA tree from the Euclidean distances and cut it at tau.
+  4. Keep one representative per family: the lowest energy member, or the
+     member closest to the family centroid when there are no energies.
+  5. Set aside structures with imaginary frequencies or no convergence:
+     redundant if they match a family, critical if they match none.
+  All structures must have the same composition; COSMIC stops and names the
+  files that differ.
 
-  Input is a folder of .out/.log QM outputs, or of .xyz or .mol coordinate
-  files. Plain coordinates give the 8 geometry-derived descriptors (nuclear
-  repulsion, rotational constants A/B/C, and the four H-bond columns) with no QM
-  run at all — the entry point for large systems. '--sp' adds 4 more via one xTB
-  single point per structure. A multi-frame .xyz is split per frame. .mol input
-  is converted to .xyz with OpenBabel ('obabel', required for it) into
-  'mol_as_xyz/'; a folder holding both forms is read as .xyz.
+INPUTS (descriptors used, of 15):
+  ORCA / Gaussian / xTB outputs       up to 15 (12 without frequencies)
+  .xyz or .mol coordinates            8 (4 with no hydrogen bonds); --sp adds 4
+  MD trajectory (.pdb, .gro, .xyz)    as .xyz, after --nearest or --shell
+  Formats: Gaussian .log, ORCA 5.0.x and 6.1+ .out, xTB, .xyz (single or
+  multiframe), .mol (needs OpenBabel). ORCA 6.0 is not supported. In a mixed
+  folder .out wins over .log, and .log over .xyz. Energies written in .xyz
+  comment lines are not used.
 
-  An MD trajectory (.pdb/.gro/.xyz) can be given directly. Say which part of it
-  matters and cosmic reduces every frame to the solute plus its solvation shell
-  before clustering, in the same command:
-
-      cosmic traj.pdb --solute-resname=BPA --nearest=30 -j4
-
-  Without that, a solvated box is far too large to cluster — the descriptors
-  are pairwise, so tens of thousands of atoms per frame is hopeless while the
-  solute and its 30 nearest waters is 123 atoms. See 'MD TRAJECTORY PRE-FILTER'
-  under KEY OPTIONS.
-
-HOW IT WORKS:
-  1. Check every input has the same composition — same elements, same counts —
-     and stop if not, naming the files that differ. Descriptors and RMSD are
-     only defined within one system; mixing two would cluster molecules rather
-     than conformers. Skipped for --shell / --nearest, where the number of
-     solvent molecules varies by design.
-  2. Parse QM outputs (.log/.out) or coordinates (.xyz) into the feature vector
-  3. Z-standardize each feature (drop near-constant columns)
-  4. Build a UPGMA tree (SciPy average linkage, Euclidean distance)
-  5. Cut it at the threshold (default 'auto' = knee of the merge-height curve,
-     capped at the empirical 2.0 — '--th=knee' lifts that cap; Mojena is
-     plotted only as a diagnostic)
-  6. Optional RMSD pass to split geometric look-alikes within a family
-  7. Flag imaginary frequencies and convergence failures
-
-KEY OPTIONS:
-  --th=auto|knee|opt|FLOAT
-                        Dendrogram cut (default auto). 'knee' is auto with the
-                        empirical τ=2.0 ceiling disabled: the detected knee is
-                        applied even above 2.0. 'opt' reuses the τ from the
-                        sibling post-opt run — use it for refinement-stage cosmic
-                        so the partition stays consistent. A float overrides
-                        (2.0 = legacy 2-sigma; <1 tight; 3-4 loose).
-  --rmsd[=FLOAT]        Geometric validation in Å (default 1.0 if bare).
-  --rmsd-only[=FLOAT]   Cluster on Cartesian RMSD alone (default 1.0 Å): no
-                        feature vector, the tree is cut directly in Å.
-  --rmsd-heavy          Exclude hydrogens from RMSD. Default is all-atom RMSD,
-                        as used by CREST and ORCA GOAT (both 0.125 Å default).
-  -j, --cores INT       CPU cores (default: auto-detect).
-  --partialweights      Tuned weights for semiempirical/xTB (down-weights noisy
-                        orbital/dipole/H-bond features). Added by the web GUI for
-                        preliminary runs; leave off for DFT/post-HF.
-  --weights STRING      Manual weights, e.g. '(energy=0.3)(gap=0.2)'.
-  --group-hb            Cluster separately per H-bond count (one dendrogram each).
-  --sp[=METHOD]         XYZ input only: one xTB single point per structure, adding
-                        electronic energy, HOMO, HOMO-LUMO gap and dipole moment
-                        to the 8 geometry-derived descriptors (8 of 15 columns
-                        become 12). METHOD is gfn2 (default), gfn1, gfn0, or
-                        gfnff. Gibbs and the vibrational frequencies still need a
-                        frequency calculation, which a single point is not.
-                        Charge and spin come from --charge / --uhf below; both
-                        default to a neutral singlet, so an ion or a radical must
-                        set them or every single point is solved for the wrong
-                        system.
-  --charge INT          Total charge for the --sp single points (default 0).
-                        Passed to xTB as --chrg; ignored without --sp.
-  --uhf INT             Unpaired electrons for the --sp single points (default 0,
-                        closed shell). A doublet is 1, a triplet 2. Passed to xTB
-                        as --uhf; ignored without --sp.
-  -T FLOAT              Temperature (K) for Boltzmann populations (default 298.15).
-  --compare FILE...     Direct pairwise comparison of ≥2 files (no folder).
-                        Writes only clustering_summary.txt, the single
-                        cluster_*.dat and extracted_clusters/ — no
-                        dendrogram, Boltzmann report or motif folder.
-  --reprocess-files     Ignore the descriptor cache and re-parse outputs.
-  FOLDER                Directory of .out/.log QM outputs or .xyz/.mol
-                        coordinates — or a single .xyz/.mol file
-                        (default: current / interactive).
-
-MD TRAJECTORY PRE-FILTER (--shell / --nearest):
-  A solvated trajectory cannot be clustered as it stands — a solute in a box of
-  water is tens of thousands of atoms per frame, and the descriptors are
-  pairwise. These flags carve out the solute plus the solvent actually touching
-  it and then cluster the result, in one command. Input is .pdb or .gro (both
-  carry a cell per frame and residue names) or .xyz (needs --box and --solute).
-
-  --nearest N           Keep the N nearest solvent molecules. Constant atom
-                        count, so frames differ in geometry only, and --rmsd
-                        has the equal-size input it requires. Note that solvent
-                        identity still turns over between frames, so an
-                        all-atom RMSD across the shell measures that turnover
-                        as much as it measures the solute.
-  --nearest 0           Drop the solvent entirely — cluster the solute's own
-                        conformations across the trajectory. No cell needed,
-                        since no distance is measured across one.
-  --shell R             Keep every solvent molecule within R Å. Physically
-                        honest, but frames vary in size and composition — so
-                        the composition check under HOW IT WORKS does not apply
-                        to --shell or --nearest runs, including an
-                        --extract-only file clustered later (mapping.dat in the
-                        work directory is what marks it).
-  --solute-resname NAMES  Residue name(s) of the solute: BPA, or LIG,HEM.
-  --solvent-resname NAMES Residue name(s) allowed into the shell. Keeps
-                        counter-ions out; everything unnamed is ignored.
-  --solute 1-33         Solute as atom indices (required for .xyz input).
-  --stride N            Keep every Nth frame — thins a long trajectory.
-  --verify              Check every frame: molecules intact, correctly re-imaged.
-  --extract-only        Write the frames and stop, without clustering.
-  --elements MAP        Name the element behind a force-field atom type, e.g.
-                        'IN=N', or '@types.map' for a whole force field.
-  --work-dir DIR        Where the frames and the clustering output go (default
-                        'cosmic' beside the trajectory, then 'cosmic_2',
-                        'cosmic_3' … so a re-run never lands on top of an
-                        earlier one).
-  -o FILE               Name the extracted file. A .pdb name implies
-                        --extract-only, since only .xyz can be clustered.
-
-  Selection is molecule-whole and periodic: a molecule counts if any of its
-  atoms reaches the solute, it is never cut in half, and it is translated into
-  the periodic image beside the solute. Skipping that last step writes a
-  neighbour 3 Å away as one 57 Å away and quietly ruins every descriptor. Any
-  cell shape is handled, including the rhombic dodecahedron GROMACS defaults to
-  for solvated proteins, and the selection uses a KD-tree so a protein-sized
-  solute costs no more than a small molecule.
-
-  Atom names in an MD file are force-field types, not element symbols. COSMIC
-  reads the PDB element columns when they are filled in, drops virtual sites
-  (TIP4P's MW, lone pairs, Drude particles) rather than choking on them, and
-  prints the name->element table it resolved so a wrong guess is visible at
-  once. Genuinely ambiguous types — IN is indium and a nitrogen type — are
-  refused rather than guessed; name them with --elements.
-
-  TRACEABILITY: every trajectory run writes mapping.dat into the work
-  directory, joining each clustered structure to the trajectory frame it came
-  from, its simulation time and step, which solvent molecules were in its
-  shell, and the cluster and motif it ended up in. The same frame and time are
-  appended to the comment lines of shell.xyz, the motif files,
-  extracted_clusters/ and clustering_summary.txt. Runs that are not from a
-  trajectory have no mapping.dat and are not annotated at all.
-
-WHERE RESULTS GO:
-  Naming an input puts its results beside it, so a batch launched from one
-  place leaves each answer with the data it came from rather than piling
-  everything into the directory the loop ran in:
-    cosmic runs/a/traj.pdb --nearest=5   → runs/a/cosmic/ (then cosmic_2, ...)
-    cosmic runs/a/w6.xyz                 → runs/a/
-    cosmic runs/a                        → runs/  (beside the folder, never
-                                            inside it — a folder of inputs
-                                            stays a folder of inputs)
-  With no input, or with '.', results land in the working directory as always.
-  --output-dir overrides all of this.
-
-MAIN OUTPUTS:
-  mapping.dat              Trajectory runs only: frame → time, step, solvent,
-                           cluster and motif (see --shell / --nearest below)
-  clustering_summary.txt   Full report (clusters, τ source, similarity floors)
-  dendrogram_images/       Annotated dendrogram(s)
-  extracted_clusters/      One folder per family + representative motif
-  skipped_structures/      Imaginary-frequency / non-converged structures
+THRESHOLD (--th):
+  auto   Knee of the sorted merge heights, capped at the empirical 2.0; falls
+         back to 2.0 when the set is too small (the default)
+  knee   The same knee, without the cap (useful for MD trajectories)
+  opt    Reuse the tau of the previous COSMIC pass (refinement stages)
+  0.9    Any number: smaller gives more, finer families
+  The applied tau and where it came from are written to the summary and to
+  dendrogram_images/threshold_diagnostic.png.
 
 EXAMPLES:
-  cosmic -j4                       Auto threshold, 4 cores (typical run)
-  cosmic --rmsd=1 -j4              Add 1.0 Å geometric split
-  cosmic --rmsd-only -j4           Cluster on RMSD alone (1.0 Å cut)
-  cosmic --rmsd-only=0.125 -j4     RMSD-only at the CREST / GOAT default cut
-  cosmic --th=opt -j4              Refinement stage: reuse the post-opt τ
-  cosmic --th=knee -j4             Knee detection, uncapped (allow τ > 2.0)
-  cosmic --th=2.0                  Force the legacy 2-sigma cut
-  cosmic --partialweights -j4      Preliminary xTB / semiempirical screening
-  cosmic xyz_dir -j4               Cluster plain coordinates (8 descriptors)
-  cosmic xyz_dir --sp gfn2 -j4     Add xTB GFN2 single points (8 → 12 descriptors)
-  cosmic xyz_dir --sp gfnff -j4    Same via the GFN-FF force field: far faster on
-                                   very large systems, but energy only (no HOMO,
-                                   gap or dipole — it has no electronic structure)
-  cosmic xyz_dir --sp --charge -1  Single points on an anion (neutral singlet
-                                   is the default, so charged systems must say so)
-  cosmic xyz_dir --sp --uhf 2      Single points on a triplet (2 unpaired electrons)
-  cosmic ensemble.xyz -j4          Cluster a multi-frame file (split per frame)
-  cosmic --compare a.out b.out     Compare two structures directly
+  cosmic                                  Cluster the outputs here (auto threshold)
+  cosmic outputs/ --th=0.9                Set the threshold by hand
+  cosmic --th=opt                         Refinement pass: reuse the first pass tau
+  cosmic --partialweights                 Preliminary xTB screening
+  cosmic xyz_dir                          Plain coordinates
+  cosmic xyz_dir --sp gfn2                Plus one GFN2-xTB single point each
+  cosmic xyz_dir --sp --charge -1 --uhf 1 Single points on a charged radical
+  cosmic ensemble.xyz                     A multiframe .xyz, split per frame
+  cosmic --compare s1.out s2.out          Compare two structures directly
+  cosmic --rmsd=1.0                       Add an RMSD split inside each family
+  cosmic --weights='(dipole_moment=0.5)'  Give the dipole half weight
+  cosmic --data data_cache_123456.pkl     Export the feature vectors as .csv
 
-MD TRAJECTORY EXAMPLES (extract + cluster in one command):
-  cosmic traj.pdb --solute-resname=BPA --nearest=30 -j4
-                                   Solute + its 30 nearest waters, every frame
-                                   the same size, clustered. Everything lands
-                                   in cosmic/ (cosmic_2/ next time)
-  cosmic traj.pdb --solute-resname=BPA --nearest=0 -j4
-                                   Solute only, solvent discarded — pure
-                                   conformational clustering of the molecule
-  cosmic traj.pdb --solute-resname=BPA --shell=5.0 -j4
-                                   Everything within 5 Å instead (variable size)
-  cosmic traj.pdb --solute-resname=LIG,HEM --solvent-resname=SOL --nearest=40 -j4
-                                   Two-residue solute, ions excluded from the
-                                   shell by naming the solvent
-  cosmic traj.pdb --solute-resname=BPA --nearest=30 --stride=5 -j4
-                                   Same, keeping every 5th frame
-  cosmic traj.pdb --solute-resname=BPA --nearest=30 --verify --extract-only
-                                   Extract and self-check, cluster later
-  cosmic traj.pdb --solute-resname=BPA --nearest=30 -o look.pdb
-                                   Write a PDB to open in VMD (extract only)
-  cosmic traj.gro --solute-resname=BPA --nearest=30 -j4
-                                   GROMACS .gro, triclinic cells included
-  cosmic traj.xyz --solute=1-33 --box=60.729 --nearest=30 -j4
-                                   XYZ input: no residues and no box, so both
-                                   have to be given explicitly
+MD TRAJECTORIES:
+  A solvated box is too large to cluster, so COSMIC first keeps the solute and
+  its nearest solvent in every frame, then clusters the result:
+  cosmic traj.pdb --solute-resname=BPA --nearest=8
+                                          Solute + its 8 nearest solvent
+  cosmic traj.pdb --solute-resname=BPA --nearest=0
+                                          The solute's own conformations
+  cosmic traj.pdb --solute-resname=BPA --shell=5.0
+                                          Everything within 5 A (size varies)
+  cosmic traj.pdb --solute-resname=BPA --nearest=8 --stride=5 --th=knee
+                                          Every 5th frame, uncapped threshold
+  cosmic traj.pdb --solute-resname=BPA --nearest=8 --extract-only
+                                          Check the selection, cluster later
+  cosmic traj.xyz --solute=1-33 --box=60.7 --nearest=8
+                                          .xyz: give solute atoms and box
+  Molecules are never cut and are moved to the periodic image beside the
+  solute. A binary trajectory is converted first, e.g.
+  gmx trjconv -f run.xtc -o traj.pdb -pbc mol.
 
-TYPICAL PIPELINE (or use the automated protocol in one .asc file):
-  ascec input.asc r5 --concurrent=5   → 5 replicate annealing runs
-  ascec opt template.inp launcher.sh  → build + run optimization inputs
-  ascec sort                          → collect and rank
-  cosmic -j4                          → unique motifs
+WHERE RESULTS GO:
+  A named file or folder gets its results beside it (MD: in cosmic/, then
+  cosmic_2/, ...); with no input, in the current folder. --output-dir overrides.
 
-FROM AN MD TRAJECTORY (one command, nothing to prepare):
-  gmx trjconv -f run.xtc -o traj.pdb -pbc mol    → text trajectory, solute whole
-  cosmic traj.pdb --solute-resname=BPA --nearest=30 -j4
-                                                 → shell extracted, then motifs
+MAIN OUTPUTS:
+  clustering_summary.txt   Threshold, statistics and every cluster
+  candidates_NN/ (motifs_NN/, u_motifs_NN/)
+                           One representative per family, ranked by energy if known
+  boltzmann_distribution.txt  Populations (when Gibbs energies are available)
+  dendrogram_images/       Dendrogram and threshold diagnostic
+  extracted_clusters/      Geometries of the members of each family
+  extracted_data/          Per family .dat: similarity, spread, descriptors
+  skipped_structures/      Structures set aside, sorted by reason
+  data_cache_*.pkl         Parsed descriptors; reclustering reuses them (-r rereads)
+  mapping.dat              MD runs: frame -> time, step and cluster
 
-SUPPORTED FORMATS:
-  Gaussian .log (cclib) · ORCA 5.0.x .out (cclib) · ORCA 6.1+ .out (OPI)
-  ORCA 6.0 is not supported — use 5.0.x or 6.1+.
-  Plain .xyz coordinates, single- or multi-frame — no QM output needed. Gives the
-  8 geometry-derived descriptors; add --sp for the 4 electronic ones. Precedence
-  in a mixed folder is .out > .log > .xyz. An xTB input superseded by its own
-  .xtbopt.xyz result is dropped, so a structure is never clustered twice.
-  MD trajectories: .pdb and .gro (both carry a cell per frame and residue names,
-  any cell shape), or .xyz with --box and --solute. Needs --shell or --nearest to
-  say what to keep. Convert a binary trajectory first: gmx trjconv -pbc mol.
-
-CITATION:
-  Manuel, G.; Sara, G.; Albeiro, R. Universidad de Antioquia (2026)
-  Repository: https://github.com/manuel2gl/qft-cosmic-ascec
+User manual: https://github.com/manuel2gl/qft-cosmic-ascec (manual.pdf)
 """)
-    # Clustering threshold: default 'auto' detects the elbow of the merge-height
-    # curve per case; pass a float to override (e.g. 2.0 for legacy 2-sigma rule).
     parser.add_argument("--threshold", "--th", type=str, default="auto",
-                        metavar="FLOAT|auto|knee|opt",
-                        help="UPGMA distance threshold for dendrogram cut. Default 'auto' "
-                             "detects the elbow of the merge-height curve per case "
-                             "(recommended for atomic clusters and van der Waals systems); "
-                             "a knee above the empirical ceiling τ=2.0 is capped to 2.0. "
-                             "'knee' is the same detection with that ceiling disabled — the "
-                             "detected knee is applied even when it is higher than 2.0. "
-                             "Pass a float to override: 2.0 for the legacy 2-sigma rule, "
-                             "0.5 for tight, 3.0-4.0 for loose clustering. "
-                             "'opt' reuses the raw τ resolved by the sibling post-opt cosmic "
-                             "(read from its clustering_summary.txt) — the recommended mode "
-                             "for post-refinement cosmic stages so the partition stays "
-                             "consistent with the preliminary one. "
-                             "('opt-pearson'/'opt-spread' are deprecated: they rebuilt τ from "
-                             "the current run's N_f / median spread, which is unstable on the "
-                             "small refined set; both now behave as 'opt'.)")
+                        metavar="auto|knee|opt|FLOAT",
+                        help="where the tree is cut. auto (default): knee of the merge "
+                             "heights, capped at 2.0; knee: the same, uncapped; opt: reuse "
+                             "the threshold of the previous COSMIC pass; or a number, "
+                             "smaller for finer families.")
 
     # Geometric validation
     parser.add_argument("--rmsd", type=float, nargs='?', const=1.0, default=None, metavar="FLOAT",
-                        help="RMSD geometric validation in Ångström (default: 1.0)")
+                        help="split each family further by RMSD, cut in Å (default 1.0)")
     parser.add_argument("--rmsd-only", "--only-rmsd", type=float, nargs='?', const=1.0,
                         default=None, metavar="FLOAT", dest="rmsd_only",
-                        help="cluster on Cartesian RMSD alone in Ångström (default: 1.0): "
-                             "skips the physicochemical feature vector entirely, so the "
-                             "dendrogram is cut directly in Å. Ignores --threshold, --weights, "
-                             "--partialweights.")
+                        help="cluster on RMSD alone, cut in Å (default 1.0); ignores the "
+                             "feature vector, --threshold and weights")
     parser.add_argument("--rmsd-heavy", action="store_true", dest="rmsd_heavy",
-                        help="measure RMSD over heavy atoms only (exclude hydrogens). "
-                             "Default is all-atom RMSD, matching CREST (--rmsd) and ORCA GOAT.")
+                        help="RMSD over heavy atoms only (default: all atoms)")
 
     # Processing control
     parser.add_argument("--cores", "-j", type=int, default=None, metavar="INT",
-                        help="number of CPU cores (default: auto-detect)")
+                        help="CPU cores used to read the outputs (default: all)")
     parser.add_argument("--reprocess-files", "-r", action="store_true",
-                        help="ignore cache and force re-extraction")
+                        help="ignore the descriptor cache and read every output again")
     parser.add_argument("--output-dir", type=str, default=None, metavar="PATH",
-                        help="output directory (default: current directory)")
+                        help="where results are written (default: beside the named input, "
+                             "or the current folder)")
     parser.add_argument("--weights", type=str, default="", metavar="STRING",
-                        help="custom feature weights: '(energy=0.1)(gap=0.2)'")
+                        help="weights by feature name, e.g. "
+                             "'(dipole_moment=0.5)(homo_lumo_gap=0.8)'")
     parser.add_argument("--compare", nargs='+', metavar="FILE",
-                        help="direct comparison mode (minimum 2 files)")
+                        help="compare the given files directly (usually two)")
     parser.add_argument("-T", "--temperature", type=float, default=298.15, metavar="FLOAT",
-                        help="temperature for Boltzmann analysis in K (default: 298.15)")
+                        help="temperature of the Boltzmann analysis in K (default 298.15)")
     parser.add_argument("--prev-out-dir", type=str, default=None, metavar="PATH",
-                        help="previous stage COSMIC base directory for composite energy: "
-                             "G = E_eref + (G_prev - E_prev). A relative name is looked up "
-                             "in the working directory and its parents, so a sibling stage "
-                             "(e.g. cosmic_2) works from inside cosmic_3/orca_out_29")
+                        help="previous COSMIC folder, for composite energies after an "
+                             "energy refinement (set by the protocol)")
     parser.add_argument("--level", type=str, default=None, metavar="LEVEL",
                         choices=[lv.key for lv in _levels.LEVELS],
-                        help="name this pass's representatives explicitly: "
-                             "candidate (after geometry optimization), motif "
-                             "(after geometry refinement) or u_motif (after "
-                             "energy refinement). Omitted, the level is guessed "
-                             "from the input filenames.")
+                        help="name the representatives: candidate, motif or u_motif "
+                             "(default: guessed from the input names)")
 
     # Output control
     parser.add_argument("-v", "--verbose", action="store_true",
-                        help="enable detailed progress output")
+                        help="more detailed output")
     parser.add_argument("-V", "--version", action="store_true",
-                        help="display version and exit")
+                        help="show the version and exit")
 
     parser.add_argument("--group-hb", action="store_true",
-                        help="group structures by H-bond count before clustering (separate dendrograms per HB family)")
+                        help="cluster each hydrogen bond count separately")
 
     parser.add_argument("--partialweights", action="store_true",
-                        help="apply tuned weights for preliminary semiempirical / xTB runs "
-                             "(down-weights noisy orbital, dipole, and H-bond features). "
-                             "Added by the web GUI for preliminary screening; leave off for "
-                             "refined DFT/post-HF output.")
+                        help="weight profile for preliminary xTB runs (lowers noisy "
+                             "orbital, dipole and hydrogen bond features)")
 
     parser.add_argument("--data", type=str, default=None, metavar="PKL",
-                        help="extract per-configuration feature vectors from the given "
-                             "data_cache_*.pkl file and write features.csv (labeled with units), "
-                             "matrix.csv, and matrix.npy next to it (override with --output-dir). "
-                             "All-NaN columns are dropped; cluster column only emitted when labels "
-                             "are available. Exits after writing; skips clustering.")
+                        help="write the feature vectors of a data_cache_*.pkl as "
+                             "features.csv, matrix.csv and matrix.npy, and exit")
 
     parser.add_argument("--sp", type=str, nargs='?', const='', default=None,
                         metavar="METHOD",
-                        help="run one xTB single point per structure to add electronic "
-                             "energy, HOMO, HOMO-LUMO gap and dipole moment to the "
-                             "geometry-only feature vector (8 of the 15 columns become 12). "
-                             f"METHOD is one of {', '.join(sorted(SP_METHODS))} "
-                             "(default gfn2; gfnff is the force field, fastest for very "
-                             "large systems, energy only). XYZ input only.")
+                        help="coordinates only: one xTB single point per structure adds "
+                             "energy, HOMO, gap and dipole. METHOD: "
+                             f"{', '.join(sorted(SP_METHODS))} (default gfn2; gfnff "
+                             "gives the energy only)")
 
     parser.add_argument("--charge", type=int, default=None, metavar="N",
-                        help="total charge passed to the --sp single points (default 0).")
+                        help="total charge for --sp (default 0)")
 
     parser.add_argument("--uhf", type=int, default=None, metavar="N",
-                        help="number of unpaired electrons passed to the --sp single "
-                             "points (default 0).")
+                        help="unpaired electrons for --sp (default 0; a triplet is 2)")
 
     # --- MD trajectory pre-filter -----------------------------------------
     # A solvated trajectory cannot be clustered as it stands: hundreds of bulk
@@ -850,80 +672,50 @@ CITATION:
     # a one-shot extractor that writes a small multi-frame XYZ and exits; that
     # file is then clustered by an ordinary second cosmic call.
     md = parser.add_argument_group(
-        "MD trajectory pre-filter",
-        "Carve a solute plus its solvation shell out of a solvated trajectory "
-        "(.pdb, .gro or .xyz), then cluster it — one command, one call."
+        "MD trajectory",
+        "Extract the solute and its nearest solvent from every frame, then cluster."
     )
-    md.add_argument("--shell", type=float, default=None, metavar="R",
-                    help="keep every solvent molecule coming within R Å of the solute. "
-                         "Physically honest, but the count varies per frame, so frames "
-                         "differ in composition as well as geometry (and --rmsd cannot "
-                         "compare them).")
     md.add_argument("--nearest", type=int, default=None, metavar="N",
-                    help="keep the N nearest solvent molecules. Every frame gets the same "
-                         "formula and atom count, which is what makes frames comparable "
-                         "and is required for --rmsd. Recommended for clustering. "
-                         "--nearest=0 drops the solvent entirely and clusters the solute's "
-                         "own conformations.")
-    md.add_argument("-o", "--output", type=str, default=None, metavar="FILE",
-                    help="where to write the extracted frames (default: shell.xyz inside "
-                         "the work directory). Give a .pdb name to inspect the result in "
-                         "VMD instead — that stops after extraction, since only .xyz can "
-                         "be clustered.")
-    md.add_argument("--extract-only", action="store_true",
-                    help="write the extracted frames and stop, without clustering them. "
-                         "Use it to check a selection before committing to a long run.")
-    md.add_argument("--work-dir", type=str, default=None, metavar="DIR",
-                    help="directory for the extracted frames and the clustering output "
-                         "(default: 'cosmic' beside the trajectory, then 'cosmic_2', "
-                         "'cosmic_3' and so on, so a re-run never overwrites an earlier "
-                         "one). It holds exactly the extracted frames, which is what "
-                         "keeps the clustering from picking up unrelated .xyz files.")
+                    help="keep the N nearest solvent molecules (same size every frame; "
+                         "recommended). 0 keeps the solute only")
+    md.add_argument("--shell", type=float, default=None, metavar="R",
+                    help="keep every solvent molecule within R Å (size varies)")
     md.add_argument("--solute-resname", type=str, default=None, metavar="NAMES",
-                    help="residue name(s) of the solute, comma-separated: BPA, or "
-                         "LIG,HEM for a multi-residue solute. Default: the residue of "
-                         "atom 1. .pdb / .gro input only.")
+                    help="solute residue name(s), e.g. BPA or LIG,HEM (.pdb/.gro)")
     md.add_argument("--solvent-resname", type=str, default=None, metavar="NAMES",
-                    help="residue name(s) eligible as shell material, comma-separated. "
-                         "Anything neither solute nor solvent is ignored entirely — this "
-                         "is what keeps counter-ions out of the shell. Default: "
-                         "everything that is not solute.")
+                    help="residue name(s) allowed in the shell; keeps ions out")
     md.add_argument("--solute", type=str, default=None, metavar="SPEC",
-                    help="solute as explicit 1-based atom indices, e.g. 1-33 or 1-33,58. "
-                         "Required for .xyz input, which carries no residue names.")
+                    help="solute atom indices, e.g. 1-33 (required for .xyz)")
     md.add_argument("--solvent-size", type=int, default=3, metavar="N",
-                    help="atoms per solvent molecule for .xyz input (default 3, water). "
-                         ".pdb / .gro input read this from the residue numbering instead.")
+                    help="atoms per solvent molecule for .xyz (default 3, water)")
     # A single string rather than nargs='+': with nargs the FOLDER positional
     # gets swallowed by `cosmic --box 60.7 traj.xyz`.
     md.add_argument("--box", type=str, default=None, metavar="L",
-                    help="periodic box: one cubic edge, or three as 'Lx,Ly,Lz', in Å. "
-                         "Read per frame from CRYST1 (.pdb) or the box line (.gro), so "
-                         "both an NPT cell and a non-orthogonal one are handled; "
-                         "required only for .xyz input.")
+                    help="cell edge, or 'Lx,Ly,Lz', in Å (required for .xyz; read "
+                         "from the file for .pdb/.gro)")
     md.add_argument("--no-pbc", action="store_true",
-                    help="treat the system as non-periodic (no minimum-image distances, "
-                         "no re-imaging of the selected molecules).")
+                    help="treat the system as non periodic")
     md.add_argument("--first", type=int, default=0, metavar="I",
-                    help="first trajectory frame to read, 0-based (default 0).")
+                    help="first frame to read, 0 based (default 0)")
     md.add_argument("--last", type=int, default=None, metavar="I",
-                    help="last trajectory frame to read, inclusive (default: to the end).")
+                    help="last frame to read (default: the end)")
     md.add_argument("--stride", type=int, default=1, metavar="N",
-                    help="keep only every Nth frame (default 1). The cheapest way to "
-                         "thin a long trajectory down to a workable ensemble.")
+                    help="keep every Nth frame (default 1)")
     md.add_argument("--order", choices=("distance", "index"), default="distance",
-                    help="write solvent molecules ordered by distance to the solute "
-                         "(default) or by their original atom index.")
+                    help="order of the kept solvent: distance (default) or index")
     md.add_argument("--elements", type=str, default="", metavar="MAP",
-                    help="name the element behind an atom name, e.g. 'OS=O,IN=N'. Use "
-                         "'@types.map' to read a whole force field from a file, one "
-                         "'NAME SYMBOL' pair per line. Needed when a force-field atom "
-                         "type is ambiguous — 'IN' is indium and a nitrogen type, and "
-                         "COSMIC asks rather than guessing.")
+                    help="element of ambiguous atom names, e.g. 'IN=N', or "
+                         "'@types.map' for a whole force field")
     md.add_argument("--verify", action="store_true",
-                    help="after building each frame, check that every kept molecule is "
-                         "geometrically intact and landed in the periodic image beside "
-                         "the solute. Reports the worst deviation found.")
+                    help="check that every kept molecule is intact and correctly imaged")
+    md.add_argument("--extract-only", action="store_true",
+                    help="write the extracted frames and stop")
+    md.add_argument("-o", "--output", type=str, default=None, metavar="FILE",
+                    help="name of the extracted file (default shell.xyz; a .pdb name "
+                         "implies --extract-only)")
+    md.add_argument("--work-dir", type=str, default=None, metavar="DIR",
+                    help="folder for the frames and results (default cosmic/, then "
+                         "cosmic_2/, ...)")
 
     # Hidden/advanced options
     parser.add_argument("--min-std-threshold", type=float, default=1e-6,
@@ -934,11 +726,9 @@ CITATION:
                         help=argparse.SUPPRESS)
 
     # Positional argument
-    parser.add_argument('input_source', nargs='?', default=None, metavar="FOLDER|TRAJECTORY",
-                        help='directory containing .out/.log QM outputs or .xyz/.mol '
-                             'coordinate files (a single .xyz or .mol file is also '
-                             'accepted), or an MD trajectory (.pdb/.gro/.xyz) together '
-                             'with --shell/--nearest saying which part of it to cluster')
+    parser.add_argument('input_source', nargs='?', default=None, metavar="FOLDER|FILE|TRAJECTORY",
+                        help='folder of outputs or coordinates, a single .xyz/.mol, or an '
+                             'MD trajectory (default: the current folder)')
 
 
     # Preprocess arguments to handle -j8 format
